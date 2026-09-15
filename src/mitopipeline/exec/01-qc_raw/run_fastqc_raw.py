@@ -36,7 +36,7 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> int:
     """
-    Runs the FastQC on raw sequencing data.
+    Runs FastQC on raw sequencing data.
 
     Returns:
         int: The return code for the process.
@@ -49,6 +49,13 @@ def main() -> int:
         name = "qc_raw",
         log_file_path = args.log_file,
         global_log_file_path = args.global_log_file
+    )
+
+    # Creating the sample object.
+    sample = Sample(
+        sample_id = args.sample_id,
+        r1 = Path(args.r1),
+        r2 = Path(args.r2)
     )
 
     # Creating the FastQC runner and obtaining context for logger.

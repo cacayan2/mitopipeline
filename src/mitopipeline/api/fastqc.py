@@ -40,7 +40,7 @@ class FastQCRunner(BaseTool):
                  threads: int = 4) -> None:
         """
         Instantiation method for the creation of the 
-        FastQC Runner class. Calls the BaseTool instantiation methods and
+        FastQCRunner class. Calls the BaseTool instantiation methods and
         sets a few other object variables.
 
         Args:
@@ -100,6 +100,15 @@ class FastQCRunner(BaseTool):
             self.logger.error(f"{context} Number of threads is greater than number of cores. Please reduce the number of threads to {os.cpu_count()}.")
 
     def build_command(self) -> list[str]:
+        """
+        Constructs the command to be executed.
+
+        Args:
+            None
+
+        Returns:
+            list[str]: The command to be executed.
+        """
         # Creating the output directory if it does not exist.
         self.output_dir.mkdir(parents = True, exist_ok = True)
 
@@ -148,6 +157,25 @@ class FastQCRunner(BaseTool):
         # Logging the result.
         self.logger.info(f"{context} Successfully processed FastQC outputs.")
 
+    def validate_outputs(self) -> None:
+        """
+        Validates the outputs of fastqc. 
+        This function appropriately logs the result,
+        raises an error otherwise. 
+
+        Args:
+            None
+
+        Returns:
+            None
+        """
+        context = super()._log_context()
+
+        for path in self._expected_fastqc_outputs():
+            if not path.is_file() or path.stat().st_size == 0:
+                self.logger.error(f"{context} Missing or empty output: {path}")
+                sys.exit(1)
+    
     def _native_outputs(self, fastq: Path) -> tuple[Path, Path]:
         """
         This function generates the expected outputs for FastQC as a tuple.
