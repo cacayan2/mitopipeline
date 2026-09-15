@@ -1,0 +1,10 @@
+name: mitopipeline-pdf-export
+
+channels:
+  - conda-forge
+  - defaults
+
+dependencies:
+  - python=3.12
+  - pandoc
+  - typst

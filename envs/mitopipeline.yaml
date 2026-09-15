@@ -1,0 +1,14 @@
+name: mitopipeline
+
+channels:
+  - conda-forge
+  - bioconda
+
+dependencies:
+  - python=3.12
+  - pip
+  - curl
+  - biopython
+  - pandas
+  - pyyaml
+  - matplotlib

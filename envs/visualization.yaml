@@ -1,0 +1,11 @@
+name: mitopipeline-visualization
+
+channels:
+  - conda-forge
+  - bioconda
+  - defaults
+
+dependencies:
+  - python=3.12
+  - biopython
+  - matplotlib

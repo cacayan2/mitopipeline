@@ -1,0 +1,12 @@
+name: mito-annotation
+channels:
+  - conda-forge
+  - bioconda
+dependencies:
+  - python=3.7
+  - mitos
+  - blast
+  - libtiff=4.0.10
+  - reportlab
+  - biopython
+  - pip

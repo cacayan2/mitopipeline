@@ -1,0 +1,12 @@
+name: mito-rescue
+channels:
+  - conda-forge
+  - bioconda
+dependencies:
+  - python>=3.11
+  - biopython
+  - getorganelle
+  - minimap2
+  - samtools
+  - megahit
+  - pip
