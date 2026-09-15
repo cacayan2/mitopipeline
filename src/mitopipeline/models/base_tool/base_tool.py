@@ -192,21 +192,21 @@ class BaseTool(ABC):
 
     def _log_context(self) -> str:
         """
-        Adds a sample label for console messages.
-
-        Args:
-            None
+        Adds a sample label for log messages.
 
         Returns:
             str: The sample label.
         """
-        # Attempting to access the sample id if applicable. 
+
+        # Attempting to access a direct sample ID.
         sample_id = getattr(self, "sample_id", None)
 
-        # Logic for dealing with an empty sample id.
+        # Attempting to access the sample ID from a Sample object.
         if sample_id is None:
-            sample = getattr(self, "sample_id", None)
+            sample = getattr(self, "sample", None)
             sample_id = getattr(sample, "sample_id", None)
+
+        # Returning the formatted sample label.
         if sample_id:
             return f"{{{sample_id}}}"
 
