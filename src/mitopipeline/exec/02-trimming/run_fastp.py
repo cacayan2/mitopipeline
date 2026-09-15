@@ -23,154 +23,142 @@ def parse_args() -> argparse.Namespace:
     )
 
     # Define arguments for files.
-    parser.add_argument("--sample-id", type=str, required=True, help="The unique identifier for the sample.")
-    parser.add_argument("--in1", type=Path, required=True, help="Path to the R1 input FASTQ.")
-    parser.add_argument("--in2", type=Path, required=True, help="Path to the R2 input FASTQ.")
-    parser.add_argument("--output-dir", type=Path, required=True, help="Directory for fastp outputs.")
-    parser.add_argument("--working-dir", type=Path, default=".", help="Working directory for execution.")
-    parser.add_argument("--threads", type=int, required=True, help="Number of threads.")
-    parser.add_argument("--log-file", type = Path, required=True, help="Path to the log file.")
-    parser.add_argument("--global-log-file", type = Path, required=True, help="Path to the global log file.")
-    parser.add_argument(
-    "--qualified_quality_phred",
-    type=int,
-    default=30,
-    help="Minimum Phred quality score."
-    )
-    parser.add_argument(
-        "--length_required",
-        type=int,
-        default=50,
-        help="Minimum read length after filtering."
-    )
-    parser.add_argument(
-        "--trim_front1",
-        type=int,
-        default=0,
-        help="Trim fixed bases from the front of R1."
+    parser.add_argument("--sample-id", type = str, required = True, help = "The unique identifier for the sample.")
+    parser.add_argument("--in1", type=Path, required = True, help = "Path to the R1 input FASTQ.")
+    parser.add_argument("--in2", type = Path, required = True, help = "Path to the R2 input FASTQ.")
+    parser.add_argument("--output-dir", type = Path, required = True, help = "Directory for fastp outputs.")
+    parser.add_argument("--working-dir", type = Path, default = ".", help = "Working directory for execution.")
+    parser.add_argument("--threads", type = int, required = True, help = "Number of threads.")
+    parser.add_argument("--log-file", type  =  Path, required = True, help = "Path to the log file.")
+    parser.add_argument("--global-log-file", type  =  Path, required = True, help = "Path to the global log file.")
+    parser.add_argument("--qualified_quality_phred", type = int, default = 30, help = "Minimum Phred quality score.")
+    parser.add_argument("--length_required", type = int, default = 50, help = "Minimum read length after filtering.")
+    parser.add_argument("--trim_front1", type = int,
+        default = 0,
+        help = "Trim fixed bases from the front of R1."
     )
     parser.add_argument(
         "--trim_front2",
-        type=int,
-        default=0,
-        help="Trim fixed bases from the front of R2."
+        type = int,
+        default = 0,
+        help = "Trim fixed bases from the front of R2."
     )
     parser.add_argument(
         "--trim_tail1",
-        type=int,
-        default=0,
-        help="Trim fixed bases from the end of R1."
+        type = int,
+        default = 0,
+        help = "Trim fixed bases from the end of R1."
     )
     parser.add_argument(
         "--trim_tail2",
-        type=int,
-        default=0,
-        help="Trim fixed bases from the end of R2."
+        type = int,
+        default = 0,
+        help = "Trim fixed bases from the end of R2."
     )
     parser.add_argument(
         "--cut_window_size",
-        type=int,
-        default=4,
-        help="Sliding window size."
+        type = int,
+        default = 4,
+        help = "Sliding window size."
     )
     parser.add_argument(
         "--cut_mean_quality",
-        type=int,
-        default=20,
-        help="Minimum average quality within the sliding window."
+        type = int,
+        default = 20,
+        help = "Minimum average quality within the sliding window."
     )
     parser.add_argument(
         "--n_base_limit",
-        type=int,
-        default=None,
-        help="Maximum number of N bases allowed."
+        type = int,
+        default = None,
+        help = "Maximum number of N bases allowed."
     )
     parser.add_argument(
         "--unqualified_percent_limit",
-        type=int,
-        default=None,
-        help="Maximum percentage of low-quality bases."
+        type = int,
+        default = None,
+        help = "Maximum percentage of low-quality bases."
     )
     parser.add_argument(
         "--average_qual",
-        type=int,
-        default=None,
-        help="Minimum average read quality."
+        type = int,
+        default = None,
+        help = "Minimum average read quality."
     )
     parser.add_argument(
         "--report_title",
-        default=None,
-        help="Title displayed in the HTML report."
+        default = None,
+        help = "Title displayed in the HTML report."
     )
 
     parser.add_argument(
         "--adapter_sequence",
-        default=None,
-        help="Adapter sequence for read 1."
+        default = None,
+        help = "Adapter sequence for read 1."
     )
 
     parser.add_argument(
         "--adapter_sequence_r2",
-        default=None,
-        help="Adapter sequence for read 2."
+        default = None,
+        help = "Adapter sequence for read 2."
     )
 
     parser.add_argument(
         "--adapter_fasta",
-        default=None,
-        help="FASTA file containing adapter sequences."
+        default = None,
+        help = "FASTA file containing adapter sequences."
     )
     parser.add_argument(
     "--detect_adapter_for_pe",
-    action="store_true",
-    help="Automatically detect adapters for paired-end reads."
+    action = "store_true",
+    help = "Automatically detect adapters for paired-end reads."
     )
     parser.add_argument(
         "--cut_front",
-        action="store_true",
-        help="Enable front sliding-window trimming."
+        action = "store_true",
+        help = "Enable front sliding-window trimming."
     )
 
     parser.add_argument(
         "--cut_tail",
-        action="store_true",
-        help="Enable tail sliding-window trimming."
+        action = "store_true",
+        help = "Enable tail sliding-window trimming."
     )
 
     parser.add_argument(
         "--cut_right",
-        action="store_true",
-        help="Enable right-end sliding-window trimming."
+        action = "store_true",
+        help = "Enable right-end sliding-window trimming."
     )
 
     parser.add_argument(
         "--disable_quality_filtering",
-        action="store_true",
-        help="Disable quality filtering."
+        action = "store_true",
+        help = "Disable quality filtering."
     )
 
     parser.add_argument(
         "--disable_length_filtering",
-        action="store_true",
-        help="Disable length filtering."
+        action = "store_true",
+        help = "Disable length filtering."
     )
 
     parser.add_argument(
         "--trim_poly_g",
-        action="store_true",
-        help="Enable poly-G trimming."
+        action = "store_true",
+        help = "Enable poly-G trimming."
     )
 
     parser.add_argument(
         "--disable_trim_poly_g",
-        action="store_true",
-        help="Disable automatic poly-G trimming."
+        action = "store_true",
+        help = "Disable automatic poly-G trimming."
     )
 
     parser.add_argument(
         "--trim_poly_x",
-        action="store_true",
-        help="Enable poly-X trimming."
+        action = "store_true",
+        help = "Enable poly-X trimming."
     )
 
     # Return the parsed arguments.

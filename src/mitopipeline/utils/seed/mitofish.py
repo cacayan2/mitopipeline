@@ -8,6 +8,7 @@ Lookup of mitochondrial refernece candidates from MitoFish.
 from pathlib import Path
 import logging
 import sys
+import pandas as pd
 from mitopipeline.utils.seed.models import SeedReferenceCandidate
 
 class MitoFishReferenceLookup:
@@ -101,5 +102,94 @@ class MitoFishReferenceLookup:
         if sample_id: 
             return f"{{{sample_id}}}"
 
-
         return ""
+
+    def _lookup_taxon_ids(self, scientific_name: str) -> list[int]:
+        """
+        Matches an exact scientific name to NCBI taxonomy ID's using MitoFish.
+
+        Args:
+            scientific_name (str): The scientific name of the organism.
+
+        Returns:
+            list[int]: A list of NCBI taxonomy ID's. 
+        """
+        # Obtaining the logging context.
+        context = self._log_context()
+
+        # Defining the path to the MitoFish tasxonomy name table.
+        taxonomy_path = self.database_dir / "taxonid_name.parquet"
+
+        # Validating the taxonomy name table path.
+        if not taxonomy_path.is_file():
+            self.logger.error(f"{context} MitoFish taxonomy name table not found at {taxonomy_path}.")
+            sys.exit(1)
+
+        # Loading the MitoFish taxonomy name table.
+        try:
+            taxonomy = pd.read_parquet(taxonomy_path)
+        except Exception as e:
+            self.logger.error(f"{context} Failed to load MitoFish taxonomy name table from {taxonomy_path}: {e}")
+            sys.exit(1)
+
+        # Resolving the exact normalized scientific name.
+        matches = taxonomy[taxonomy["name"] == scientific_name]
+
+        # Handling names absent from the MitoFish taxonomy table.
+        if matches.empty:
+            self.logger.warning(f"{context} No MitoFish taxonomy entry found for {scientific_name}.")
+            return []
+
+        # Extracting unique matching NCBI taxonomy IDs.
+        taxon_ids = (matches["taxon_id"].drop_na().astype(int).drop_duplicates().tolist())
+
+        # Logging successful taxonomy ID lookup.
+        self.logger.info(f"{context} Found {len(taxon_ids)} MitoFish taxonomy ID(s) for {scientific_name}.")
+        self.logger.debug(f"{context} MitoFish taxonomy ID(s) for {scientific_name}: {taxon_ids}")
+
+        return taxon_ids
+
+    def _lookup_accessions(self, taxon_ids: list[int]) -> list[str]:
+        """
+        Matches NCBI taxonomy ID's to mitochondrial accessions using MitoFish.
+
+        Args:
+            taxon_ids (list[int]): A list of NCBI taxonomy ID's.
+
+        Returns:
+            list[str]: A list of mitochondrial accessions.         
+        """
+        # Obtaining the logging context.
+        context = self._log_context()
+
+        # Defining the path to the MitoFish sequence taxonomy table.
+        sequence_taxonomy_path = self.database_dir / "sequence_taxonid.parquet"
+
+        # Validating the sequence taxonomy table path.
+        if not sequence_taxonomy_path.is_file():
+            self.logger.error(f"{context} MitoFish sequence taxonomy table not found at {sequence_taxonomy_path}.")
+            sys.exit(1)
+
+        # Loading the MitoFish sequence taxonomy table.
+        try:
+            sequence_taxonomy = pd.read_parquet(sequence_taxonomy_path)
+        except Exception as e:
+            self.logger.error(f"{context} Failed to load MitoFish sequence taxonomy table from {sequence_taxonomy_path}: {e}")
+            sys.exit(1)
+
+        # Resolving taxonomy IDs against MitoFish sequence metadata.
+        matches = sequence_taxonomy[sequence_taxonomy["taxon_id"].isin(taxon_ids)]
+
+        # Handling taxonomy IDs without sequence records.
+        if matches.empty():
+            self.logger.warning(f"{context} No mitochondrial accessions found for taxonomy ID(s): {taxon_ids}.")
+            return []
+
+        # Extracting unique sequence accessions.
+        accessions = (matches["accession"].drop_na().drop_duplicates().tolist())
+
+        # Logigng successful accession lookup.
+        self.logger.info(f"{context} Found {len(accessions)} mitochondrial accession(s) for taxonomy ID(s): {taxon_ids}.")
+        self.logger.debug(f"{context} Mitochondrial accession(s) for taxonomy ID(s) {taxon_ids}: {accessions}")
+
+        return accessions

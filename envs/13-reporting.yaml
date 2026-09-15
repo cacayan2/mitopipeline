@@ -8,3 +8,5 @@ dependencies:
   - biopython
   - pandas
   - matplotlib
+  - pandoc
+  - typst
