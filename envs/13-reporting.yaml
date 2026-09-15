@@ -1,13 +1,10 @@
-name: mitopipeline-phylogeny
-
+name: 13-reporting
 channels:
   - conda-forge
   - bioconda
   - defaults
-
 dependencies:
   - python=3.12
-  - mafft
-  - iqtree=3.1.2
   - biopython
+  - pandas
   - matplotlib

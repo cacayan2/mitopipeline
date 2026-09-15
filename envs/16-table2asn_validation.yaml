@@ -1,10 +1,9 @@
-name: mitopipeline-pdf-export
-
+name: 16-table2asn_validation
 channels:
   - conda-forge
+  - bioconda
   - defaults
-
 dependencies:
   - python=3.12
-  - pandoc
-  - typst
+  - pandas
+  - table2asn

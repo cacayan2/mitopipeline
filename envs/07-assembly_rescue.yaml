@@ -1,4 +1,4 @@
-name: mito-rescue
+name: m07-assembly_rescue
 channels:
   - conda-forge
   - bioconda

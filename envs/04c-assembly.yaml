@@ -1,4 +1,4 @@
-name: mito-assembly
+name: 04c-assembly
 channels:
   - conda-forge
   - bioconda

@@ -1,11 +1,9 @@
-name: mitopipeline-table2asn
-
+name: 09-visualization
 channels:
   - conda-forge
   - bioconda
   - defaults
-
 dependencies:
   - python=3.12
-  - pandas
-  - table2asn
+  - biopython
+  - matplotlib

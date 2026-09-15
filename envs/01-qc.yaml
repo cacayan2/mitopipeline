@@ -1,0 +1,7 @@
+name: 01-qc
+channels:
+  - conda-forge
+  - bioconda
+dependencies:
+  - fastqc
+  - pip

@@ -1,4 +1,4 @@
-name: mito-annotation
+name: 08b-annotation
 channels:
   - conda-forge
   - bioconda

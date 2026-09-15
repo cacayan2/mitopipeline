@@ -1,7 +1,9 @@
-name: fastqc-env
+name: 05-blast
 channels:
   - conda-forge
   - bioconda
+  - defaults
 dependencies:
-  - fastqc
+  - python>=3.11
+  - blast
   - pip
