@@ -141,7 +141,7 @@ class MitoFishReferenceLookup:
             return []
 
         # Extracting unique matching NCBI taxonomy IDs.
-        taxon_ids = (matches["taxon_id"].drop_na().astype(int).drop_duplicates().tolist())
+        taxon_ids = (matches["taxon_id"].dropna().astype(int).drop_duplicates().tolist())
 
         # Logging successful taxonomy ID lookup.
         self.logger.info(f"{context} Found {len(taxon_ids)} MitoFish taxonomy ID(s) for {scientific_name}.")
@@ -163,7 +163,7 @@ class MitoFishReferenceLookup:
         context = self._log_context()
 
         # Defining the path to the MitoFish sequence taxonomy table.
-        sequence_taxonomy_path = self.database_dir / "sequence_taxonid.parquet"
+        sequence_taxonomy_path = self.database_dir / "seq_taxonid.parquet"
 
         # Validating the sequence taxonomy table path.
         if not sequence_taxonomy_path.is_file():
@@ -181,12 +181,12 @@ class MitoFishReferenceLookup:
         matches = sequence_taxonomy[sequence_taxonomy["taxon_id"].isin(taxon_ids)]
 
         # Handling taxonomy IDs without sequence records.
-        if matches.empty():
+        if matches.empty:
             self.logger.warning(f"{context} No mitochondrial accessions found for taxonomy ID(s): {taxon_ids}.")
             return []
 
         # Extracting unique sequence accessions.
-        accessions = (matches["accession"].drop_na().drop_duplicates().tolist())
+        accessions = (matches["accession"].dropna().drop_duplicates().tolist())
 
         # Logigng successful accession lookup.
         self.logger.info(f"{context} Found {len(accessions)} mitochondrial accession(s) for taxonomy ID(s): {taxon_ids}.")
