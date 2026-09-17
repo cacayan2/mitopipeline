@@ -30,13 +30,13 @@ class MitoFishReferenceLookup:
         self.logger = logger
         self.sample_id = sample_id
 
-    def lookup(self, scientific_name: str, gene: str = "12S") -> list[SeedReferenceCandidate]:
+    def lookup(self, scientific_name: str, gene: str = "12S_rRNA") -> list[SeedReferenceCandidate]:
         """
         Returns the candidate references for an organism and gene.
 
         Args:
             scientific_name (str): The scientific name of the organism.
-            gene (str): The mitochondrial gene to query. Defaults to "12S".
+            gene (str): The mitochondrial gene to query. Defaults to "12S_rRNA".
 
         Returns:
             list[SeedReferenceCandidate]: A list of candidate reference sequences. 
@@ -224,15 +224,17 @@ class MitoFishReferenceLookup:
             sys.exit(1)
 
         # Restricting annotations to accessions associated with the organism of interest.
-        matches = annotations["accession"].isin(accessions)
+        matches = annotations[annotations["accession"].isin(accessions)]
 
         # Handling accessions without any records.
         if matches.empty:
             self.logger.warning(f"{context} No MitoFish annotation records found for {scientific_name}.")
             return []
 
+
+
         # Restricting annotation records to the requested mitochondrial gene.
-        gene_matches = matches[matches["gene"].str.casefold() == gene.casefold()]
+        gene_matches = matches[matches["gene"] == gene]
 
         # Handling accessions without the requested gene.
         if gene_matches.empty:
@@ -244,11 +246,8 @@ class MitoFishReferenceLookup:
 
         # Iterating through the gene matches and building the candidates.
         for _, record in gene_matches.iterrows():
-            sequence_length = None
-
-            # Calculating the gene-sequence length when coordinates are available.
-            if "start" in gene_matches.columns and "end" in gene_matches.columns and pd.notna(record["start"]) and pd.notna(record["end"]):
-                sequence_length = abs(int(record["end"]) - int(record["start"])) + 1
+            # Extracting the sequence length.
+            sequence_length = int(record["length"]) if pd.notna(record["length"]) else None
 
             # Creating the candidate.
             candidate = SeedReferenceCandidate(
