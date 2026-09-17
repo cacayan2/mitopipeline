@@ -69,15 +69,15 @@ class MitoFishReferenceLookup:
             return []
 
         # Looking up mitochondrial accessions associated with the organism.
-        accessions = self._lookup_accessions(taxon_ids)
+        accession_taxon_ids = self._lookup_accessions(taxon_ids)
 
         # Handling organisms without mitochondrial sequence records.
-        if not accessions:
+        if not accession_taxon_ids:
             self.logger.warning(f"{context} No mitochondrial accessions found for {scientific_name}.")
             return []
 
         # Building candidates matching the requested gene.
-        candidates = self._build_candidates(accessions, scientific_name, gene)
+        candidates = self._build_candidates(accession_taxon_ids, scientific_name, gene)
 
         # Logging an unsuccessful gene lookup.
         if not candidates:
@@ -104,7 +104,7 @@ class MitoFishReferenceLookup:
 
         return ""
 
-    def _lookup_taxon_ids(self, scientific_name: str) -> list[int]:
+    def _lookup_taxon_ids(self, scientific_name: str) -> list[str]:
         """
         Matches an exact scientific name to NCBI taxonomy ID's using MitoFish.
 
@@ -112,52 +112,79 @@ class MitoFishReferenceLookup:
             scientific_name (str): The scientific name of the organism.
 
         Returns:
-            list[int]: A list of NCBI taxonomy ID's. 
+            list[str]: A list of matching NCBI taxonomy ID's. 
         """
         # Obtaining the logging context.
         context = self._log_context()
 
-        # Defining the path to the MitoFish tasxonomy name table.
-        taxonomy_path = self.database_dir / "taxonid_name.parquet"
+        # Defining paths to the required MitoFish taxonomy tables.
+        taxonomy_name_path = self.database_dir / "taxonid_name.parquet"
+        species_lineage_path = self.database_dir / "speciesid_lineageid.parquet"
+        taxon_species_path = self.database_dir / "taxonid_speciesid.parquet"
 
-        # Validating the taxonomy name table path.
-        if not taxonomy_path.is_file():
-            self.logger.error(f"{context} MitoFish taxonomy name table not found at {taxonomy_path}.")
-            sys.exit(1)
+        # Validating the required taxonomy tables.
+        required_tables = [taxonomy_name_path, species_lineage_path, taxon_species_path]
+        for path in required_tables:
+            if not path.is_file():
+                self.logger.error(f"{context} Required MitoFish taxonomy table not found at {path}.")
+                sys.exit(1)
 
-        # Loading the MitoFish taxonomy name table.
+        # Loading the required MitoFish taxonomy tables.
         try:
-            taxonomy = pd.read_parquet(taxonomy_path)
+            taxonomy_names = pd.read_parquet(taxonomy_name_path)
+            species_lineages = pd.read_parquet(species_lineage_path)
+            taxon_species = pd.read_parquet(taxon_species_path)
         except Exception as e:
-            self.logger.error(f"{context} Failed to load MitoFish taxonomy name table from {taxonomy_path}: {e}")
+            self.logger.error(f"{context} Failed to load MitoFish taxonomy tables: {e}")
             sys.exit(1)
 
-        # Resolving the exact normalized scientific name.
-        matches = taxonomy[taxonomy["name"] == scientific_name]
+        # Resolving the exact scientific name to MitoFish lineage IDs.
+        name_matches = taxonomy_names[taxonomy_names["lineage_name"] == scientific_name]
 
-        # Handling names absent from the MitoFish taxonomy table.
-        if matches.empty:
-            self.logger.warning(f"{context} No MitoFish taxonomy entry found for {scientific_name}.")
+        # Handling scientific anmes absent from MitoFish.
+        if name_matches.empty:
+            self.logger.warning(f"{context} Scientific name {scientific_name} not found in MitoFish.")
             return []
 
-        # Extracting unique matching NCBI taxonomy IDs.
-        taxon_ids = (matches["taxon_id"].dropna().astype(int).drop_duplicates().tolist())
+        # Extracting unique matching lineage IDs.
+        lineage_ids = name_matches["lineage_id"].dropna().drop_duplicates().tolist()
 
-        # Logging successful taxonomy ID lookup.
+        # Resolving lineage IDs to MitoFish species IDs. 
+        lineage_matches = species_lineages[species_lineages["lineage_id"].isin(lineage_ids)]
+
+        # Handling lineage IDs without associated species IDs.
+        if lineage_matches.empty:
+            self.logger.warning(f"{context} Lineage IDs {lineage_ids} not found in MitoFish.")
+            return []
+
+        # Extracting unique matching species IDs.
+        species_ids = (lineage_matches["species_id"].dropna().drop_duplicates().tolist())
+
+        # Resolving MitoFish species IDs to NCBi taxonomy IDs.
+        taxon_matches = taxon_species[taxon_species["species_id"].isin(species_ids)]
+
+        # Handling species IDs without associated taxonomy IDs.
+        if taxon_matches.empty:
+            self.logger.warning(f"{context} Species IDs {species_ids} not found in MitoFish.")
+            return []
+
+        # Extracting unique matching taxonomy IDs.
+        taxon_ids = (taxon_matches["taxon_id"].dropna().drop_duplicates().tolist())
+
+        # Logging successful lookup completion. 
         self.logger.info(f"{context} Found {len(taxon_ids)} MitoFish taxonomy ID(s) for {scientific_name}.")
-        self.logger.debug(f"{context} MitoFish taxonomy ID(s) for {scientific_name}: {taxon_ids}")
-
+        self.logger.debug(f"{context} Taxon IDs for {scientific_name}: {taxon_ids}")
         return taxon_ids
 
-    def _lookup_accessions(self, taxon_ids: list[int]) -> list[str]:
+    def _lookup_accessions(self, taxon_ids: list[str]) -> dict[str, str]:
         """
         Matches NCBI taxonomy ID's to mitochondrial accessions using MitoFish.
 
         Args:
-            taxon_ids (list[int]): A list of NCBI taxonomy ID's.
+            taxon_ids (list[str]): A list of NCBI taxonomy ID's.
 
         Returns:
-            list[str]: A list of mitochondrial accessions.         
+            dict[str, str]: A dictionary of mitochondrial accessions keyed by NCBI taxonomy ID.    
         """
         # Obtaining the logging context.
         context = self._log_context()
@@ -185,86 +212,92 @@ class MitoFishReferenceLookup:
             self.logger.warning(f"{context} No mitochondrial accessions found for taxonomy ID(s): {taxon_ids}.")
             return []
 
-        # Extracting unique sequence accessions.
-        accessions = (matches["accession"].dropna().drop_duplicates().tolist())
+        # Removing records without an accession or taxonomy ID.
+        matches = matches.dropna(subset = ["accession", "taxon_id"])
+
+        # Detecting accessions associated with multiple taxonomy IDs.
+        taxon_counts = matches[["accession", "taxon_id"]].drop_duplicates().groupby("accession")["taxon_id"].nunique()
+        ambiguous_accessions = taxon_counts[taxon_counts > 1].index.tolist()
+        if ambiguous_accessions:
+            self.logger.error(f"{context} Multiple taxonomy IDs found for mitochondrial accessions: {ambiguous_accessions}.")
+            sys.exit(1)
+
+        # Building the accession-to-taxonomy-ID mapping.
+        accession_taxon_ids = matches[["accession", "taxon_id"]].drop_duplicates(subset = ["accession"]).set_index("accession")["taxon_id"].to_dict()
 
         # Logigng successful accession lookup.
-        self.logger.info(f"{context} Found {len(accessions)} mitochondrial accession(s) for taxonomy ID(s): {taxon_ids}.")
-        self.logger.debug(f"{context} Mitochondrial accession(s) for taxonomy ID(s) {taxon_ids}: {accessions}")
+        self.logger.info(f"{context} Found {len(accession_taxon_ids)} mitochondrial accession(s) for taxonomy ID(s): {taxon_ids}.")
+        self.logger.debug(f"{context} Mitochondrial accession(s) for taxonomy ID(s) {taxon_ids}: {accession_taxon_ids}")
 
-        return accessions
+        return accession_taxon_ids
 
-    def _build_candidates(self, accessions: list[str], scientific_name: str, gene: str) -> list[SeedReferenceCandidate]:
+    def _build_candidates(self, accession_taxon_ids: dict[str, str], scientific_name: str, gene: str) -> list[SeedReferenceCandidate]:
         """
         Builds seed reference candidates from MitoFish annotations.
 
         Args:
-            accessions (list[str]): MitoFish mitochondrial accessions associated with the organism.
+            accession_taxon_ids (dict[str, str]): A dictionary of mitochondrial accessions keyed by NCBI taxonomy ID.
             scientific_name (str): The scientific name of the organism.
             gene (str): The mitochondrial gene to query.
-        
+
         Returns:
-            list[SeedReferenceCandidate]: A list of seed reference candidates.
+            list[SeedReferenceCandidate]: A list of candidate reference sequences.
         """
         # Obtaining the logging context.
         context = self._log_context()
 
         # Defining the path to the MitoFish sequence annotation table.
-        annotation_path = self.database_dir / "seq_annotation.parquet"
+        annotation_path = self.database_dir / "seq_annotations.parquet"
 
         # Validating the sequence annotation table path.
         if not annotation_path.is_file():
-            self.logger.error(f"{context} Mitofish sequence annotation table not found at {annotation_path}.")
+            self.logger.error(f"{context} MitoFish sequence annotation table not found at {annotation_path}.")
             sys.exit(1)
 
         # Loading the MitoFish sequence annotation table.
-        try: annotations = pd.read_parquet(annotation_path)
+        try:
+            annotations = pd.read_parquet(annotation_path)
         except Exception as e:
             self.logger.error(f"{context} Failed to load MitoFish sequence annotation table from {annotation_path}: {e}")
             sys.exit(1)
 
-        # Restricting annotations to accessions associated with the organism of interest.
-        matches = annotations[annotations["accession"].isin(accessions)]
+        # Restricting annotations to accessions associated with the organism.
+        matches = annotations[annotations["accession"].isin(accession_taxon_ids)]
 
-        # Handling accessions without any records.
+        # Handling accessions without annotation records.
         if matches.empty:
             self.logger.warning(f"{context} No MitoFish annotation records found for {scientific_name}.")
             return []
-
-
 
         # Restricting annotation records to the requested mitochondrial gene.
         gene_matches = matches[matches["gene"] == gene]
 
         # Handling accessions without the requested gene.
         if gene_matches.empty:
-            self.logger.warning(f"{context} No MitoFish annotation records found for {scientific_name}, gene {gene}.")
+            self.logger.warning(f"{context} No MitoFish annotation records found for {gene} in {scientific_name}.")
             return []
 
         # Building one candidate for each matching reference record.
         candidates: list[SeedReferenceCandidate] = []
 
-        # Iterating through the gene matches and building the candidates.
+        # Iterating through each matching reference record and populating the candidate list.
         for _, record in gene_matches.iterrows():
-            # Extracting the sequence length.
-            sequence_length = int(record["length"]) if pd.notna(record["length"]) else None
+            accession = str(record["accession"])
 
-            # Creating the candidate.
+            # Creating the candidate from the MitoFish annotation record.
             candidate = SeedReferenceCandidate(
-                accession = str(record["accession"]),
-                scientific_name = scientific_name, 
-                ncbi_taxon_id = int(record["taxon_id"]),
+                accession = accession,
+                scientific_name = scientific_name,
+                ncbi_taxon_id = int(accession_taxon_ids[accession]),
                 gene = gene,
-                sequence_length = sequence_length
+                sequence_length = int(record["length"]) if pd.notna(record["length"]) else None
             )
 
-            # Adding the candidate to the list.
             candidates.append(candidate)
 
-        # Remocing duplicate candidates and preserving order.
+        # Removing duplicate candidates and preserving order.
         candidates = list(dict.fromkeys(candidates))
 
-        # Logigng successful candidate construction.
-        self.logger.info(f"{context} Built {len(candidates)} MitoFish reference candidate(s) for {scientific_name}, gene {gene}.")
-
+        # Logging succcessful candidate construction.
+        self.logger.info(f"{context} Found {len(candidates)} candidate reference(s) for {scientific_name}, gene {gene}.")
         return candidates
