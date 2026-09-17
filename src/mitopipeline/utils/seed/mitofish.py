@@ -193,3 +193,79 @@ class MitoFishReferenceLookup:
         self.logger.debug(f"{context} Mitochondrial accession(s) for taxonomy ID(s) {taxon_ids}: {accessions}")
 
         return accessions
+
+    def _build_candidates(self, accessions: list[str], scientific_name: str, gene: str) -> list[SeedReferenceCandidate]:
+        """
+        Builds seed reference candidates from MitoFish annotations.
+
+        Args:
+            accessions (list[str]): MitoFish mitochondrial accessions associated with the organism.
+            scientific_name (str): The scientific name of the organism.
+            gene (str): The mitochondrial gene to query.
+        
+        Returns:
+            list[SeedReferenceCandidate]: A list of seed reference candidates.
+        """
+        # Obtaining the logging context.
+        context = self._log_context()
+
+        # Defining the path to the MitoFish sequence annotation table.
+        annotation_path = self.database_dir / "seq_annotation.parquet"
+
+        # Validating the sequence annotation table path.
+        if not annotation_path.is_file():
+            self.logger.error(f"{context} Mitofish sequence annotation table not found at {annotation_path}.")
+            sys.exit(1)
+
+        # Loading the MitoFish sequence annotation table.
+        try: annotations = pd.read_parquet(annotation_path)
+        except Exception as e:
+            self.logger.error(f"{context} Failed to load MitoFish sequence annotation table from {annotation_path}: {e}")
+            sys.exit(1)
+
+        # Restricting annotations to accessions associated with the organism of interest.
+        matches = annotations["accession"].isin(accessions)
+
+        # Handling accessions without any records.
+        if matches.empty:
+            self.logger.warning(f"{context} No MitoFish annotation records found for {scientific_name}.")
+            return []
+
+        # Restricting annotation records to the requested mitochondrial gene.
+        gene_matches = matches[matches["gene"].str.casefold() == gene.casefold()]
+
+        # Handling accessions without the requested gene.
+        if gene_matches.empty:
+            self.logger.warning(f"{context} No MitoFish annotation records found for {scientific_name}, gene {gene}.")
+            return []
+
+        # Building one candidate for each matching reference record.
+        candidates: list[SeedReferenceCandidate] = []
+
+        # Iterating through the gene matches and building the candidates.
+        for _, record in gene_matches.iterrows():
+            sequence_length = None
+
+            # Calculating the gene-sequence length when coordinates are available.
+            if "start" in gene_matches.columns and "end" in gene_matches.columns and pd.notna(record["start"]) and pd.notna(record["end"]):
+                sequence_length = abs(int(record["end"]) - int(record["start"])) + 1
+
+            # Creating the candidate.
+            candidate = SeedReferenceCandidate(
+                accession = str(record["accession"]),
+                scientific_name = scientific_name, 
+                ncbi_taxon_id = int(record["taxon_id"]),
+                gene = gene,
+                sequence_length = sequence_length
+            )
+
+            # Adding the candidate to the list.
+            candidates.append(candidate)
+
+        # Remocing duplicate candidates and preserving order.
+        candidates = list(dict.fromkeys(candidates))
+
+        # Logigng successful candidate construction.
+        self.logger.info(f"{context} Built {len(candidates)} MitoFish reference candidate(s) for {scientific_name}, gene {gene}.")
+
+        return candidates
