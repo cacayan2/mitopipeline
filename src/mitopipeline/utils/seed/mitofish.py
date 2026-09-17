@@ -210,7 +210,7 @@ class MitoFishReferenceLookup:
         # Handling taxonomy IDs without sequence records.
         if matches.empty:
             self.logger.warning(f"{context} No mitochondrial accessions found for taxonomy ID(s): {taxon_ids}.")
-            return []
+            return {}
 
         # Removing records without an accession or taxonomy ID.
         matches = matches.dropna(subset = ["accession", "taxon_id"])
@@ -236,7 +236,7 @@ class MitoFishReferenceLookup:
         Builds seed reference candidates from MitoFish annotations.
 
         Args:
-            accession_taxon_ids (dict[str, str]): A dictionary of mitochondrial accessions keyed by NCBI taxonomy ID.
+            accession_taxon_ids (dict[str, str]): A mapping of mitochondrial accessions to NCBI taxonomy IDs.
             scientific_name (str): The scientific name of the organism.
             gene (str): The mitochondrial gene to query.
 
@@ -247,7 +247,7 @@ class MitoFishReferenceLookup:
         context = self._log_context()
 
         # Defining the path to the MitoFish sequence annotation table.
-        annotation_path = self.database_dir / "seq_annotations.parquet"
+        annotation_path = self.database_dir / "seq_annotation.parquet"
 
         # Validating the sequence annotation table path.
         if not annotation_path.is_file():
