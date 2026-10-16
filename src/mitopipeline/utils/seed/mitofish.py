@@ -9,7 +9,7 @@ from pathlib import Path
 import logging
 import sys
 import pandas as pd
-from mitopipeline.utils.seed.models import SeedReferenceCandidate
+from mitopipeline.utils.seed.models import DEFAULT_SEED_LOCUS, SeedReferenceCandidate
 
 class MitoFishReferenceLookup:
     """
@@ -30,7 +30,7 @@ class MitoFishReferenceLookup:
         self.logger = logger
         self.sample_id = sample_id
 
-    def lookup(self, scientific_name: str, gene: str = "12S_rRNA") -> list[SeedReferenceCandidate]:
+    def lookup(self, scientific_name: str, gene: str = DEFAULT_SEED_LOCUS) -> list[SeedReferenceCandidate]:
         """
         Returns the candidate references for an organism and gene.
 
