@@ -135,13 +135,17 @@ class BaseTool(ABC):
 
         try:
             # Running the command. 
-            completed = subprocess.run(command, cwd = self.working_dir, capture_output = True, text = True)
+            completed = subprocess.run(timed_command, cwd = self.working_dir, capture_output = True, text = True)
             runtime_seconds = time.perf_counter() - start_time
             ended_at = datetime.now()
 
-            # Reading the execution resource statistics.
+            # Reading the execution resource statistics. On a non-zero exit,
+            # GNU time prepends a human-readable notice line (e.g. "Command
+            # exited with non-zero status 1") before the -f JSON line, so
+            # the JSON line is parsed specifically rather than the whole file.
             with metrics_path.open("r", encoding = "utf-8") as handle:
-                metrics = json.load(handle)
+                metrics_lines = [line for line in handle.readlines() if line.strip()]
+            metrics = json.loads(metrics_lines[-1]) if metrics_lines else {}
             user_cpu_seconds = metrics["user_cpu_seconds"]
             system_cpu_seconds = metrics["system_cpu_seconds"]
             peak_memory_mb = metrics["peak_memory_mb"] / 1024
