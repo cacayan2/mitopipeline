@@ -12,7 +12,7 @@ import shutil
 import os
 import sys
 from mitopipeline.models.base_tool.base_tool import BaseTool
-from mitopipeline.models.sample import Sample
+from mitopipeline.models.sample.sample import Sample
 
 class FastQCRunner(BaseTool):
     """
@@ -60,9 +60,9 @@ class FastQCRunner(BaseTool):
         # instantiation function within FastQCRunner's instantiation function. 
         super().__init__(
             tool_name = tool_name,
-            workind_dir = Path(working_dir),
+            working_dir = Path(working_dir),
             logger = logger
-        )        
+        )
         
         # Setting the other class variables.
         self.output_dir = Path(output_dir)
@@ -96,8 +96,9 @@ class FastQCRunner(BaseTool):
         if self.threads <= 0:
             self.logger.error(f"{context} Please provide a valid number of threads (passed = {self.threads}).")
             sys.exit(1)
-        if self.threads > os.cpu_count():
+        if os.cpu_count() and self.threads > os.cpu_count():
             self.logger.error(f"{context} Number of threads is greater than number of cores. Please reduce the number of threads to {os.cpu_count()}.")
+            sys.exit(1)
 
     def build_command(self) -> list[str]:
         """
@@ -151,6 +152,7 @@ class FastQCRunner(BaseTool):
         for source, target in zip(sources, targets, strict=True):
             if not source.is_file():
                 self.logger.error(f"{context} Native FastQC output missing: {source}")
+                sys.exit(1)
             if source != target:
                 shutil.move(str(source), str(target))
 

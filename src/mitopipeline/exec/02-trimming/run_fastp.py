@@ -9,7 +9,7 @@ import argparse
 from logging import Logger
 from pathlib import Path
 from mitopipeline.api.fastp import FastpRunner
-from mitopipeline.models.sample import Sample
+from mitopipeline.models.sample.sample import Sample
 from mitopipeline.logging.logger_factory import make_logger
 
 def parse_args() -> argparse.Namespace: 
@@ -187,8 +187,8 @@ def main() -> int:
     # Creating the sample object.
     sample = Sample(
         sample_id = args.sample_id,
-        r1 = Path(args.r1),
-        r2 = Path(args.r2)
+        r1 = Path(args.in1),
+        r2 = Path(args.in2)
     )
 
     # Creating tool options dictionary.

@@ -9,7 +9,7 @@ import argparse
 from pathlib import Path
 from mitopipeline.api.fastqc import FastQCRunner
 from mitopipeline.logging.logger_factory import make_logger
-from mitopipeline.models.sample import Sample
+from mitopipeline.models.sample.sample import Sample
 
 def parse_args() -> argparse.Namespace:
     """
@@ -65,7 +65,6 @@ def main() -> int:
         sample = sample,
         r1_output_stem = "R1",
         r2_output_stem = "R2",
-        threads = args.threads,
         logger = logger,
         threads = args.threads
     )
@@ -73,13 +72,6 @@ def main() -> int:
 
     # Logging the start of the step.
     logger.info(f"{context} Initiating FastQC on raw sequencing data.")
-
-    # Creating the sample object.
-    sample = Sample(
-        sample_id = args.sample_id,
-        r1 = Path(args.r1),
-        r2 = Path(args.r2)
-    )
 
     # Executing FastQC.
     try: 
