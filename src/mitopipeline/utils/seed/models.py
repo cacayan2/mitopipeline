@@ -42,10 +42,13 @@ class SeedSelectionResult:
         sample_id (str): The sample this seed selection was performed for.
         scientific_name (str): The scientific name the selection was queried against.
         gene (str): The mitochondrial locus actually used (may differ from the requested locus if a fallback was needed).
-        accession (str): The source database accession for the selected reference sequence.
-        fasta_path (Path): The path to the written seed FASTA file.
+        accession (str): The source database accession for the selected reference sequence, or a fallback marker (e.g. "GETORGANELLE_DEFAULT") when no seed was selected.
         source (str): Which reference source produced this result (e.g. "mitofish" or "fallback_default_database").
+        fasta_path (Path | None): The path to the written seed FASTA file, or None when no seed was written (fallback_used is True).
         fallback_used (bool): Whether the configured database/locus could not be used, and a fallback was substituted.
+        fallback_reason (str | None): Why a fallback was needed (e.g. "no_mitofish_candidate", "ambiguous_candidates", "mitofish_lookup_failed"), or None when fallback_used is False.
+        match_level (str | None): How confidently the selected candidate matched the requested organism/locus (e.g. "exact"), or None for a fallback result.
+        checksum (str | None): A SHA-256 checksum of the selected sequence, for provenance/reproducibility -- None for a fallback result with no sequence.
         ncbi_taxon_id (int | None): The NCBI taxonomy identifier associated with the organism, if known -- a fallback source may not have one.
         sequence_length (int | None): The length of the selected sequence, if known.
     """
@@ -53,8 +56,11 @@ class SeedSelectionResult:
     scientific_name: str
     gene: str
     accession: str
-    fasta_path: Path
     source: str
+    fasta_path: Path | None = None
     fallback_used: bool = False
+    fallback_reason: str | None = None
+    match_level: str | None = None
+    checksum: str | None = None
     ncbi_taxon_id: int | None = None
     sequence_length: int | None = None

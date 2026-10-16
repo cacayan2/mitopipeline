@@ -5,16 +5,22 @@ Lookup of mitochondrial refernece candidates from MitoFish.
 """
 
 # Imports
+import gzip
 from pathlib import Path
 import logging
 import sys
 import pandas as pd
+from Bio import SeqIO
 from mitopipeline.utils.seed.models import DEFAULT_SEED_LOCUS, SeedReferenceCandidate
 
 class MitoFishReferenceLookup:
     """
-    Queries a local MitoFish reference database. 
+    Queries a local MitoFish reference database.
     """
+    # The bgzipped multi-FASTA of MitoFish's own already gene-extracted
+    # sequences, keyed by accession -- see MitoFishDatabase.SEQUENCE_FILE.
+    SEQUENCE_FILE = "mitofishdb.fa.gz"
+
     def __init__(self, database_dir: Path, logger: logging.Logger, sample_id: str | None = None) -> None:
         """
         Initializes the MitoFishReferenceLookup with the path to the local database.
@@ -301,3 +307,40 @@ class MitoFishReferenceLookup:
         # Logging succcessful candidate construction.
         self.logger.info(f"{context} Found {len(candidates)} candidate reference(s) for {scientific_name}, gene {gene}.")
         return candidates
+
+    def fetch_sequence(self, accession: str) -> str:
+        """
+        Retrieves the sequence for a MitoFish accession from the local
+        sequence database. MitoFish's own FASTA entries are already the
+        gene-extracted record for that accession (see lookup()'s
+        "gene"/"length" annotation columns) -- no feature-based gene
+        extraction is needed for a MitoFish-sourced candidate.
+
+        Args:
+            accession (str): The MitoFish accession to fetch.
+
+        Returns:
+            str: The sequence for the requested accession.
+        """
+        # Obtaining the logging context.
+        context = self._log_context()
+
+        # Validating the sequence database file.
+        sequence_path = self.database_dir / self.SEQUENCE_FILE
+        if not sequence_path.is_file():
+            self.logger.error(f"{context} MitoFish sequence database not found at {sequence_path}.")
+            sys.exit(1)
+
+        # Scanning the bgzipped multi-FASTA for the requested accession.
+        try:
+            with gzip.open(sequence_path, "rt") as handle:
+                for record in SeqIO.parse(handle, "fasta"):
+                    if record.id == accession or accession in record.id.split("|"):
+                        return str(record.seq)
+        except Exception as e:
+            self.logger.error(f"{context} Failed to read MitoFish sequence database at {sequence_path}: {e}")
+            sys.exit(1)
+
+        # Handling an accession absent from the sequence database.
+        self.logger.error(f"{context} Accession {accession} not found in MitoFish sequence database.")
+        sys.exit(1)
