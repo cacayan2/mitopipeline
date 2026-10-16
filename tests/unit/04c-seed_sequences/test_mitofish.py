@@ -106,6 +106,26 @@ def test_lookup_known_species_wrong_gene_returns_empty_list(mitofish_database: P
     candidates = lookup.lookup(scientific_name = "Semotilus atromaculatus", gene = "16S_rRNA")
     assert candidates == []
 
+def test_lookup_normalizes_surrounding_whitespace(mitofish_database: Path) -> None:
+    """
+    A scientific name/gene with leading or trailing whitespace should
+    still match, since both are normalized before querying.
+    """
+    lookup = _lookup(mitofish_database)
+    candidates = lookup.lookup(scientific_name = "  Semotilus atromaculatus  ", gene = "  12S_rRNA  ")
+    assert len(candidates) == 2
+
+def test_lookup_exits_on_corrupt_database_table(mitofish_database: Path) -> None:
+    """
+    A required table that exists but cannot be parsed (corrupt file, in
+    this case truncated) should exit rather than raise an unhandled
+    pandas/pyarrow error -- a lookup failure, not just a missing file.
+    """
+    (mitofish_database / "taxonid_name.parquet").write_bytes(b"not a real parquet file")
+    lookup = _lookup(mitofish_database)
+    with pytest.raises(SystemExit):
+        lookup.lookup(scientific_name = "Semotilus atromaculatus", gene = "12S_rRNA")
+
 def test_lookup_missing_database_files_exits(tmp_path: Path) -> None:
     """
     A database directory missing the required taxonomy tables should exit
