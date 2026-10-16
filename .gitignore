@@ -15,3 +15,5 @@ tests/fixtures/blast/
 outputs/
 resources/
 tests/fixtures/common_carp_001/
+# setuptools build artifact from pip install -e .
+build/
