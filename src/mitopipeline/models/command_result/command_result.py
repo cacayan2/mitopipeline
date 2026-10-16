@@ -73,12 +73,12 @@ class CommandResult:
         self.user_cpu_seconds = user_cpu_seconds
         self.system_cpu_seconds = system_cpu_seconds
 
-        @property
-        def cpu_time_seconds(self) -> float | None:
-            """
-            Property for the total CPU time of the command in seconds.
+    @property
+    def cpu_time_seconds(self) -> float | None:
+        """
+        Property for the total CPU time of the command in seconds.
 
-            Returns:
-                float: The total CPU time of the command in seconds.
-            """
-            return self.user_cpu_seconds + self.system_cpu_seconds
+        Returns:
+            float: The total CPU time of the command in seconds.
+        """
+        return self.user_cpu_seconds + self.system_cpu_seconds
