@@ -84,7 +84,6 @@ class BaseTool(ABC):
             None
         """
 
-    @abstractmethod
     def run(self) -> CommandResult:
         """
         Runs the external command.

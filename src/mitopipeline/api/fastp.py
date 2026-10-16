@@ -58,12 +58,15 @@ class FastpRunner(BaseTool):
         Returns: 
             None
         """ 
-        # Using the parent class constructor and setting the output file names. 
-        super().__init__(working_dir, output_dir, sample, tool_name, threads, logger, tool_options)
-        self.output_r1 = Path(self.output_dir / f"{self.sample.name}_R1.fastq.gz")
-        self.output_r2 = Path(self.output_dir / f"{self.sample.name}_R2.fastq.gz")
-        self.output_html = Path(self.output_dir / f"{self.sample.name}_fastp.html")
-        self.output_json = Path(self.output_dir / f"{self.sample.name}_fastp.json")
+        # Using the parent class constructor and setting the output file names.
+        super().__init__(tool_name = tool_name, working_dir = working_dir, logger = logger)
+        self.output_dir = Path(output_dir)
+        self.sample = sample
+        self.threads = int(threads)
+        self.output_r1 = Path(self.output_dir / f"{self.sample.sample_id}_R1.fastq.gz")
+        self.output_r2 = Path(self.output_dir / f"{self.sample.sample_id}_R2.fastq.gz")
+        self.output_html = Path(self.output_dir / f"{self.sample.sample_id}_fastp.html")
+        self.output_json = Path(self.output_dir / f"{self.sample.sample_id}_fastp.json")
         self.tool_options = tool_options or {}
 
     def validate_inputs(self) -> None:
@@ -85,12 +88,14 @@ class FastpRunner(BaseTool):
             if not path.is_file():
                 self.logger.error(f"{context} Input file does not exist: {path}.")
                 sys.exit(1)
-            if self.threads <= 0:
-                self.logger.error(f"{context} Please provide a valid number of threads (passed = {self.threads}).")
-                sys.exit(1)
-            if self.threads > os.cpu_count():
-                self.logger.error(f"{context} Number of threads is greater than number of cores. Please reduce the number of threads to {os.cpu_count()}.")
-                sys.exit(1)
+
+        # Checking that the requested thread count is valid for this machine.
+        if self.threads <= 0:
+            self.logger.error(f"{context} Please provide a valid number of threads (passed = {self.threads}).")
+            sys.exit(1)
+        if os.cpu_count() and self.threads > os.cpu_count():
+            self.logger.error(f"{context} Number of threads is greater than number of cores. Please reduce the number of threads to {os.cpu_count()}.")
+            sys.exit(1)
 
     def build_command(self) -> list[str]:
         """
@@ -108,7 +113,6 @@ class FastpRunner(BaseTool):
         # Constructing the command.
         command = [
             "fastp",
-            "--threads",
             "--in1",
             str(self.sample.r1),
             "--in2",

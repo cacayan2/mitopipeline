@@ -34,12 +34,6 @@ class _EchoTool(BaseTool):
     def postprocess_outputs(self) -> None:
         self.postprocessed = True
 
-    def run(self) -> CommandResult:
-        # run() is abstract on BaseTool even though it ships a full
-        # implementation, so every concrete tool must explicitly
-        # delegate to it.
-        return super().run()
-
 class _FailingValidateTool(_EchoTool):
     """
     An _EchoTool whose validate_outputs always raises, used to confirm
