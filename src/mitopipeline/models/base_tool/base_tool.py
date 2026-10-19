@@ -32,7 +32,8 @@ class BaseTool(ABC):
     def __init__(self,
                  tool_name: str,
                  working_dir: Path,
-                 logger: Logger) -> None:
+                 logger: Logger,
+                 metrics_dir: Path | None = None) -> None:
         """
         Instantiation method for the BaseTool class.
 
@@ -40,13 +41,15 @@ class BaseTool(ABC):
             tool_name (str): The name of the tool.
             working_dir (Path): The working directory for the tool.
             logger (Logger): The logger to use for the step of the Pipeline.
-        
+            metrics_dir (Path | None): Where to persist this run's CommandResult as JSON (Emil's request, 2026-10-19: organized, report-ready per-step compute metrics). run() already measures CPU/memory/runtime for every tool call via GNU time; without this, that measurement was computed and then discarded, never written anywhere. None (the default) skips persistence entirely -- existing callers that don't pass it keep working exactly as before.
+
         Returns:
             None
         """
         self.tool_name = tool_name
         self.working_dir = working_dir
         self.logger = logger
+        self.metrics_dir = Path(metrics_dir) if metrics_dir is not None else None
 
     @abstractmethod
     def validate_inputs(self) -> None:
@@ -167,6 +170,11 @@ class BaseTool(ABC):
                                        user_cpu_seconds = user_cpu_seconds,
                                        system_cpu_seconds = system_cpu_seconds)
 
+        # Persisting compute metrics BEFORE the success/failure branch
+        # below, so a failed run's metrics are captured too, not just a
+        # successful one's.
+        self._write_metrics(command_result)
+
         # Logic for dealing with different command result success states.
         self.logger.info(f"{context} Execution finished with return code {command_result.return_code} after {command_result.runtime_seconds} seconds.")
         if command_result.stdout: self.logger.debug(f"{context} stdout:\n{command_result.stdout.rstrip()}")
@@ -184,14 +192,47 @@ class BaseTool(ABC):
 
     def postprocess_outputs(self) -> None:
         """
-        This is an optional method which normalizes/postprocesses outpputs after successful execution. 
+        This is an optional method which normalizes/postprocesses outpputs after successful execution.
 
         Args:
             None
-        
+
         Returns:
             None
         """
+
+    def _write_metrics(self, command_result: CommandResult) -> None:
+        """
+        Persists command_result as JSON under metrics_dir, one file per
+        tool invocation. A write failure is logged, never raised -- a
+        missing metrics file should not be able to break an otherwise
+        successful (or already-failed) pipeline step.
+
+        Filenames include a sample label (when reachable, via the same
+        _log_context() logic) and a start timestamp, so repeated calls
+        from the same tool/sample across different pipeline attempts
+        never collide and overwrite each other.
+
+        Args:
+            command_result (CommandResult): The result to persist.
+
+        Returns:
+            None
+        """
+        if self.metrics_dir is None:
+            return
+
+        sample_id = getattr(self, "sample_id", None) or getattr(getattr(self, "sample", None), "sample_id", None)
+        label = f"{self.tool_name}.{sample_id}" if sample_id else self.tool_name
+        timestamp = command_result.started_at.strftime("%Y%m%dT%H%M%S%f")
+        metrics_path = self.metrics_dir / f"{label}.{timestamp}.metrics.json"
+
+        try:
+            self.metrics_dir.mkdir(parents = True, exist_ok = True)
+            with metrics_path.open("w", encoding = "utf-8") as handle:
+                json.dump(command_result.to_dict(), handle, indent = 4)
+        except OSError as error:
+            self.logger.warning(f"{self._log_context()} Could not write compute metrics to {metrics_path}: {error}.")
 
     def _log_context(self) -> str:
         """

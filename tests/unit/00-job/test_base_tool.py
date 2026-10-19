@@ -5,6 +5,7 @@ Unit tests for the BaseTool class.
 """
 
 # Imports
+import json
 import logging
 from pathlib import Path
 import pytest
@@ -110,3 +111,68 @@ def test_log_context_is_empty_without_sample_id(tmp_path: Path) -> None:
     """
     tool = _EchoTool(working_dir = tmp_path, logger = logging.getLogger("test"))
     assert tool._log_context() == ""
+
+def test_run_writes_no_metrics_file_when_metrics_dir_not_set(tmp_path: Path) -> None:
+    """
+    Existing callers that never pass metrics_dir must keep working
+    exactly as before -- no file written anywhere, no new directory
+    created.
+    """
+    tool = _EchoTool(working_dir = tmp_path, logger = logging.getLogger("test"))
+    tool.run()
+    assert tool.metrics_dir is None
+
+def test_run_persists_metrics_json_on_success(tmp_path: Path) -> None:
+    """
+    A successful run with metrics_dir set should write exactly one
+    JSON metrics file, with the real compute numbers run() already
+    measures via GNU time.
+    """
+    metrics_dir = tmp_path / "metrics"
+    tool = _EchoTool(working_dir = tmp_path, logger = logging.getLogger("test"))
+    tool.metrics_dir = metrics_dir
+    result = tool.run()
+
+    written = list(metrics_dir.glob("*.metrics.json"))
+    assert len(written) == 1
+    data = json.loads(written[0].read_text())
+    assert data["tool_name"] == "echo"
+    assert data["success"] is True
+    assert data["return_code"] == 0
+    assert data["runtime_seconds"] == result.runtime_seconds
+    assert isinstance(data["peak_memory_mb"], (int, float))
+
+def test_run_persists_metrics_json_on_failure_too(tmp_path: Path) -> None:
+    """
+    A failing command's metrics must still be persisted -- a failed
+    step's resource usage matters just as much for a report, maybe
+    more.
+    """
+    class _FailingTool(_EchoTool):
+        def build_command(self) -> list[str]:
+            return ["false"]
+
+    metrics_dir = tmp_path / "metrics"
+    tool = _FailingTool(working_dir = tmp_path, logger = logging.getLogger("test"))
+    tool.metrics_dir = metrics_dir
+    tool.run()
+
+    written = list(metrics_dir.glob("*.metrics.json"))
+    assert len(written) == 1
+    data = json.loads(written[0].read_text())
+    assert data["success"] is False
+
+def test_run_includes_sample_id_in_metrics_filename(tmp_path: Path) -> None:
+    """
+    When a sample_id is reachable, it should appear in the metrics
+    filename so multiple samples sharing one metrics_dir don't collide.
+    """
+    metrics_dir = tmp_path / "metrics"
+    tool = _EchoTool(working_dir = tmp_path, logger = logging.getLogger("test"))
+    tool.metrics_dir = metrics_dir
+    tool.sample_id = "SAMPLE_07"
+    tool.run()
+
+    written = list(metrics_dir.glob("*.metrics.json"))
+    assert len(written) == 1
+    assert "SAMPLE_07" in written[0].name

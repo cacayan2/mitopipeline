@@ -82,3 +82,34 @@ class CommandResult:
             float: The total CPU time of the command in seconds.
         """
         return self.user_cpu_seconds + self.system_cpu_seconds
+
+    def to_dict(self) -> dict:
+        """
+        Serializes this CommandResult to a JSON-safe dictionary (Emil's
+        request, 2026-10-19: per-step compute metrics, organized and
+        accessible for report generation later). stdout/stderr are
+        included so a persisted metrics file also carries enough
+        context to be useful on its own, without needing the tool's
+        separate log file too.
+
+        Args:
+            None
+
+        Returns:
+            dict: A JSON-serializable representation of this result.
+        """
+        return {
+            "tool_name": self.tool_name,
+            "command": self.command,
+            "return_code": self.return_code,
+            "success": self.success,
+            "runtime_seconds": self.runtime_seconds,
+            "started_at": self.started_at.isoformat(),
+            "ended_at": self.ended_at.isoformat(),
+            "peak_memory_mb": self.peak_memory_mb,
+            "user_cpu_seconds": self.user_cpu_seconds,
+            "system_cpu_seconds": self.system_cpu_seconds,
+            "cpu_time_seconds": self.cpu_time_seconds,
+            "stdout": self.stdout,
+            "stderr": self.stderr,
+        }
