@@ -11,8 +11,10 @@ from pathlib import Path
 import os
 import shutil
 import sys
+from dataclasses import dataclass
 from mitopipeline.models.base_tool.base_tool import BaseTool
 from mitopipeline.models.sample.sample import Sample
+from mitopipeline.utils.seed.models import SeedSelectionResult
 
 # The organelle types GetOrganelle itself supports via -F.
 VALID_ORGANELLE_TYPES = {
@@ -272,3 +274,115 @@ class GetOrganelleRunner(BaseTool):
 
         # Returning the modified command.
         return command
+
+# The status an assembly-artifact discovery can report.
+AssemblyDiscoveryStatus = str   # one of "circular", "fragmented", "missing"
+
+@dataclass(frozen = True, slots = True)
+class AssemblyArtifacts:
+    """
+    The outcome of discovering GetOrganelle's native assembly output
+    in one sample's output directory.
+
+    Attributes:
+        status (str): One of "circular" (a complete, circularized assembly was found), "fragmented" (at least one candidate was found, but none is marked complete/circular), or "missing" (no candidate at all).
+        fasta_path (Path | None): The path to the chosen native FASTA candidate, or None when status is "missing".
+        gfa_path (Path | None): The path to the chosen native GFA candidate, or None when status is "missing".
+        candidate_count (int): How many native FASTA candidates GetOrganelle actually produced.
+    """
+    status: str
+    fasta_path: Path | None
+    gfa_path: Path | None
+    candidate_count: int
+
+def discover_assembly_artifacts(output_dir: Path, logger: Logger) -> AssemblyArtifacts:
+    """
+    Discovers GetOrganelle's own native assembly output in output_dir,
+    before postprocess_outputs standardizes it to a fixed filename
+    pair. GetOrganelle names a completed, circularized assembly with
+    ".complete." in its path_sequence filename; anything else it
+    produces is a fragmented/draft candidate. Zero candidates means
+    the assembly failed outright.
+
+    Args:
+        output_dir (Path): The directory GetOrganelle wrote its native output to.
+        logger (Logger): The logger to use for this step of the pipeline.
+
+    Returns:
+        AssemblyArtifacts: The discovered status and, when available, the
+        single best candidate pair (a "complete" one if any exists,
+        otherwise the first candidate found).
+    """
+    # Discovering every native FASTA/GFA candidate GetOrganelle left behind.
+    fasta_candidates = sorted(output_dir.glob("*.path_sequence.fasta"))
+    gfa_candidates = sorted(output_dir.glob("*.selected_graph.gfa"))
+
+    # Handling the case where GetOrganelle produced nothing at all.
+    if not fasta_candidates:
+        logger.warning(f"No native assembly FASTA found in {output_dir}; assembly likely failed.")
+        return AssemblyArtifacts(status = "missing", fasta_path = None, gfa_path = None, candidate_count = 0)
+
+    # Preferring a candidate GetOrganelle itself marked complete/circular.
+    complete_candidates = [path for path in fasta_candidates if ".complete." in path.name]
+    chosen_fasta = complete_candidates[0] if complete_candidates else fasta_candidates[0]
+    status = "circular" if complete_candidates else "fragmented"
+
+    # Pairing the chosen FASTA with its matching GFA, by shared prefix
+    # (GetOrganelle names a candidate's FASTA and GFA with the same
+    # stem up to ".path_sequence."/.selected_graph.").
+    stem = chosen_fasta.name.split(".path_sequence.fasta")[0]
+    matching_gfa = next((path for path in gfa_candidates if path.name.startswith(stem)), None)
+    chosen_gfa = matching_gfa or (gfa_candidates[0] if gfa_candidates else None)
+
+    if status == "fragmented":
+        logger.warning(f"No complete/circular GetOrganelle candidate in {output_dir}; using the best fragmented candidate ({chosen_fasta.name}).")
+    else:
+        logger.info(f"Found a complete GetOrganelle assembly in {output_dir} ({chosen_fasta.name}).")
+
+    return AssemblyArtifacts(status = status, fasta_path = chosen_fasta, gfa_path = chosen_gfa,
+                              candidate_count = len(fasta_candidates))
+
+def build_runner_from_seed_result(seed_result: SeedSelectionResult,
+                                   working_dir: Path,
+                                   output_dir: Path,
+                                   sample: Sample,
+                                   organelle_type: str = "animal_mt",
+                                   tool_options: dict | None = None,
+                                   threads: int = 4,
+                                   logger: Logger | None = None) -> GetOrganelleRunner:
+    """
+    Configures a GetOrganelleRunner from a seed-selection result: a
+    resolved seed FASTA is wired in as the -s seed file; a fallback
+    result (no seed found) is left unseeded, so GetOrganelle falls
+    back to its own default database for organelle_type.
+
+    Args:
+        seed_result (SeedSelectionResult): The outcome of seed_selector.select_seed() for this sample.
+        working_dir (Path): The working directory for the command.
+        output_dir (Path): The directory to save the output files to.
+        sample (Sample): The sample object that is being worked with.
+        organelle_type (str): The GetOrganelle organelle type to assemble. Defaults to "animal_mt".
+        tool_options (dict | None): A base dictionary of options to pass to the tool; a resolved seed is merged into a copy of this, never mutating the caller's dict.
+        threads (int): The number of threads for this process to use.
+        logger (Logger | None): The logger to use for this step of the pipeline.
+
+    Returns:
+        GetOrganelleRunner: A runner configured with the seed result wired in.
+    """
+    # Copying the base tool_options so the caller's own dict is never
+    # mutated by this function.
+    resolved_options = dict(tool_options or {})
+
+    # Wiring in the resolved seed FASTA only for a genuine (non-fallback) result.
+    if not seed_result.fallback_used and seed_result.fasta_path is not None:
+        resolved_options["seed_file"] = str(seed_result.fasta_path)
+
+    return GetOrganelleRunner(
+        working_dir = working_dir,
+        output_dir = output_dir,
+        sample = sample,
+        organelle_type = organelle_type,
+        tool_options = resolved_options,
+        threads = threads,
+        logger = logger,
+    )

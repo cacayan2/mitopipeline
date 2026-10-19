@@ -8,8 +8,13 @@ Unit tests for the GetOrganelleRunner class.
 import logging
 from pathlib import Path
 import pytest
-from mitopipeline.api.getorganelle import GetOrganelleRunner
+from mitopipeline.api.getorganelle import (
+    GetOrganelleRunner,
+    build_runner_from_seed_result,
+    discover_assembly_artifacts,
+)
 from mitopipeline.models.sample.sample import Sample
+from mitopipeline.utils.seed.models import SeedSelectionResult
 
 @pytest.fixture
 def paired_sample(tmp_path: Path) -> Sample:
@@ -168,3 +173,95 @@ def test_validate_outputs_passes_when_all_outputs_present(tmp_path: Path, paired
     runner.standardized_fasta.write_text(">seq\nACGT\n")
     runner.standardized_gfa.write_text("H\tVN:Z:1.0\n")
     runner.validate_outputs()
+
+def test_discover_assembly_artifacts_missing_when_no_candidates(tmp_path: Path) -> None:
+    """
+    No native FASTA candidate at all means the assembly failed outright.
+    """
+    output_dir = tmp_path / "assembly"
+    output_dir.mkdir()
+    result = discover_assembly_artifacts(output_dir, logging.getLogger("test"))
+    assert result.status == "missing"
+    assert result.fasta_path is None
+    assert result.gfa_path is None
+    assert result.candidate_count == 0
+
+def test_discover_assembly_artifacts_fragmented_when_no_complete_candidate(tmp_path: Path) -> None:
+    """
+    A candidate exists but GetOrganelle never marked one complete --
+    status is "fragmented", not "circular".
+    """
+    output_dir = tmp_path / "assembly"
+    _write_native_outputs(output_dir, prefix = "k75")
+    result = discover_assembly_artifacts(output_dir, logging.getLogger("test"))
+    assert result.status == "fragmented"
+    assert result.fasta_path == output_dir / "k75.path_sequence.fasta"
+    assert result.candidate_count == 1
+
+def test_discover_assembly_artifacts_circular_when_complete_candidate_present(tmp_path: Path) -> None:
+    """
+    A ".complete." candidate is preferred and reported as "circular",
+    even when a fragmented candidate also exists.
+    """
+    output_dir = tmp_path / "assembly"
+    _write_native_outputs(output_dir, prefix = "k75")
+    (output_dir / "k95.complete.path_sequence.fasta").write_text(">seq2\nGGGG\n")
+    (output_dir / "k95.complete.selected_graph.gfa").write_text("H\tVN:Z:1.0\n")
+    result = discover_assembly_artifacts(output_dir, logging.getLogger("test"))
+    assert result.status == "circular"
+    assert result.fasta_path == output_dir / "k95.complete.path_sequence.fasta"
+    assert result.gfa_path == output_dir / "k95.complete.selected_graph.gfa"
+    assert result.candidate_count == 2
+
+def _seed_result(fasta_path: Path | None, fallback_used: bool) -> SeedSelectionResult:
+    """
+    Builds a minimal SeedSelectionResult for wiring tests.
+    """
+    return SeedSelectionResult(
+        sample_id = "SAMPLE_01", scientific_name = "Danio rerio", gene = "12S_rRNA",
+        accession = "ACC123" if not fallback_used else "GETORGANELLE_DEFAULT",
+        source = "mitofish" if not fallback_used else "fallback_default_database",
+        fasta_path = fasta_path, fallback_used = fallback_used,
+    )
+
+def test_build_runner_from_seed_result_wires_resolved_seed(tmp_path: Path, paired_sample: Sample) -> None:
+    """
+    A genuine (non-fallback) seed result's FASTA is wired in as the
+    -s seed file.
+    """
+    seed_path = tmp_path / "seed.fasta"
+    seed_result = _seed_result(fasta_path = seed_path, fallback_used = False)
+    runner = build_runner_from_seed_result(seed_result, tmp_path, tmp_path / "assembly", paired_sample)
+    assert runner.tool_options["seed_file"] == str(seed_path)
+    command = runner.build_command()
+    assert "-s" in command
+    assert command[command.index("-s") + 1] == str(seed_path)
+
+def test_build_runner_from_seed_result_leaves_fallback_unseeded(tmp_path: Path, paired_sample: Sample) -> None:
+    """
+    A fallback seed result (no seed found) produces an unseeded
+    runner -- GetOrganelle falls back to its own default database.
+    """
+    seed_result = _seed_result(fasta_path = None, fallback_used = True)
+    runner = build_runner_from_seed_result(seed_result, tmp_path, tmp_path / "assembly", paired_sample)
+    assert "seed_file" not in runner.tool_options
+    command = runner.build_command()
+    assert "-s" not in command
+
+def test_build_runner_from_seed_result_defaults_to_animal_mt(tmp_path: Path, paired_sample: Sample) -> None:
+    """
+    organelle_type defaults to "animal_mt" when not explicitly overridden.
+    """
+    seed_result = _seed_result(fasta_path = None, fallback_used = True)
+    runner = build_runner_from_seed_result(seed_result, tmp_path, tmp_path / "assembly", paired_sample)
+    assert runner.organelle_type == "animal_mt"
+
+def test_build_runner_from_seed_result_does_not_mutate_caller_options(tmp_path: Path, paired_sample: Sample) -> None:
+    """
+    The caller's own tool_options dict must never be mutated -- a
+    resolved seed is merged into a copy.
+    """
+    caller_options = {"max_rounds": 10}
+    seed_result = _seed_result(fasta_path = tmp_path / "seed.fasta", fallback_used = False)
+    build_runner_from_seed_result(seed_result, tmp_path, tmp_path / "assembly", paired_sample, tool_options = caller_options)
+    assert caller_options == {"max_rounds": 10}
