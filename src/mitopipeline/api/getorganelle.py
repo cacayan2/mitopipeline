@@ -15,6 +15,7 @@ from dataclasses import dataclass
 from mitopipeline.models.base_tool.base_tool import BaseTool
 from mitopipeline.models.sample.sample import Sample
 from mitopipeline.utils.seed.models import SeedSelectionResult
+from mitopipeline.api.fastqc import FastQCRunner
 
 # The organelle types GetOrganelle itself supports via -F.
 VALID_ORGANELLE_TYPES = {
@@ -52,7 +53,8 @@ class GetOrganelleRunner(BaseTool):
                  tool_options: dict | None = None,
                  threads: int = 4,
                  logger: Logger | None = None,
-                 tool_name: str = "getorganelle") -> None:
+                 tool_name: str = "getorganelle",
+                 metrics_dir: Path | None = None) -> None:
         """
         Instantiation method for the creation of the
         GetOrganelleRunner class. Calls the BaseTool instantiation methods
@@ -67,19 +69,31 @@ class GetOrganelleRunner(BaseTool):
             threads (int): The number of the threads for this process to use.
             logger (Logger): The logger to use for this of the pipeline.
             tool_name (str): The name of the tool (by default will be getorganelle).
+            metrics_dir (Path | None): Where to persist this run's compute metrics (CPU, memory, runtime) as JSON; None skips persistence. See BaseTool.
 
         Returns:
             None
         """
         # Using the parent class constructor and setting the output file names.
-        super().__init__(tool_name = tool_name, working_dir = working_dir, logger = logger)
+        super().__init__(tool_name = tool_name, working_dir = working_dir, logger = logger, metrics_dir = metrics_dir)
         self.output_dir = Path(output_dir)
         self.sample = sample
         self.organelle_type = organelle_type
-        self.tool_options = tool_options or {}
+
+        # Copying the caller's tool_options (never mutate what was passed
+        # in, matching build_runner_from_seed_result's own stated care)
+        # and forcing keep_temp_files on: without GetOrganelle's own
+        # --keep-temp, the extended_*_paired.fq reads it recruits (the
+        # ones actually handed to SPAdes for assembly) are deleted by
+        # GetOrganelle itself before this wrapper ever sees them, so the
+        # recruited-reads QC step below would have nothing to QC.
+        self.tool_options = dict(tool_options or {})
+        self.tool_options.setdefault("keep_temp_files", True)
+
         self.threads = int(threads)
         self.standardized_fasta = self.output_dir / "data.fasta"
         self.standardized_gfa = self.output_dir / "graph.gfa"
+        self.recruited_reads_fastqc_dir = self.output_dir / "recruited_reads_fastqc"
 
     def validate_inputs(self) -> None:
         """
@@ -148,10 +162,77 @@ class GetOrganelleRunner(BaseTool):
         # seed file, if a seed was selected for this sample).
         return self._add_options(command)
 
+    def _recruited_reads_paths(self) -> tuple[Path, Path]:
+        """
+        The paired reads GetOrganelle recruited as mitochondrial-like
+        during its own extending process -- the exact reads handed to
+        SPAdes for assembly, before assembly. Confirmed against the
+        installed get_organelle_from_reads.py: written as
+        "{prefix}extended_1_paired.fq" / "{prefix}extended_2_paired.fq"
+        in the output directory, and never removed by GetOrganelle
+        itself (unlike the pre-split "{prefix}extended_1/2.fq", which
+        it deletes once keep_temp_files is not set).
+
+        Args:
+            None
+
+        Returns:
+            tuple[Path, Path]: The expected (r1, r2) recruited-reads paths, whether or not they actually exist yet.
+        """
+        prefix = str(self.tool_options.get("prefix") or "")
+        return (
+            self.output_dir / f"{prefix}extended_1_paired.fq",
+            self.output_dir / f"{prefix}extended_2_paired.fq",
+        )
+
+    def _run_recruited_reads_qc(self) -> None:
+        """
+        Runs FastQC on the reads GetOrganelle recruited as
+        mitochondrial-like before assembly (Emil's request,
+        2026-10-19): a real, early look at whether what's about to be
+        assembled actually looks like clean, usable sequence, not just
+        trusting the final assembly's own quality.
+
+        Missing recruited-reads files are logged and skipped rather
+        than failing the whole assembly over it -- this is a
+        supplementary QC artifact, not a correctness gate on the
+        assembly itself.
+
+        Args:
+            None
+
+        Returns:
+            None
+        """
+        context = self._log_context()
+        r1, r2 = self._recruited_reads_paths()
+
+        if not (r1.is_file() and r2.is_file()):
+            self.logger.warning(f"{context} Recruited-reads QC skipped: expected {r1.name}/{r2.name} not found in {self.output_dir} (keep_temp_files may not have taken effect).")
+            return
+
+        recruited_sample = Sample(sample_id = self.sample.sample_id, r1 = r1, r2 = r2)
+        qc_runner = FastQCRunner(
+            working_dir = self.output_dir,
+            output_dir = self.recruited_reads_fastqc_dir,
+            sample = recruited_sample,
+            r1_output_stem = "recruited_R1",
+            r2_output_stem = "recruited_R2",
+            logger = self.logger,
+            threads = self.threads,
+        )
+        try:
+            result = qc_runner.run()
+            if not result.success:
+                self.logger.warning(f"{context} FastQC on recruited reads exited with return code {result.return_code}; continuing, this is supplementary QC, not an assembly correctness check.")
+        except SystemExit:
+            self.logger.warning(f"{context} FastQC on recruited reads failed validation; continuing, this is supplementary QC, not an assembly correctness check.")
+
     def postprocess_outputs(self) -> None:
         """
         Standardizes GetOrganelle's own versioned output filenames to a
-        fixed data.fasta/graph.gfa pair, then removes everything else
+        fixed data.fasta/graph.gfa pair, runs FastQC on the reads it
+        recruited before assembly, then removes everything else
         GetOrganelle left behind in the output directory.
 
         Args:
@@ -179,8 +260,15 @@ class GetOrganelleRunner(BaseTool):
         shutil.copy2(fasta_candidates[0], self.standardized_fasta)
         shutil.copy2(gfa_candidates[0], self.standardized_gfa)
 
+        # QC'ing the recruited reads BEFORE the cleanup below deletes
+        # them -- they're GetOrganelle's own intermediate files, not
+        # part of the standardized output, so they don't survive past
+        # this point otherwise.
+        self._run_recruited_reads_qc()
+
         # Removing everything else GetOrganelle left behind.
-        retained_names = {self.standardized_fasta.name, self.standardized_gfa.name, "assembly.log"}
+        retained_names = {self.standardized_fasta.name, self.standardized_gfa.name, "assembly.log",
+                           self.recruited_reads_fastqc_dir.name}
         for child in self.output_dir.iterdir():
             if child.name in retained_names:
                 continue
@@ -262,7 +350,11 @@ class GetOrganelleRunner(BaseTool):
             "fast_mode": "--fast",
             "reverse_lsc": "--reverse-lsc",
             "no_slim": "--no-slim",
-            "keep_temp_files": "--keep-temp-files",
+            # The real GetOrganelle flag is --keep-temp (confirmed against
+            # the installed get_organelle_from_reads.py's own --help and
+            # argparse dest="keep_temp_files"); --keep-temp-files isn't a
+            # recognized flag at all and GetOrganelle would reject it.
+            "keep_temp_files": "--keep-temp",
             "verbose": "--verbose",
         }
 
@@ -349,7 +441,8 @@ def build_runner_from_seed_result(seed_result: SeedSelectionResult,
                                    organelle_type: str = "animal_mt",
                                    tool_options: dict | None = None,
                                    threads: int = 4,
-                                   logger: Logger | None = None) -> GetOrganelleRunner:
+                                   logger: Logger | None = None,
+                                   metrics_dir: Path | None = None) -> GetOrganelleRunner:
     """
     Configures a GetOrganelleRunner from a seed-selection result: a
     resolved seed FASTA is wired in as the -s seed file; a fallback
@@ -365,6 +458,7 @@ def build_runner_from_seed_result(seed_result: SeedSelectionResult,
         tool_options (dict | None): A base dictionary of options to pass to the tool; a resolved seed is merged into a copy of this, never mutating the caller's dict.
         threads (int): The number of threads for this process to use.
         logger (Logger | None): The logger to use for this step of the pipeline.
+        metrics_dir (Path | None): Where to persist this run's compute metrics as JSON; None skips persistence. See BaseTool.
 
     Returns:
         GetOrganelleRunner: A runner configured with the seed result wired in.
@@ -385,4 +479,5 @@ def build_runner_from_seed_result(seed_result: SeedSelectionResult,
         tool_options = resolved_options,
         threads = threads,
         logger = logger,
+        metrics_dir = metrics_dir,
     )

@@ -265,3 +265,84 @@ def test_build_runner_from_seed_result_does_not_mutate_caller_options(tmp_path: 
     seed_result = _seed_result(fasta_path = tmp_path / "seed.fasta", fallback_used = False)
     build_runner_from_seed_result(seed_result, tmp_path, tmp_path / "assembly", paired_sample, tool_options = caller_options)
     assert caller_options == {"max_rounds": 10}
+
+def test_init_defaults_keep_temp_files_without_mutating_caller_dict(tmp_path: Path, paired_sample: Sample) -> None:
+    """
+    keep_temp_files defaults to True (needed so GetOrganelle's own
+    recruited-reads files survive for QC), via a COPY of tool_options --
+    the caller's own dict must come back untouched.
+    """
+    caller_options: dict = {}
+    runner = _make_runner(tmp_path, paired_sample, tool_options = caller_options)
+    assert runner.tool_options["keep_temp_files"] is True
+    assert caller_options == {}
+
+def test_init_respects_explicit_keep_temp_files_false(tmp_path: Path, paired_sample: Sample) -> None:
+    """
+    An explicit keep_temp_files=False from the caller is not
+    overridden -- setdefault only fills in when the key is absent.
+    """
+    runner = _make_runner(tmp_path, paired_sample, tool_options = {"keep_temp_files": False})
+    assert runner.tool_options["keep_temp_files"] is False
+
+def test_build_command_uses_the_real_keep_temp_flag(tmp_path: Path, paired_sample: Sample) -> None:
+    """
+    GetOrganelle's real flag is --keep-temp (confirmed against its own
+    --help / argparse dest), not the --keep-temp-files this used to
+    emit -- which GetOrganelle would have rejected as unrecognized.
+    """
+    runner = _make_runner(tmp_path, paired_sample)
+    command = runner.build_command()
+    assert "--keep-temp" in command
+    assert "--keep-temp-files" not in command
+
+def test_recruited_reads_paths_default_prefix(tmp_path: Path, paired_sample: Sample) -> None:
+    """
+    With no "prefix" tool option, the recruited-reads files are named
+    exactly as GetOrganelle itself names them with its own default
+    (empty) --prefix.
+    """
+    runner = _make_runner(tmp_path, paired_sample)
+    r1, r2 = runner._recruited_reads_paths()
+    assert r1 == runner.output_dir / "extended_1_paired.fq"
+    assert r2 == runner.output_dir / "extended_2_paired.fq"
+
+def test_recruited_reads_paths_honors_custom_prefix(tmp_path: Path, paired_sample: Sample) -> None:
+    """
+    A configured "prefix" tool option is reflected in the expected
+    recruited-reads filenames, matching GetOrganelle's own --prefix
+    behavior.
+    """
+    runner = _make_runner(tmp_path, paired_sample, tool_options = {"prefix": "sample01."})
+    r1, r2 = runner._recruited_reads_paths()
+    assert r1.name == "sample01.extended_1_paired.fq"
+    assert r2.name == "sample01.extended_2_paired.fq"
+
+def test_postprocess_outputs_skips_qc_and_cleans_up_when_recruited_reads_absent(tmp_path: Path, paired_sample: Sample) -> None:
+    """
+    No real recruited-reads files (e.g. an older GetOrganelle, or
+    keep_temp_files didn't take effect) must not fail the whole
+    assembly over a missing supplementary QC artifact -- cleanup still
+    runs normally and no FastQC directory gets created.
+    """
+    runner = _make_runner(tmp_path, paired_sample)
+    _write_native_outputs(runner.output_dir, prefix = "k75")
+    runner.postprocess_outputs()
+    remaining = {p.name for p in runner.output_dir.iterdir()}
+    assert remaining == {"data.fasta", "graph.gfa", "assembly.log"}
+    assert not runner.recruited_reads_fastqc_dir.exists()
+
+def test_postprocess_outputs_retains_recruited_reads_fastqc_dir(tmp_path: Path, paired_sample: Sample) -> None:
+    """
+    If FastQC output already exists in the recruited-reads QC
+    directory (simulating a completed QC run), the general cleanup
+    pass must not remove it, same as the standardized FASTA/GFA/log.
+    """
+    runner = _make_runner(tmp_path, paired_sample)
+    _write_native_outputs(runner.output_dir, prefix = "k75")
+    runner.recruited_reads_fastqc_dir.mkdir()
+    (runner.recruited_reads_fastqc_dir / "recruited_R1_fastqc.html").write_text("<html></html>")
+    runner.postprocess_outputs()
+    remaining = {p.name for p in runner.output_dir.iterdir()}
+    assert "recruited_reads_fastqc" in remaining
+    assert (runner.recruited_reads_fastqc_dir / "recruited_R1_fastqc.html").is_file()
