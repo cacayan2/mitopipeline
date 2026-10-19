@@ -13,6 +13,22 @@ from pathlib import Path
 # selection orchestration), never hard-coded past this single constant.
 DEFAULT_SEED_LOCUS = "12S_rRNA"
 
+# The order select_seed() tries loci in, most densely documented
+# first, so a sample with no usable 12S_rRNA annotation still gets a
+# real seed instead of going straight to GetOrganelle's default
+# database. Derived from REAL per-gene record counts in the local
+# MitoFish database (tmp_playground/mitofish_tables/seq_annotation.parquet,
+# measured 2026-10-19), not assumed -- COXI (the standard DNA-barcoding
+# locus) turns out to be far better documented than 12S_rRNA, which
+# used to be the only locus select_seed() ever tried:
+#   COXI 431865, Cytb 249281, 16S_rRNA 77708, 12S_rRNA 68097,
+#   ND2 46962, ATPase6 37921, ND4 26733, ND1 24582, ND5 24239,
+#   ND6 21669, COXIII 21600, ND4L 20727, ND3 20716, COXII 20616.
+LOCUS_FALLBACK_ORDER = (
+    "COXI", "Cytb", "16S_rRNA", "12S_rRNA", "ND2", "ATPase6", "ND4",
+    "ND1", "ND5", "ND6", "COXIII", "ND4L", "ND3", "COXII",
+)
+
 @dataclass(frozen = True, slots = True)
 class SeedReferenceCandidate:
     """

@@ -10,7 +10,6 @@ import logging
 from pathlib import Path
 import pandas as pd
 import pytest
-from mitopipeline.utils.seed.models import DEFAULT_SEED_LOCUS
 from mitopipeline.utils.seed.seed_selector import select_seed
 
 _SEED_SEQUENCE = "ACGTACGTACGTACGTACGTACGTACGTACGT"
@@ -100,14 +99,18 @@ def test_select_seed_falls_back_on_unknown_organism(mitofish_database: Path, tmp
         logger = logging.getLogger("test"),
     )
     assert result.fallback_used is True
-    assert result.fallback_reason == "no_mitofish_candidate"
+    assert result.fallback_reason == "no_clean_mitofish_match"
     assert result.accession == "GETORGANELLE_DEFAULT"
     assert result.fasta_path is None
 
 def test_select_seed_falls_back_on_ambiguous_candidates(mitofish_database: Path, tmp_path: Path) -> None:
     """
     More than one matching candidate for the same organism/gene is an
-    ambiguous match that must fall back rather than silently guess one.
+    ambiguous match -- not a reason to silently guess one, but also
+    not an immediate hard failure, since a different locus's
+    annotations might not share the same ambiguity. This fixture only
+    has 12S_rRNA data at all, so once that's ambiguous, every other
+    locus in the chain is empty too and it falls all the way through.
     """
     annotation_path = mitofish_database / "seq_annotation.parquet"
     pd.concat([
@@ -127,7 +130,7 @@ def test_select_seed_falls_back_on_ambiguous_candidates(mitofish_database: Path,
         logger = logging.getLogger("test"),
     )
     assert result.fallback_used is True
-    assert result.fallback_reason == "ambiguous_candidates"
+    assert result.fallback_reason == "no_clean_mitofish_match"
 
 def test_select_seed_falls_back_on_lookup_failure(tmp_path: Path) -> None:
     """
@@ -148,9 +151,12 @@ def test_select_seed_falls_back_on_lookup_failure(tmp_path: Path) -> None:
 
 def test_select_seed_falls_back_when_accession_missing_from_sequence_file(mitofish_database: Path, tmp_path: Path) -> None:
     """
-    A candidate accession present in the metadata tables but absent from
-    the sequence FASTA (a partially-synced database) must fall back
-    rather than crash.
+    A candidate accession present in the metadata tables but absent
+    from the sequence FASTA (a partially-synced database) must not
+    crash -- it tries the next locus (a different locus points to a
+    different accession, which may still be present), and since this
+    fixture only has 12S_rRNA data, falls all the way through the
+    rest of the chain to the final fallback.
     """
     with gzip.open(mitofish_database / "mitofishdb.fa.gz", "wt") as handle:
         handle.write(">SOME_OTHER_ACCESSION\nACGT\n")
@@ -163,18 +169,100 @@ def test_select_seed_falls_back_when_accession_missing_from_sequence_file(mitofi
         logger = logging.getLogger("test"),
     )
     assert result.fallback_used is True
-    assert result.fallback_reason == "sequence_fetch_failed"
+    assert result.fallback_reason == "no_clean_mitofish_match"
 
-def test_select_seed_uses_default_locus_when_unspecified(mitofish_database: Path, tmp_path: Path) -> None:
+@pytest.fixture
+def mitofish_database_coxi(tmp_path: Path) -> Path:
     """
-    Not passing a gene should use DEFAULT_SEED_LOCUS, matching the
-    "configurable seed locus" contract from #394.
+    Like mitofish_database, but the organism only has a COXI
+    annotation -- not 12S_rRNA -- so a correct chain walk must try
+    COXI (the most densely documented locus) and succeed there
+    without ever needing 12S_rRNA.
+
+    Args:
+        tmp_path (Path): The pytest-provided temporary directory.
+
+    Returns:
+        Path: The path to the synthetic database directory.
+    """
+    db_dir = tmp_path / "mitofish_db_coxi"
+    db_dir.mkdir()
+
+    pd.DataFrame({
+        "lineage_id": ["123"],
+        "lineage_name": ["Semotilus atromaculatus"],
+    }).to_parquet(db_dir / "taxonid_name.parquet")
+    pd.DataFrame({
+        "lineage_id": ["123"],
+        "species_id": ["456"],
+    }).to_parquet(db_dir / "speciesid_lineageid.parquet")
+    pd.DataFrame({
+        "species_id": ["456"],
+        "taxon_id": ["789"],
+    }).to_parquet(db_dir / "taxonid_speciesid.parquet")
+    pd.DataFrame({
+        "accession": ["ACCESSION_COXI"],
+        "taxon_id": ["789"],
+    }).to_parquet(db_dir / "seq_taxonid.parquet")
+    pd.DataFrame({
+        "accession": ["ACCESSION_COXI"],
+        "gene": ["COXI"],
+        "length": [len(_SEED_SEQUENCE)],
+    }).to_parquet(db_dir / "seq_annotation.parquet")
+
+    with gzip.open(db_dir / "mitofishdb.fa.gz", "wt") as handle:
+        handle.write(f">ACCESSION_COXI Semotilus atromaculatus COXI\n{_SEED_SEQUENCE}\n")
+
+    return db_dir
+
+def test_select_seed_tries_most_documented_locus_first(mitofish_database_coxi: Path, tmp_path: Path) -> None:
+    """
+    With no loci override, the default chain starts at COXI (the most
+    densely documented locus in the real local MitoFish database) --
+    an organism with only a COXI annotation should resolve there
+    directly, never needing to reach 12S_rRNA at all.
     """
     result = select_seed(
         sample_id = "SAMPLE_06",
+        scientific_name = "Semotilus atromaculatus",
+        database_dir = mitofish_database_coxi,
+        output_dir = tmp_path / "seeds",
+        logger = logging.getLogger("test"),
+    )
+    assert result.fallback_used is False
+    assert result.gene == "COXI"
+    assert result.accession == "ACCESSION_COXI"
+
+def test_select_seed_falls_through_empty_loci_to_a_deeper_match(mitofish_database: Path, tmp_path: Path) -> None:
+    """
+    The default mitofish_database fixture only has 12S_rRNA data --
+    COXI, Cytb, and 16S_rRNA (all tried first, being more densely
+    documented) are empty for this organism, so a correct chain walk
+    falls through all three before succeeding at 12S_rRNA.
+    """
+    result = select_seed(
+        sample_id = "SAMPLE_07",
         scientific_name = "Semotilus atromaculatus",
         database_dir = mitofish_database,
         output_dir = tmp_path / "seeds",
         logger = logging.getLogger("test"),
     )
-    assert result.gene == DEFAULT_SEED_LOCUS
+    assert result.fallback_used is False
+    assert result.gene == "12S_rRNA"
+
+def test_select_seed_accepts_custom_loci_override(mitofish_database_coxi: Path, tmp_path: Path) -> None:
+    """
+    A caller can still restrict the chain to specific loci -- passing
+    only 12S_rRNA should fall back here, since this fixture has no
+    12S_rRNA annotation at all (only COXI).
+    """
+    result = select_seed(
+        sample_id = "SAMPLE_08",
+        scientific_name = "Semotilus atromaculatus",
+        database_dir = mitofish_database_coxi,
+        output_dir = tmp_path / "seeds",
+        logger = logging.getLogger("test"),
+        loci = ("12S_rRNA",),
+    )
+    assert result.fallback_used is True
+    assert result.fallback_reason == "no_clean_mitofish_match"
