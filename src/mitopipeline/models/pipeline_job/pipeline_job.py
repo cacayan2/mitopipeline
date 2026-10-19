@@ -59,6 +59,7 @@ class PipelineJob:
         self.end_time = None
         self.created_time = None
         self.failed_time = None
+        self.completed_time = None
         self.runtime = None
         self.parent_dir = Path(parent_dir)
         self.job_dir = (self.parent_dir / self.job_id)
@@ -134,11 +135,17 @@ class PipelineJob:
         for directory in output_directories: directory.mkdir(parents = True, exist_ok = True)
         for directory in log_directories: directory.mkdir(parents = True, exist_ok = True)
 
+        # Stored (not just passed to make_logger) so mark_failed()/
+        # mark_completed() can reference it -- they already did, but the
+        # attribute was never actually set, an AttributeError on every
+        # real failure/completion until now.
+        self.global_log_file_path = self.job_dir / "logs" / "00-job" / f"{self.job_id}.global.log"
+
         # Returning the logger for the job.
         return make_logger(
             name = f"{self.job_id}.job",
             log_file_path = self.job_dir / "logs" / f"{self.job_id}.job.log",
-            global_log_file_path = self.job_dir / "logs" / "00-job" / f"{self.job_id}.global.log",
+            global_log_file_path = self.global_log_file_path,
             console_level = logging.INFO,
             file_level = logging.DEBUG
         )
@@ -155,29 +162,39 @@ class PipelineJob:
         """
         self.samples = list(samples)
 
-    def _metadata_payload(self, event_time: datetime, status: str) -> dict:
+    def _metadata_payload(self, event_time: datetime, status: str,
+                          failure_reason: str | None = None,
+                          log_tail: str | None = None) -> dict:
         """
         Returns a dictionary of metadata to be logged for the job.
 
         Args:
             event_time (datetime): The time at which the event occurred.
             status (str): The status of the event.
+            failure_reason (str | None): A short, specific description of why the job failed (which rule, what error) -- only meaningful when status is "failed".
+            log_tail (str | None): The tail of captured Snakemake stdout/stderr around the failure, for a reader who needs more than the short reason -- only meaningful when status is "failed".
 
         Returns:
             dict: A dictionary of metadata to be logged for the job.
         """
-        # Calculates the runtime of the job. 
+        # Calculates the runtime of the job.
         runtime = (event_time - self.start_time)
 
         return {
             "job_id": self.job_id,
-            "start_time": self.start_time,
+            # .isoformat(), not the raw datetime -- json.dump cannot
+            # serialize a datetime object at all; this crashed
+            # write_metadata() on every single call, every status, not
+            # just failures.
+            "start_time": self.start_time.isoformat(),
             "event_time": event_time.isoformat(),
             "runtime_seconds": runtime.total_seconds(),
             "output_dir": str(self.job_dir),
             "sample_count": len(self.samples),
             "samples": self.samples,
-            "status": status
+            "status": status,
+            "failure_reason": failure_reason,
+            "log_tail": log_tail,
         }
 
     def write_metadata(self, data: dict) -> None:
@@ -196,9 +213,9 @@ class PipelineJob:
         live_file = self.job_dir / "current_metadata.json"
         history_file = self.job_dir / "historical_metadata.json"
 
-        # Here we overwrite the live file. 
+        # Here we overwrite the live file.
         with live_file.open("w", encoding = "utf-8") as handle:
-            json.dump(data, handle, ident = 4)
+            json.dump(data, handle, indent = 4)
 
         # For the historical file, some logic must be done:
         # 1. First we check if the historical file exists - if not, we create an empty file.
@@ -221,7 +238,7 @@ class PipelineJob:
                 historical_data = []
             historical_data.append(data)
             handle.seek(0)
-            json.dump(historical_data, handle, ident = 4)
+            json.dump(historical_data, handle, indent = 4)
             handle.truncate()
         self.job_logger.info(f"Metadata for job {self.job_id} has been written to {live_file} and {history_file}.")
 
@@ -252,12 +269,14 @@ class PipelineJob:
 
         self.write_metadata(data)
 
-    def mark_failed(self) -> None:
+    def mark_failed(self, failure_reason: str | None = None,
+                    log_tail: str | None = None) -> None:
         """
         Mark the pipeline job as failed.
-        
+
         Args:
-            None
+            failure_reason (str | None): A short, specific description of why the job failed (e.g. which rule failed and its exit code), when known. Emil's request, 2026-10-19: a crash should say more than just "failed".
+            log_tail (str | None): The tail of captured Snakemake stdout/stderr around the failure, when captured.
 
         Returns:
             None
@@ -268,12 +287,16 @@ class PipelineJob:
         # Then we obtain a metadata payload for this event.
         data = self._metadata_payload(
             event_time = self.failed_time,
-            status = "failed"
+            status = "failed",
+            failure_reason = failure_reason,
+            log_tail = log_tail
         )
 
         # Logging the failure of the job and writing metadata.
-        self.job_logger.info(
-            f"Pipeline job {self.job_id} has failed and failed at {self.failed_time}. Job details can be found in {self.job_dir}. "
+        self.job_logger.error(
+            f"Pipeline job {self.job_id} has failed at {self.failed_time}"
+            + (f": {failure_reason}" if failure_reason else ".") +
+            f" Job details can be found in {self.job_dir}. "
             f"Global log file can be found at {self.global_log_file_path}.")
         self.write_metadata(data)
 
@@ -301,3 +324,58 @@ class PipelineJob:
             f"Pipeline job {self.job_id} has completed and completed at {self.completed_time}. Job details can be found in {self.job_dir}. "
             f"Global log file can be found at {self.global_log_file_path}.")
         self.write_metadata(data)
+
+    def aggregate_history(self) -> dict:
+        """
+        Summarizes this job's historical_metadata.json across every
+        time it has been launched with this same job_id -- a job
+        resumed/retried several times before finally completing is
+        exactly the case this is for (Emil's request, 2026-10-19):
+        total attempts, cumulative runtime across all of them, and a
+        per-status breakdown, ready for 12-stats_aggregation/
+        13-report_pdf to include in a report.
+
+        An empty or unreadable history is reported as zero attempts
+        rather than raising -- a report generator should get a quiet,
+        honest "nothing here yet", not a crash, over a job that simply
+        hasn't failed or been retried before.
+
+        Args:
+            None
+
+        Returns:
+            dict: {"job_id", "attempt_count", "cumulative_runtime_seconds", "status_counts" (a dict of status -> count), "last_status" (the most recent attempt's status, or None)}.
+        """
+        history_file = self.job_dir / "historical_metadata.json"
+        try:
+            historical_data = json.loads(history_file.read_text(encoding = "utf-8"))
+        except (OSError, json.JSONDecodeError):
+            historical_data = []
+
+        # Every real launch writes a "created" entry AND, once
+        # run_snakemake finishes, exactly one terminal "completed" or
+        # "failed" entry -- "created" is a lifecycle marker, not an
+        # outcome, so it's excluded here to avoid double-counting one
+        # attempt as two. (A "created" with no matching terminal entry
+        # after it means the process itself died mid-run, e.g. a power
+        # loss -- counted separately below rather than silently ignored.)
+        terminal = [entry for entry in historical_data if entry.get("status") in ("completed", "failed")]
+        created_count = sum(1 for entry in historical_data if entry.get("status") == "created")
+
+        status_counts: dict[str, int] = {}
+        cumulative_runtime_seconds = 0.0
+        for entry in terminal:
+            status = entry["status"]
+            status_counts[status] = status_counts.get(status, 0) + 1
+            cumulative_runtime_seconds += float(entry.get("runtime_seconds") or 0.0)
+
+        return {
+            "job_id": self.job_id,
+            "attempt_count": len(terminal),
+            "cumulative_runtime_seconds": cumulative_runtime_seconds,
+            "status_counts": status_counts,
+            "last_status": terminal[-1]["status"] if terminal else None,
+            # Started but never reached a terminal status (process died
+            # mid-run) -- a real gap a report should be able to flag.
+            "incomplete_attempts": max(0, created_count - len(terminal)),
+        }

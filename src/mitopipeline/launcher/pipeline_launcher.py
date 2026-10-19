@@ -342,6 +342,31 @@ def write_runtime_config(
     job.job_logger.info(f"Runtime config written to {runtime_config_path}.")
     return runtime_config_path
 
+def _extract_failure_reason(output: str, return_code: int) -> str:
+    """
+    Picks a short, specific description of why Snakemake failed out of
+    its captured output (Emil's request, 2026-10-19: a crash should say
+    more than just "it failed"). Snakemake names the failing rule on a
+    line starting with "Error in rule <name>:"; that line (plus a
+    couple that usually follow with the exit code/log path) is the
+    most useful single thing to surface. Falls back to a generic,
+    honest message when no such line is found (e.g. a config error
+    before any rule ran) rather than guessing.
+
+    Args:
+        output (str): The full captured stdout+stderr from the Snakemake run.
+        return_code (int): Snakemake's own process exit code.
+
+    Returns:
+        str: A short, specific failure reason.
+    """
+    lines = output.splitlines()
+    for i, line in enumerate(lines):
+        if line.strip().startswith("Error in rule"):
+            return " ".join(l.strip() for l in lines[i:i + 4] if l.strip())
+    return f"Snakemake exited with return code {return_code}; no specific rule-level error line was found in its output."
+
+
 def run_snakemake(
         runtime_config: Path,
         cores: int,
@@ -349,8 +374,9 @@ def run_snakemake(
         logger: logging.Logger,
         snakefile: Path = Path("ctrl/Snakefile"),
         dry_run: bool = False,
-        printshellcmds: bool = False
-) -> subprocess.CompletedProcess:
+        printshellcmds: bool = False,
+        output_log_path: Path | None = None
+) -> tuple[subprocess.CompletedProcess, str]:
     """
     Run Snakemake using the runtime configuration.
 
@@ -362,18 +388,19 @@ def run_snakemake(
         snakefile (Path, optional): The path to the Snakefile. Defaults to "ctrl/Snakefile".
         dry_run (bool, optional): Whether to run Snakemake in dry-run mode. Defaults to False.
         printshellcmds (bool, optional): Whether to print shell commands. Defaults to False.
-   
+        output_log_path (Path | None): Where to durably save Snakemake's full captured stdout/stderr, for later inspection after a crash. When None, output is still captured and returned but not saved to its own file.
+
     Returns:
-        subprocess.CompletedProcess: The result of the Snakemake run.
+        tuple[subprocess.CompletedProcess, str]: The result of the Snakemake run, and its full captured stdout+stderr (Snakemake's own output is still streamed live to the console as it runs -- capturing it doesn't silence it).
     """
-    # This is the command syntax required for snakemake. We explicitly set entrez to 1 to prevent 
-    # entrez from timing out/overloading when the task is parallelized. 
+    # This is the command syntax required for snakemake. We explicitly set entrez to 1 to prevent
+    # entrez from timing out/overloading when the task is parallelized.
     command = [
         "snakemake",
         "-s",
         str(snakefile),
         "--configfile",
-        str(runtime_config), 
+        str(runtime_config),
         "--cores",
         str(cores),
         "--resources",
@@ -383,14 +410,37 @@ def run_snakemake(
     if dry_run: command.append("--dry-run")
     if printshellcmds: command.append("--printshellcmds")
 
-    # Logging and running the command. 
+    # Logging and running the command. Output is streamed live to this
+    # process's own stdout (so watching it run interactively still
+    # works exactly as before) AND captured line-by-line into a buffer,
+    # so a failure can be reported with more than just a return code
+    # (Emil's request, 2026-10-19) -- previously this output went
+    # straight to the terminal and nowhere else, lost the moment the
+    # terminal scrolled past it or the session wasn't attended.
     logger.info(f"Running Snakemake with command: {' '.join(command)}")
-    result = subprocess.run(command, cwd = Path.cwd(), check = False)
+    captured_lines: list[str] = []
+    process = subprocess.Popen(command, cwd = Path.cwd(), stdout = subprocess.PIPE,
+                               stderr = subprocess.STDOUT, text = True, bufsize = 1)
+    assert process.stdout is not None
+    for line in process.stdout:
+        print(line, end = "")
+        captured_lines.append(line)
+    process.wait()
+    output = "".join(captured_lines)
+
+    result = subprocess.CompletedProcess(args = command, returncode = process.returncode)
+
+    if output_log_path is not None:
+        try:
+            output_log_path.parent.mkdir(parents = True, exist_ok = True)
+            output_log_path.write_text(output, encoding = "utf-8")
+        except OSError as error:
+            logger.warning(f"Could not save Snakemake's captured output to {output_log_path}: {error}.")
 
     if result.returncode == 0: logger.info("Snakemake run completed successfully.")
     else: logger.error(f"Snakemake execution failed with return code {result.returncode}")
 
-    return result
+    return result, output
 
 def launch_pipeline(
         config_path: Path,
@@ -433,21 +483,32 @@ def launch_pipeline(
         runtime_config = write_runtime_config(config = config,
                                               job = job,
                                               runtime_manifest = runtime_manifest)
-        result = run_snakemake(
+        result, snakemake_output = run_snakemake(
             snakefile = snakefile,
             runtime_config = runtime_config,
             cores = cores,
             use_conda = use_conda,
             logger = job.job_logger,
             dry_run = dry_run,
-            printshellcmds = printshellcmds
-        )  
-        if result.returncode == 0: job.mark_completed()
-        else: job.mark_failed()
+            printshellcmds = printshellcmds,
+            output_log_path = job.job_dir / "logs" / "00-job" / f"{job.job_id}.snakemake_output.log"
+        )
+        if result.returncode == 0:
+            job.mark_completed()
+        else:
+            # The last ~40 lines are usually enough to see the actual
+            # error without dumping an entire multi-hour run's output
+            # into the job's metadata file; the full output is still on
+            # disk at output_log_path for anyone who needs more.
+            log_tail = "\n".join(snakemake_output.splitlines()[-40:])
+            job.mark_failed(
+                failure_reason = _extract_failure_reason(snakemake_output, result.returncode),
+                log_tail = log_tail
+            )
         return result.returncode
     except Exception as error:
         job.job_logger.exception(f"Pipeline launch failed: {error}.")
-        job.mark_failed()
+        job.mark_failed(failure_reason = f"{type(error).__name__}: {error}")
         return 1
 
 def main() -> int:
