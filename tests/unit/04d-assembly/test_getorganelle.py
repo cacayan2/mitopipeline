@@ -213,6 +213,31 @@ def test_discover_assembly_artifacts_circular_when_complete_candidate_present(tm
     assert result.gfa_path == output_dir / "k95.complete.selected_graph.gfa"
     assert result.candidate_count == 2
 
+def test_discover_assembly_artifacts_multiple_complete_candidates_picks_one_deterministically(tmp_path: Path) -> None:
+    """
+    Two ".complete." candidates is an unusual but real possibility
+    (e.g. two GetOrganelle rounds both circularized). Still reported as
+    "circular" -- ambiguity between two already-complete assemblies is
+    not the same failure mode as having none -- but the choice must be
+    deterministic (lexical order, same tiebreak glob() already applies
+    everywhere else) rather than arbitrary, so repeat runs over the same
+    directory never silently pick a different candidate.
+    """
+    output_dir = tmp_path / "assembly"
+    _write_native_outputs(output_dir, prefix = "k75")
+    (output_dir / "k85.complete.path_sequence.fasta").write_text(">seq1\nAAAA\n")
+    (output_dir / "k85.complete.selected_graph.gfa").write_text("H\tVN:Z:1.0\n")
+    (output_dir / "k95.complete.path_sequence.fasta").write_text(">seq2\nGGGG\n")
+    (output_dir / "k95.complete.selected_graph.gfa").write_text("H\tVN:Z:1.0\n")
+
+    first = discover_assembly_artifacts(output_dir, logging.getLogger("test"))
+    second = discover_assembly_artifacts(output_dir, logging.getLogger("test"))
+
+    assert first.status == "circular"
+    assert first.candidate_count == 3
+    assert first.fasta_path == second.fasta_path  # deterministic across repeat calls
+    assert first.fasta_path == output_dir / "k85.complete.path_sequence.fasta"  # lexically first
+
 def _seed_result(fasta_path: Path | None, fallback_used: bool) -> SeedSelectionResult:
     """
     Builds a minimal SeedSelectionResult for wiring tests.
