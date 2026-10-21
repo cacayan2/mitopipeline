@@ -78,14 +78,17 @@ def test_build_command_with_seed_includes_seed_flag(tmp_path: Path, paired_sampl
     assert "-s" in command
     assert command[command.index("-s") + 1] == str(seed_path)
 
-def test_build_command_creates_output_directory(tmp_path: Path, paired_sample: Sample) -> None:
+def test_build_command_does_not_create_output_directory(tmp_path: Path, paired_sample: Sample) -> None:
     """
-    build_command should create the output directory if it does not exist.
+    build_command must NOT create the output directory: GetOrganelle
+    refuses to run if its -o directory already exists ("Please use a
+    new output directory, or use '--continue'/'--overwrite'"), and
+    creates it itself on a successful run.
     """
     runner = _make_runner(tmp_path, paired_sample)
     assert not runner.output_dir.exists()
     runner.build_command()
-    assert runner.output_dir.is_dir()
+    assert not runner.output_dir.exists()
 
 def test_validate_inputs_exits_on_unsupported_organelle_type(tmp_path: Path, paired_sample: Sample) -> None:
     """
@@ -142,6 +145,28 @@ def test_postprocess_outputs_standardizes_and_cleans_up(tmp_path: Path, paired_s
     assert runner.standardized_gfa.read_text() == "H\tVN:Z:1.0\n"
     remaining = {p.name for p in runner.output_dir.iterdir()}
     assert remaining == {"data.fasta", "graph.gfa", "assembly.log"}
+
+def test_postprocess_outputs_captures_assembly_status_before_cleanup(tmp_path: Path, paired_sample: Sample) -> None:
+    """
+    A caller that needs the circular/fragmented/missing classification
+    after run() returns must be able to read it from self.assembly_status,
+    since by then postprocess_outputs() has already renamed/deleted the
+    native *.path_sequence.fasta/*.selected_graph.gfa files
+    discover_assembly_artifacts() globs for -- calling it again afterwards
+    would always find zero candidates, regardless of the real outcome.
+    """
+    runner = _make_runner(tmp_path, paired_sample)
+    assert runner.assembly_status is None
+    (runner.output_dir / "k75.complete.path_sequence.fasta").parent.mkdir(parents = True, exist_ok = True)
+    (runner.output_dir / "k75.complete.path_sequence.fasta").write_text(">seq\nACGT\n")
+    (runner.output_dir / "k75.complete.selected_graph.gfa").write_text("H\tVN:Z:1.0\n")
+    runner.postprocess_outputs()
+    assert runner.assembly_status is not None
+    assert runner.assembly_status.status == "circular"
+    assert runner.assembly_status.candidate_count == 1
+    # The native filenames are gone by now -- confirming a second,
+    # post-hoc discover_assembly_artifacts() call would be too late.
+    assert not list(runner.output_dir.glob("*.path_sequence.fasta"))
 
 def test_postprocess_outputs_exits_on_ambiguous_native_fasta(tmp_path: Path, paired_sample: Sample) -> None:
     """

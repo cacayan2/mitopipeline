@@ -17,7 +17,7 @@ import sys
 from datetime import datetime
 from pathlib import Path
 import pytest
-from mitopipeline.api.getorganelle import GetOrganelleRunner
+from mitopipeline.api.getorganelle import GetOrganelleRunner, discover_assembly_artifacts
 from mitopipeline.models.command_result.command_result import CommandResult
 
 run_getorganelle_assembly = importlib.import_module("mitopipeline.exec.04d-assembly.run_getorganelle_assembly")
@@ -61,6 +61,9 @@ def test_successful_circular_assembly_writes_status_json(tmp_path: Path, monkeyp
         self.output_dir.mkdir(parents = True, exist_ok = True)
         (self.output_dir / "k75.complete.path_sequence.fasta").write_text(">seq\nACGT\n")
         (self.output_dir / "k75.complete.selected_graph.gfa").write_text("H\n")
+        # Mirrors postprocess_outputs() classifying BEFORE it would clean
+        # up these native files -- the real ordering this stub bypasses.
+        self.assembly_status = discover_assembly_artifacts(self.output_dir, self.logger)
         return _fake_result()
 
     monkeypatch.setattr(GetOrganelleRunner, "run", _stub_run)
@@ -82,6 +85,7 @@ def test_successful_but_fragmented_assembly_is_still_exit_zero(tmp_path: Path, m
         self.output_dir.mkdir(parents = True, exist_ok = True)
         (self.output_dir / "k75.path_sequence.fasta").write_text(">seq\nACGT\n")
         (self.output_dir / "k75.selected_graph.gfa").write_text("H\n")
+        self.assembly_status = discover_assembly_artifacts(self.output_dir, self.logger)
         return _fake_result()
 
     monkeypatch.setattr(GetOrganelleRunner, "run", _stub_run)
@@ -146,6 +150,7 @@ def test_seeded_config_passes_seed_file_through_to_the_runner(tmp_path: Path, mo
         self.output_dir.mkdir(parents = True, exist_ok = True)
         (self.output_dir / "k75.complete.path_sequence.fasta").write_text(">seq\nACGT\n")
         (self.output_dir / "k75.complete.selected_graph.gfa").write_text("H\n")
+        self.assembly_status = discover_assembly_artifacts(self.output_dir, self.logger)
         return _fake_result()
 
     monkeypatch.setattr(GetOrganelleRunner, "run", _stub_run)

@@ -95,6 +95,15 @@ class GetOrganelleRunner(BaseTool):
         self.standardized_gfa = self.output_dir / "graph.gfa"
         self.recruited_reads_fastqc_dir = self.output_dir / "recruited_reads_fastqc"
 
+        # The classification discover_assembly_artifacts() produced,
+        # captured in postprocess_outputs() before it cleans up
+        # GetOrganelle's native output filenames. A caller that needs
+        # the circular/fragmented/missing status after run() returns
+        # must read this rather than re-deriving it, since by then the
+        # native *.path_sequence.fasta/*.selected_graph.gfa files
+        # discover_assembly_artifacts() looks for no longer exist.
+        self.assembly_status: AssemblyArtifacts | None = None
+
     def validate_inputs(self) -> None:
         """
         Validates the organelle type, input files, and thread count for
@@ -140,8 +149,12 @@ class GetOrganelleRunner(BaseTool):
         Returns:
             list[str]: The command to run GetOrganelle.
         """
-        # Creating the output directory if it does not exist.
-        self.output_dir.mkdir(parents = True, exist_ok = True)
+        # NOT pre-creating self.output_dir here: get_organelle_from_reads.py
+        # refuses to run if its -o directory already exists ("Please use a
+        # new output directory, or use '--continue'/'--overwrite'"), and it
+        # creates the directory itself (including missing parents) on a
+        # successful run. Pre-creating it here made every real invocation
+        # of this runner fail outright.
 
         # Constructing the command.
         command = [
@@ -243,6 +256,12 @@ class GetOrganelleRunner(BaseTool):
         """
         # Obtaining the logging context.
         context = self._log_context()
+
+        # Classifying the result BEFORE anything below renames/deletes
+        # GetOrganelle's native output -- discover_assembly_artifacts()
+        # globs for the same native filenames, so it must run while
+        # they still exist. Callers read this back via self.assembly_status.
+        self.assembly_status = discover_assembly_artifacts(self.output_dir, self.logger)
 
         # Locating GetOrganelle's own native output files.
         fasta_candidates = sorted(self.output_dir.glob("*.path_sequence.fasta"))

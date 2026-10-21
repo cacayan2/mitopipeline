@@ -103,7 +103,12 @@ def main() -> int:
         _write_status(output_dir, args.sample_id, status.status, success = False)
         return result.return_code or 1
 
-    status = discover_assembly_artifacts(output_dir, logger)
+    # Not re-deriving the classification here: postprocess_outputs()
+    # (run inside runner.run(), above) already standardized/cleaned up
+    # GetOrganelle's native output filenames, so discover_assembly_artifacts()
+    # would find nothing if called again now. runner.assembly_status is
+    # the classification captured before that cleanup happened.
+    status = runner.assembly_status
     logger.info(f"{context} GetOrganelle assembly complete after {result.runtime_seconds:.1f}s; classified as '{status.status}' ({status.candidate_count} native candidate(s)).")
     _write_status(output_dir, args.sample_id, status.status, success = True)
     return 0
