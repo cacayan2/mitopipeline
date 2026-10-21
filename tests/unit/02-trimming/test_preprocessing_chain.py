@@ -109,8 +109,8 @@ def test_preprocessing_chain_threads_trimmed_reads_into_trimmed_qc(
     # fastp's real, sample-scoped output paths -- this is what the
     # trimmed-QC stage must actually consume next, per the dependency
     # order this issue asks to verify.
-    trimmed_r1 = trimmed_dir / f"{sample_id}_R1.fastq.gz"
-    trimmed_r2 = trimmed_dir / f"{sample_id}_R2.fastq.gz"
+    trimmed_r1 = trimmed_dir / f"{sample_id}.R1.trimmed.fastq.gz"
+    trimmed_r2 = trimmed_dir / f"{sample_id}.R2.trimmed.fastq.gz"
     assert trimmed_r1.is_file()
     assert trimmed_r2.is_file()
 
@@ -133,6 +133,8 @@ def test_preprocessing_chain_threads_trimmed_reads_into_trimmed_qc(
     assert len(output_dirs) == 3
 
     # Both QC stages produced real artifacts, in their own directories.
-    assert (qc_raw_dir / "R1_fastqc.html").is_file()
-    assert (qc_trimmed_dir / "R1_fastqc.html").is_file()
-    assert (qc_raw_dir / "R1_fastqc.html") != (qc_trimmed_dir / "R1_fastqc.html")
+    # Sample-id-prefixed (Emil's call, 2026-10-21): every stage's output
+    # carries the sample prefix, for unambiguous data reorg/access later.
+    assert (qc_raw_dir / f"{sample_id}.R1_fastqc.html").is_file()
+    assert (qc_trimmed_dir / f"{sample_id}.R1_fastqc.html").is_file()
+    assert (qc_raw_dir / f"{sample_id}.R1_fastqc.html") != (qc_trimmed_dir / f"{sample_id}.R1_fastqc.html")

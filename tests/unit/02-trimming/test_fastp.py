@@ -63,8 +63,8 @@ def test_build_command_includes_required_flags(tmp_path: Path, paired_sample: Sa
     assert command[command.index("--thread") + 1] == "8"
     assert "--in1" in command and command[command.index("--in1") + 1] == str(paired_sample.r1)
     assert "--in2" in command and command[command.index("--in2") + 1] == str(paired_sample.r2)
-    assert str(runner.output_r1).endswith("SAMPLE_01_R1.fastq.gz")
-    assert str(runner.output_r2).endswith("SAMPLE_01_R2.fastq.gz")
+    assert str(runner.output_r1).endswith("SAMPLE_01.R1.trimmed.fastq.gz")
+    assert str(runner.output_r2).endswith("SAMPLE_01.R2.trimmed.fastq.gz")
 
 def test_build_command_creates_output_directory(tmp_path: Path, paired_sample: Sample) -> None:
     """

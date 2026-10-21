@@ -33,19 +33,20 @@ class FastpRunner(BaseTool):
         output_html (Path): The path to the output HTML file.
         output_json (Path): The path to the output JSON file.
     """
-    def __init__(self, 
+    def __init__(self,
                  working_dir: Path,
                  output_dir: Path,
                  sample: Sample,
                  tool_options: dict | None = None,
                  threads: int = 4,
                  logger: Logger | None = None,
-                 tool_name: str = "fastp") -> None:
+                 tool_name: str = "fastp",
+                 metrics_dir: Path | None = None) -> None:
         """
-        Instantiation method for the creation of the 
+        Instantiation method for the creation of the
         FastpRunner class. Calls the BaseTool instantiation methods and
-        sets a few other object variables. 
-        
+        sets a few other object variables.
+
         Args:
             working_dir (Path): The path to the directory of the input files.
             output_dir (Path): The directory to save the output files to.
@@ -54,19 +55,25 @@ class FastpRunner(BaseTool):
             threads (int): The number of the threads for this process to use.
             logger (Logger): The logger to use for this of the pipeline.
             tool_name (str): The name of the tool (by default will be fastp).
-        
-        Returns: 
+            metrics_dir (Path | None): Where to persist this run's CommandResult as JSON (forwarded to BaseTool). None skips persistence.
+
+        Returns:
             None
-        """ 
+        """
         # Using the parent class constructor and setting the output file names.
-        super().__init__(tool_name = tool_name, working_dir = working_dir, logger = logger)
+        super().__init__(tool_name = tool_name, working_dir = working_dir, logger = logger, metrics_dir = metrics_dir)
         self.output_dir = Path(output_dir)
         self.sample = sample
         self.threads = int(threads)
-        self.output_r1 = Path(self.output_dir / f"{self.sample.sample_id}_R1.fastq.gz")
-        self.output_r2 = Path(self.output_dir / f"{self.sample.sample_id}_R2.fastq.gz")
-        self.output_html = Path(self.output_dir / f"{self.sample.sample_id}_fastp.html")
-        self.output_json = Path(self.output_dir / f"{self.sample.sample_id}_fastp.json")
+        # Dot-separated, sample-id-prefixed, matching every other stage's
+        # output convention (Emil's call, 2026-10-21: the {sample} prefix
+        # is required on every step's output, for unambiguous data
+        # reorg/access later) -- 02-trimming.smk's declared output must
+        # match these exactly.
+        self.output_r1 = Path(self.output_dir / f"{self.sample.sample_id}.R1.trimmed.fastq.gz")
+        self.output_r2 = Path(self.output_dir / f"{self.sample.sample_id}.R2.trimmed.fastq.gz")
+        self.output_html = Path(self.output_dir / f"{self.sample.sample_id}.fastp.html")
+        self.output_json = Path(self.output_dir / f"{self.sample.sample_id}.fastp.json")
         self.tool_options = tool_options or {}
 
     def validate_inputs(self) -> None:

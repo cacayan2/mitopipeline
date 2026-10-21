@@ -33,6 +33,13 @@ if not JOB_ID: raise ValueError("'job_id' must be set in the runtime config file
 JOB_DIR = OUTPUT_ROOT / JOB_ID
 STAGES = config.get("stages", {})
 
+# The whole-pipeline log every stage's logger also writes to, in
+# addition to its own per-step log file. Same path PipelineJob itself
+# uses (global_log_file_path) -- not a v0.1.0 convention, this is new
+# v0.2.0 infrastructure (logger_factory.make_logger) that was built
+# but never actually wired through to the Snakemake rule layer.
+GLOBAL_LOG_FILE = JOB_DIR / "logs" / "00-job" / f"{JOB_ID}.global.log"
+
 # Either uses runtime_manifest or manifest value, whichever one is available (runtime_manifest is preferred).
 RUNTIME_MANIFEST_PATH = Path(config.get("runtime_manifest", config.get("manifest"))).expanduser().resolve()
 if not RUNTIME_MANIFEST_PATH.exists(): raise FileNotFoundError(f"Runtime manifest not found: {RUNTIME_MANIFEST_PATH}")

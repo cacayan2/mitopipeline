@@ -32,6 +32,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--log-file", type = Path, required = True, help = "The path to the log file.")
     parser.add_argument("--global-log-file", type = Path, required = True, help = "The path to the global log file.")
     parser.add_argument("--threads", type = int, required = True, help = "The number of threads to use.")
+    parser.add_argument("--metrics-dir", type = Path, default = None, help = "Where to persist this run's compute metrics (CPU/memory/runtime) as JSON. Omit to skip persistence.")
 
     # Parsing the arguments.
     return parser.parse_args()
@@ -63,14 +64,16 @@ def main() -> int:
     # Creating the FastQC runner and obtaining context for logger. The
     # output_dir is this stage's own path (distinct from qc_raw's), so
     # trimmed reports are isolated from raw reports for the same sample.
+    # Output stems are sample-id-prefixed -- see 01-qc_raw.smk's note.
     runner = FastQCRunner(
         working_dir = Path(args.working_dir),
         output_dir = Path(args.output_dir),
         sample = sample,
-        r1_output_stem = "R1",
-        r2_output_stem = "R2",
+        r1_output_stem = f"{args.sample_id}.R1",
+        r2_output_stem = f"{args.sample_id}.R2",
         logger = logger,
-        threads = args.threads
+        threads = args.threads,
+        metrics_dir = args.metrics_dir
     )
     context = runner._log_context()
 

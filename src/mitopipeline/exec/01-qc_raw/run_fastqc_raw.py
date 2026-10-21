@@ -30,6 +30,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--log-file", type = Path, required = True, help = "The path to the log file.")
     parser.add_argument("--global-log-file", type = Path, required = True, help = "The path to the global log file.")
     parser.add_argument("--threads", type = int, required = True, help = "The number of threads to use.")
+    parser.add_argument("--metrics-dir", type = Path, default = None, help = "Where to persist this run's compute metrics (CPU/memory/runtime) as JSON. Omit to skip persistence.")
 
     # Parsing the arguments.
     return parser.parse_args()
@@ -59,14 +60,19 @@ def main() -> int:
     )
 
     # Creating the FastQC runner and obtaining context for logger.
+    # Output stems are sample-id-prefixed (Emil's call, 2026-10-21: every
+    # stage's output must carry the sample prefix, for unambiguous data
+    # reorg/access later) so the real files FastQCRunner writes match
+    # 01-qc_raw.smk's declared output exactly.
     runner = FastQCRunner(
         working_dir = Path(args.working_dir),
         output_dir = Path(args.output_dir),
         sample = sample,
-        r1_output_stem = "R1",
-        r2_output_stem = "R2",
+        r1_output_stem = f"{args.sample_id}.R1",
+        r2_output_stem = f"{args.sample_id}.R2",
         logger = logger,
-        threads = args.threads
+        threads = args.threads,
+        metrics_dir = args.metrics_dir
     )
     context = runner._log_context()
 

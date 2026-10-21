@@ -31,6 +31,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--threads", type = int, required = True, help = "Number of threads.")
     parser.add_argument("--log-file", type  =  Path, required = True, help = "Path to the log file.")
     parser.add_argument("--global-log-file", type  =  Path, required = True, help = "Path to the global log file.")
+    parser.add_argument("--metrics-dir", type = Path, default = None, help = "Where to persist this run's compute metrics (CPU/memory/runtime) as JSON. Omit to skip persistence.")
     parser.add_argument("--qualified_quality_phred", type = int, default = 30, help = "Minimum Phred quality score.")
     parser.add_argument("--length_required", type = int, default = 50, help = "Minimum read length after filtering.")
     parser.add_argument("--trim_front1", type = int,
@@ -227,7 +228,8 @@ def main() -> int:
         tool_options = tool_options,
         threads = args.threads,
         logger = logger,
-        tool_name = "fastp"
+        tool_name = "fastp",
+        metrics_dir = args.metrics_dir
     )
     context = runner._log_context()
 
@@ -242,4 +244,13 @@ def main() -> int:
     except Exception as e:
         logger.error(f"{context} Failed to run fastp on raw sequencing data: {e}")
         return 1
+
+# Missing entirely until now (confirmed by direct test, 2026-10-21): with
+# no __main__ guard, running this file as a script defines main() and
+# does nothing else -- exit 0, zero output, no fastp invocation at all.
+# run_fastqc_raw.py and run_fastqc_trimmed.py both have this; this one
+# never did, so the trimming stage could never have worked under any
+# invocation style.
+if __name__ == "__main__":
+    raise SystemExit(main())
 

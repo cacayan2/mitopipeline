@@ -35,11 +35,12 @@ class FastQCRunner(BaseTool):
                  sample: Sample,
                  r1_output_stem: str,
                  r2_output_stem: str,
-                 logger: Logger | None = None, 
+                 logger: Logger | None = None,
                  tool_name: str = "fastqc",
-                 threads: int = 4) -> None:
+                 threads: int = 4,
+                 metrics_dir: Path | None = None) -> None:
         """
-        Instantiation method for the creation of the 
+        Instantiation method for the creation of the
         FastQCRunner class. Calls the BaseTool instantiation methods and
         sets a few other object variables.
 
@@ -52,16 +53,18 @@ class FastQCRunner(BaseTool):
             logger (Logger): The logger to use for this of the pipeline.
             tool_name (str): The name of the tool (by default will be fastqc).
             threads (int): The number of the threads for this process to use.
-            
-        Returns: 
+            metrics_dir (Path | None): Where to persist this run's CommandResult as JSON (forwarded to BaseTool). None skips persistence.
+
+        Returns:
             None
         """
         # FastQCRunner inherits from BaseTool - here we invoke BaseTool's
-        # instantiation function within FastQCRunner's instantiation function. 
+        # instantiation function within FastQCRunner's instantiation function.
         super().__init__(
             tool_name = tool_name,
             working_dir = Path(working_dir),
-            logger = logger
+            logger = logger,
+            metrics_dir = metrics_dir
         )
         
         # Setting the other class variables.
