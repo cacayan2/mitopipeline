@@ -2,17 +2,33 @@
 test_rescue_mapping_chain.py
 
 Integration-style unit test (#425) exercising the full rescue mapping
-chain for one fixture sample: minimap2 -> samtools sort -> samtools
-index -> samtools fastq. Verifies the artifact contract -- a SAM, a
-sorted+indexed BAM, and rescued paired FASTQ -- all land under distinct,
-sample-specific filenames, and that each stage actually consumes the
-PREVIOUS stage's real output path, not a guessed one.
+chain for one fixture sample: minimap2 -> samtools sort -> index (for
+provenance), and samtools fastq extracting from minimap2's ORIGINAL
+SAM output, not the sorted BAM. Verifies the artifact contract -- a
+SAM, a sorted+indexed BAM, and rescued paired FASTQ -- all land under
+distinct, sample-specific filenames, and that each stage actually
+consumes a real prior output path, not a guessed one.
 
-The real minimap2/samtools binaries are not available in this
-environment, so each BaseTool.run() is stubbed to create its declared
-output files and return a successful CommandResult -- this test
-verifies the WIRING between stages, not the external tools' own
-behavior (same approach as test_preprocessing_chain.py).
+fastq's input was originally wired to the SORTED bam (the "obvious"
+chain order) -- corrected 2026-10-26 after a real run (#407, against
+real minimap2/samtools, not mocked) produced 0-byte rescued FASTQ with
+no error at all. Root cause: samtools fastq needs a pair's two reads
+adjacent (name/original order) to pair them; coordinate sorting (what
+index requires) scatters them apart, and this samtools version (1.3.1)
+silently extracts nothing from a coordinate-sorted BAM rather than
+failing loudly. Confirmed directly: the identical input through
+samtools fastq from the ORIGINAL SAM correctly yields every read pair;
+through the sorted BAM, zero. Sort+index are kept as a standard
+provenance artifact -- nothing downstream of rescue actually reads
+them, only the extracted FASTQ matters.
+
+Each BaseTool.run() is stubbed here to create its declared output
+files and return a successful CommandResult -- this test verifies the
+WIRING between stages, not the external tools' own behavior (same
+approach as test_preprocessing_chain.py). The real tools ARE available
+in this project's PC environment (gargammel conda env) and were used
+to find and confirm the bug above; this suite just can't exercise that
+directly without a live samtools/minimap2 install.
 """
 
 # Imports
@@ -88,13 +104,15 @@ def test_rescue_mapping_chain_produces_sample_specific_artifacts(
     assert indexer.bam_index.is_file()
     assert indexer.bam_index.name == f"{sample_id}.rescue.sorted.bam.bai"
 
-    # Stage 4: extract rescued, mapped paired reads from the ACTUAL sorted BAM.
+    # Stage 4: extract rescued, mapped paired reads from the ORIGINAL
+    # mapping output (mapper.output_sam), NOT the sorted BAM -- see the
+    # module docstring for why coordinate order breaks pairing here.
     extractor = SamtoolsRunner(working_dir = tmp_path, output_dir = mapping_dir, sample = sample,
-                                operation = "fastq", input_path = sorter.sorted_bam)
+                                operation = "fastq", input_path = mapper.output_sam)
     extractor.run()
     assert extractor.rescued_r1.is_file() and extractor.rescued_r2.is_file()
-    assert extractor.rescued_r1.name == f"{sample_id}.rescue.R1.fastq.gz"
-    assert extractor.rescued_r2.name == f"{sample_id}.rescue.R2.fastq.gz"
+    assert extractor.rescued_r1.name == f"{sample_id}.rescue.R1.fastq"
+    assert extractor.rescued_r2.name == f"{sample_id}.rescue.R2.fastq"
 
     # Every artifact for this sample lands in the same sample-scoped
     # directory, none of them collide, and all four are genuinely

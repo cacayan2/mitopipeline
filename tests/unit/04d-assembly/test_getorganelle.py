@@ -90,6 +90,19 @@ def test_build_command_does_not_create_output_directory(tmp_path: Path, paired_s
     runner.build_command()
     assert not runner.output_dir.exists()
 
+def test_build_command_creates_missing_parent_directories(tmp_path: Path, paired_sample: Sample) -> None:
+    """GetOrganelle's own directory creation is a bare os.mkdir(), not
+    recursive -- confirmed against a real failure (FileNotFoundError)
+    on a nested output_dir like a rescue attempt's "assembly/attempt0"
+    where "assembly/" didn't exist yet. The leaf itself still must not
+    exist (see the test above), but every directory ABOVE it must."""
+    runner = _make_runner(tmp_path, paired_sample)
+    runner.output_dir = tmp_path / "assembly" / "attempt0"
+    assert not runner.output_dir.parent.exists()
+    runner.build_command()
+    assert runner.output_dir.parent.is_dir()
+    assert not runner.output_dir.exists()
+
 def test_validate_inputs_exits_on_unsupported_organelle_type(tmp_path: Path, paired_sample: Sample) -> None:
     """
     An organelle type GetOrganelle itself doesn't support should exit

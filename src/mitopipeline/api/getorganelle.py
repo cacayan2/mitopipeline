@@ -152,9 +152,19 @@ class GetOrganelleRunner(BaseTool):
         # NOT pre-creating self.output_dir here: get_organelle_from_reads.py
         # refuses to run if its -o directory already exists ("Please use a
         # new output directory, or use '--continue'/'--overwrite'"), and it
-        # creates the directory itself (including missing parents) on a
-        # successful run. Pre-creating it here made every real invocation
-        # of this runner fail outright.
+        # creates that exact leaf directory itself on a successful run.
+        # Pre-creating it here made every real invocation of this runner
+        # fail outright.
+        #
+        # Its own directory creation is a bare os.mkdir(), NOT recursive --
+        # confirmed directly against a real failure (FileNotFoundError on
+        # a two-level-deep output_dir, e.g. a rescue attempt's
+        # "assembly/attempt0" where "assembly/" didn't exist yet; the
+        # single-level paths every prior real run happened to use never
+        # exposed this). So the immediate PARENT must already exist, even
+        # though the leaf itself must not -- hence parent.mkdir(), never
+        # output_dir.mkdir().
+        self.output_dir.parent.mkdir(parents = True, exist_ok = True)
 
         # Constructing the command.
         command = [

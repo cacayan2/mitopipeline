@@ -114,28 +114,55 @@ def main() -> int:
 
     sample = Sample(sample_id = args.sample_id, r1 = args.r1, r2 = args.r2)
 
+    def _run_stage(runner, step_name: str):
+        """Runs one BaseTool stage and treats BOTH failure shapes as a
+        chain failure: a validate_outputs() rejection (raises
+        SystemExit) AND the underlying command itself exiting nonzero
+        (BaseTool.run() returns a CommandResult with success=False
+        WITHOUT raising -- confirmed missing here against a real
+        failure: samtools index/fastq exiting 1 on an unsupported -@
+        flag was silently treated as success, writing a decision
+        record that pointed at rescued FASTQ files which were never
+        actually created)."""
+        result = runner.run()
+        if not result.success:
+            raise RuntimeError(f"{step_name} exited {result.return_code}")
+        return result
+
     try:
         mapper = Minimap2Runner(working_dir = args.working_dir, output_dir = args.output_dir,
                                 sample = sample, reference_fasta = args.reference_fasta,
                                 threads = args.threads, logger = logger, metrics_dir = args.metrics_dir)
-        mapper.run()
+        _run_stage(mapper, "minimap2 mapping")
 
         sorter = SamtoolsRunner(working_dir = args.working_dir, output_dir = args.output_dir, sample = sample,
                                 operation = "sort", input_path = mapper.output_sam,
                                 threads = args.threads, logger = logger, metrics_dir = args.metrics_dir)
-        sorter.run()
+        _run_stage(sorter, "samtools sort")
 
         indexer = SamtoolsRunner(working_dir = args.working_dir, output_dir = args.output_dir, sample = sample,
                                  operation = "index", input_path = sorter.sorted_bam,
                                  threads = args.threads, logger = logger, metrics_dir = args.metrics_dir)
-        indexer.run()
+        _run_stage(indexer, "samtools index")
 
+        # Extracting from the ORIGINAL mapping output, not sorter.sorted_bam:
+        # confirmed against a real run that samtools fastq needs mates
+        # adjacent (name/original order) to pair them -- coordinate
+        # sorting (needed for index, above) scatters a pair's two reads
+        # apart, and this samtools version silently extracts nothing at
+        # all from a coordinate-sorted BAM (0-byte R1/R2, no error) rather
+        # than failing loudly. Confirmed directly: the same input through
+        # samtools fastq straight from minimap2's SAM correctly yields all
+        # 1659 read pairs; through the sorted BAM, it yields zero.
+        # Sort+index remain for provenance (a standard mapping artifact
+        # to have on record); nothing downstream of rescue actually reads
+        # them, only the extracted FASTQ.
         extractor = SamtoolsRunner(working_dir = args.working_dir, output_dir = args.output_dir, sample = sample,
-                                   operation = "fastq", input_path = sorter.sorted_bam,
+                                   operation = "fastq", input_path = mapper.output_sam,
                                    threads = args.threads, logger = logger, metrics_dir = args.metrics_dir)
-        extractor.run()
-    except SystemExit as e:
-        logger.error(f"{context} Rescue mapping chain failed (exit {e.code}).")
+        _run_stage(extractor, "samtools fastq")
+    except (SystemExit, RuntimeError) as e:
+        logger.error(f"{context} Rescue mapping chain failed ({e}).")
         _write_decision(args.output_dir, args.sample_id, attempted = True,
                         reason = f"mapping chain failed: {decision.reason}")
         return 1

@@ -79,8 +79,14 @@ class SamtoolsRunner(BaseTool):
         self.threads = int(threads)
         self.sorted_bam = self.output_dir / f"{self.sample.sample_id}.rescue.sorted.bam"
         self.bam_index = Path(str(self.sorted_bam) + ".bai")
-        self.rescued_r1 = self.output_dir / f"{self.sample.sample_id}.rescue.R1.fastq.gz"
-        self.rescued_r2 = self.output_dir / f"{self.sample.sample_id}.rescue.R2.fastq.gz"
+        # Plain .fastq, NOT .fastq.gz: confirmed against a real run that
+        # this samtools version (1.3.1) writes uncompressed text to -1/-2
+        # regardless of the filename given -- a .gz-named file holding
+        # plain text made GetOrganelle try to gunzip it and fail on an
+        # "empty file" (it extracted nothing from genuinely-uncompressed
+        # data). The filename now matches what's actually on disk.
+        self.rescued_r1 = self.output_dir / f"{self.sample.sample_id}.rescue.R1.fastq"
+        self.rescued_r2 = self.output_dir / f"{self.sample.sample_id}.rescue.R2.fastq"
 
     def validate_inputs(self) -> None:
         """
@@ -126,12 +132,19 @@ class SamtoolsRunner(BaseTool):
         if self.operation == "sort":
             return ["samtools", "sort", "-@", str(self.threads), "-o", str(self.sorted_bam), str(self.input_path)]
         if self.operation == "index":
-            return ["samtools", "index", "-@", str(self.threads), str(self.input_path)]
+            # NOT passing -@ here: confirmed against a real failure
+            # ("index: invalid option -- '@'", samtools 1.3.1) that
+            # unlike sort, index doesn't accept a thread count on every
+            # samtools version this wrapper might run against. Index
+            # is comparatively cheap regardless.
+            return ["samtools", "index", str(self.input_path)]
         # "fastq": -n keeps read names intact (paired-end output needs
         # matching names); -0/-s discard unpaired/singleton reads --
-        # rescue only ever wants properly paired mapped reads.
+        # rescue only ever wants properly paired mapped reads. Also NOT
+        # passing -@, for the same real-failure reason as index above
+        # ("fastq: invalid option -- '@'" on the same samtools version).
         return [
-            "samtools", "fastq", "-@", str(self.threads), "-n",
+            "samtools", "fastq", "-n",
             "-1", str(self.rescued_r1), "-2", str(self.rescued_r2),
             "-0", os.devnull, "-s", os.devnull,
             str(self.input_path),

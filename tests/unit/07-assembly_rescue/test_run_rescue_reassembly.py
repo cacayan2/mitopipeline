@@ -27,8 +27,8 @@ def _fake_result(success: bool = True, return_code: int = 0) -> CommandResult:
     )
 
 def _argv(tmp_path: Path, sample_id: str, output_dir: Path, **extra) -> list[str]:
-    r1 = tmp_path / f"{sample_id}.rescue.R1.fastq.gz"
-    r2 = tmp_path / f"{sample_id}.rescue.R2.fastq.gz"
+    r1 = tmp_path / f"{sample_id}.rescue.R1.fastq"
+    r2 = tmp_path / f"{sample_id}.rescue.R2.fastq"
     r1.touch(); r2.touch()
     argv = [
         "run_rescue_reassembly.py",

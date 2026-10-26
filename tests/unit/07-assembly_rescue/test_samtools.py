@@ -58,6 +58,14 @@ def test_index_build_command(tmp_path: Path, sample: Sample) -> None:
     assert command[:2] == ["samtools", "index"]
     assert command[-1] == str(bam)
 
+def test_index_build_command_does_not_pass_thread_count(tmp_path: Path, sample: Sample) -> None:
+    # Confirmed against a real failure ("index: invalid option -- '@'",
+    # samtools 1.3.1): unlike sort, index doesn't universally accept -@.
+    bam = tmp_path / "sorted.bam"
+    bam.write_bytes(b"BAM")
+    runner = _make_runner(tmp_path, sample, "index", bam, threads = 4)
+    assert "-@" not in runner.build_command()
+
 def test_index_validate_outputs_rejects_missing_index(tmp_path: Path, sample: Sample) -> None:
     bam = tmp_path / "sorted.bam"
     bam.write_bytes(b"BAM")
@@ -87,7 +95,14 @@ def test_fastq_build_command_discards_unpaired_reads(tmp_path: Path, sample: Sam
     assert "-2" in command and command[command.index("-2") + 1] == str(runner.rescued_r2)
     assert "-0" in command  # unpaired reads discarded
     assert "-s" in command  # singletons discarded
-    assert command[-1] == str(bam)
+
+def test_fastq_build_command_does_not_pass_thread_count(tmp_path: Path, sample: Sample) -> None:
+    # Confirmed against a real failure ("fastq: invalid option -- '@'",
+    # samtools 1.3.1) -- same reasoning as index above.
+    bam = tmp_path / "sorted.bam"
+    bam.write_bytes(b"BAM")
+    runner = _make_runner(tmp_path, sample, "fastq", bam, threads = 4)
+    assert "-@" not in runner.build_command()
 
 def test_fastq_validate_outputs_requires_both_mates(tmp_path: Path, sample: Sample) -> None:
     bam = tmp_path / "sorted.bam"

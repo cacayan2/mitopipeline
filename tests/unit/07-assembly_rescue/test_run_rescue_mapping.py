@@ -18,12 +18,12 @@ from mitopipeline.models.command_result.command_result import CommandResult
 
 run_rescue_mapping = importlib.import_module("mitopipeline.exec.07-assembly_rescue.run_rescue_mapping")
 
-def _fake_result() -> CommandResult:
+def _fake_result(success: bool = True, return_code: int = 0) -> CommandResult:
     from datetime import datetime
     now = datetime.now()
     return CommandResult(
-        command = [], return_code = 0, stdout = "", stderr = "", runtime_seconds = 0.0,
-        success = True, tool_name = "stub", started_at = now, ended_at = now,
+        command = [], return_code = return_code, stdout = "", stderr = "", runtime_seconds = 0.0,
+        success = success, tool_name = "stub", started_at = now, ended_at = now,
         peak_memory_mb = 0.0, user_cpu_seconds = 0.0, system_cpu_seconds = 0.0,
     )
 
@@ -81,8 +81,8 @@ def test_fragmented_status_triggers_the_real_chain(tmp_path: Path, monkeypatch: 
 
     result = json.loads((tmp_path / "rescue" / f"{sample_id}.rescue_mapping.json").read_text())
     assert result["attempted"] is True
-    assert result["rescued_r1"].endswith(f"{sample_id}.rescue.R1.fastq.gz")
-    assert result["rescued_r2"].endswith(f"{sample_id}.rescue.R2.fastq.gz")
+    assert result["rescued_r1"].endswith(f"{sample_id}.rescue.R1.fastq")
+    assert result["rescued_r2"].endswith(f"{sample_id}.rescue.R2.fastq")
     assert Path(result["rescued_r1"]).is_file()
 
 def test_attempts_exhausted_is_not_rescued(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -106,6 +106,28 @@ def test_chain_failure_is_recorded_not_an_uncaught_crash(tmp_path: Path, monkeyp
     result = json.loads((tmp_path / "rescue" / f"{sample_id}.rescue_mapping.json").read_text())
     assert result["attempted"] is True
     assert result["rescued_r1"] is None
+
+def test_a_failed_but_non_raising_stage_is_also_caught(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Confirmed against a real failure (2026-10-26): BaseTool.run()
+    does NOT raise when the underlying command exits nonzero -- it
+    just returns a CommandResult with success=False. samtools index/
+    fastq failing this way (an unsupported -@ flag on an older
+    samtools) was silently treated as a successful chain, writing a
+    decision record pointing at rescued FASTQ files that were never
+    created. This must be caught the same as a SystemExit."""
+    monkeypatch.setattr(Minimap2Runner, "run", _stub_minimap2_run)
+    monkeypatch.setattr(SamtoolsRunner, "run", lambda self: _fake_result(success = False, return_code = 1))
+    sample_id = "SAMPLE_06"
+    monkeypatch.setattr(sys, "argv", _argv(tmp_path, sample_id, "fragmented"))
+
+    assert run_rescue_mapping.main() == 1
+
+    result = json.loads((tmp_path / "rescue" / f"{sample_id}.rescue_mapping.json").read_text())
+    assert result["attempted"] is True
+    assert result["rescued_r1"] is None
+    # The real bug: these files must NOT exist just because the script
+    # claims attempted=True -- nothing should have been fabricated.
+    assert not (tmp_path / "rescue" / f"{sample_id}.rescue.R1.fastq").exists()
 
 def test_status_not_in_trigger_list_is_not_rescued(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     sample_id = "SAMPLE_05"
