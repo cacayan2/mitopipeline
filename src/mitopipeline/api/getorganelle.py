@@ -8,10 +8,11 @@ GetOrganelle wrapper for command building and execution.
 from __future__ import annotations
 from logging import Logger
 from pathlib import Path
+import json
 import os
 import shutil
 import sys
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from mitopipeline.models.base_tool.base_tool import BaseTool
 from mitopipeline.models.sample.sample import Sample
 from mitopipeline.utils.seed.models import SeedSelectionResult
@@ -94,6 +95,7 @@ class GetOrganelleRunner(BaseTool):
         self.standardized_fasta = self.output_dir / "data.fasta"
         self.standardized_gfa = self.output_dir / "graph.gfa"
         self.recruited_reads_fastqc_dir = self.output_dir / "recruited_reads_fastqc"
+        self.recruited_reads_qc_record_path = self.output_dir / f"{sample.sample_id}.recruited_reads_qc.json"
 
         # The classification discover_assembly_artifacts() produced,
         # captured in postprocess_outputs() before it cleans up
@@ -216,10 +218,15 @@ class GetOrganelleRunner(BaseTool):
         assembled actually looks like clean, usable sequence, not just
         trusting the final assembly's own quality.
 
-        Missing recruited-reads files are logged and skipped rather
-        than failing the whole assembly over it -- this is a
+        Always writes a RecruitedReadsQCRecord (#413) -- including
+        the absent/empty/malformed cases -- so a caller never has to
+        re-derive what happened from log lines alone; this is a
         supplementary QC artifact, not a correctness gate on the
-        assembly itself.
+        assembly itself, so none of these cases fail the whole run.
+        Compression is never checked here: GetOrganelle's own
+        extended_*_paired.fq files are always plain text (confirmed
+        against the installed get_organelle_from_reads.py), never
+        gzipped, so there is nothing to validate on that axis.
 
         Args:
             None
@@ -232,7 +239,32 @@ class GetOrganelleRunner(BaseTool):
 
         if not (r1.is_file() and r2.is_file()):
             self.logger.warning(f"{context} Recruited-reads QC skipped: expected {r1.name}/{r2.name} not found in {self.output_dir} (keep_temp_files may not have taken effect).")
+            self._write_recruited_reads_qc_record(RecruitedReadsQCRecord(
+                sample_id = self.sample.sample_id, source_output_dir = str(self.output_dir),
+                r1_path = None, r2_path = None, r1_read_count = None, r2_read_count = None,
+                paired = None, qc_ran = False, fastqc_dir = None,
+                reason = "recruited-reads files not found",
+            ))
             return
+
+        if r1.stat().st_size == 0 or r2.stat().st_size == 0:
+            self.logger.warning(f"{context} Recruited-reads QC skipped: {r1.name}/{r2.name} present but empty.")
+            self._write_recruited_reads_qc_record(RecruitedReadsQCRecord(
+                sample_id = self.sample.sample_id, source_output_dir = str(self.output_dir),
+                r1_path = str(r1), r2_path = str(r2), r1_read_count = None, r2_read_count = None,
+                paired = None, qc_ran = False, fastqc_dir = None,
+                reason = "recruited-reads file(s) empty",
+            ))
+            return
+
+        r1_count = _count_fastq_records(r1)
+        r2_count = _count_fastq_records(r2)
+        paired = None if (r1_count is None or r2_count is None) else (r1_count == r2_count)
+
+        if r1_count is None or r2_count is None:
+            self.logger.warning(f"{context} Recruited-reads {r1.name}/{r2.name} line count is not a multiple of 4 (malformed FASTQ); running QC anyway, read counts unavailable.")
+        elif not paired:
+            self.logger.warning(f"{context} Recruited-reads pairing mismatch: {r1.name} has {r1_count} reads, {r2.name} has {r2_count}.")
 
         recruited_sample = Sample(sample_id = self.sample.sample_id, r1 = r1, r2 = r2)
         qc_runner = FastQCRunner(
@@ -244,12 +276,42 @@ class GetOrganelleRunner(BaseTool):
             logger = self.logger,
             threads = self.threads,
         )
+        qc_ran = False
+        reason = "qc completed"
         try:
             result = qc_runner.run()
-            if not result.success:
+            if result.success:
+                qc_ran = True
+            else:
+                reason = f"fastqc exited {result.return_code}"
                 self.logger.warning(f"{context} FastQC on recruited reads exited with return code {result.return_code}; continuing, this is supplementary QC, not an assembly correctness check.")
         except SystemExit:
+            reason = "fastqc failed validation"
             self.logger.warning(f"{context} FastQC on recruited reads failed validation; continuing, this is supplementary QC, not an assembly correctness check.")
+
+        self._write_recruited_reads_qc_record(RecruitedReadsQCRecord(
+            sample_id = self.sample.sample_id, source_output_dir = str(self.output_dir),
+            r1_path = str(r1), r2_path = str(r2), r1_read_count = r1_count, r2_read_count = r2_count,
+            paired = paired, qc_ran = qc_ran,
+            fastqc_dir = str(self.recruited_reads_fastqc_dir) if qc_ran else None,
+            reason = reason,
+        ))
+
+    def _write_recruited_reads_qc_record(self, record: RecruitedReadsQCRecord) -> None:
+        """
+        Persists a RecruitedReadsQCRecord as JSON in this attempt's
+        own output_dir -- already attempt-specific (each rescue
+        attempt gets its own output_dir), so this never collides or
+        gets overwritten across rescue retries.
+
+        Args:
+            record (RecruitedReadsQCRecord): The record to persist.
+
+        Returns:
+            None
+        """
+        with self.recruited_reads_qc_record_path.open("w", encoding = "utf-8") as handle:
+            json.dump(asdict(record), handle, indent = 4)
 
     def postprocess_outputs(self) -> None:
         """
@@ -297,7 +359,7 @@ class GetOrganelleRunner(BaseTool):
 
         # Removing everything else GetOrganelle left behind.
         retained_names = {self.standardized_fasta.name, self.standardized_gfa.name, "assembly.log",
-                           self.recruited_reads_fastqc_dir.name}
+                           self.recruited_reads_fastqc_dir.name, self.recruited_reads_qc_record_path.name}
         for child in self.output_dir.iterdir():
             if child.name in retained_names:
                 continue
@@ -462,6 +524,55 @@ def discover_assembly_artifacts(output_dir: Path, logger: Logger) -> AssemblyArt
 
     return AssemblyArtifacts(status = status, fasta_path = chosen_fasta, gfa_path = chosen_gfa,
                               candidate_count = len(fasta_candidates))
+
+@dataclass(frozen = True, slots = True)
+class RecruitedReadsQCRecord:
+    """
+    The outcome of recruited-reads QC for one GetOrganelle attempt
+    (#413) -- the structured artifact contract a caller reads instead
+    of re-deriving read counts/pairing/provenance from log lines.
+
+    Attributes:
+        sample_id (str): The sample this record is for.
+        source_output_dir (str): The GetOrganelle attempt's own output_dir this record belongs to (already attempt-specific, so repeated rescue attempts never collide).
+        r1_path (str | None): The recruited-reads R1 path, or None if it was never found.
+        r2_path (str | None): The recruited-reads R2 path, or None if it was never found.
+        r1_read_count (int | None): R1's record count, or None if the file was empty/malformed/absent.
+        r2_read_count (int | None): R2's record count, or None if the file was empty/malformed/absent.
+        paired (bool | None): Whether R1 and R2 have matching read counts, or None when either count is unavailable.
+        qc_ran (bool): Whether FastQC actually completed successfully on these reads.
+        fastqc_dir (str | None): The FastQC output directory, or None when qc_ran is False.
+        reason (str): A short, human-readable explanation of this outcome.
+    """
+    sample_id: str
+    source_output_dir: str
+    r1_path: str | None
+    r2_path: str | None
+    r1_read_count: int | None
+    r2_read_count: int | None
+    paired: bool | None
+    qc_ran: bool
+    fastqc_dir: str | None
+    reason: str
+
+def _count_fastq_records(path: Path) -> int | None:
+    """
+    Counts FASTQ records in a plain-text FASTQ file (4 lines per
+    record, the universal FASTQ convention). Returns None rather than
+    a count when the file's line count isn't a multiple of 4 -- that
+    signals a malformed/truncated FASTQ, not a valid record count.
+
+    Args:
+        path (Path): The FASTQ file to count.
+
+    Returns:
+        int | None: The number of records, or None if the file is malformed.
+    """
+    with path.open("r", encoding = "utf-8", errors = "replace") as handle:
+        line_count = sum(1 for _ in handle)
+    if line_count % 4 != 0:
+        return None
+    return line_count // 4
 
 def build_runner_from_seed_result(seed_result: SeedSelectionResult,
                                    working_dir: Path,

@@ -5,6 +5,7 @@ Unit tests for the GetOrganelleRunner class.
 """
 
 # Imports
+import json
 import logging
 from pathlib import Path
 import pytest
@@ -157,7 +158,7 @@ def test_postprocess_outputs_standardizes_and_cleans_up(tmp_path: Path, paired_s
     assert runner.standardized_fasta.read_text() == ">seq\nACGT\n"
     assert runner.standardized_gfa.read_text() == "H\tVN:Z:1.0\n"
     remaining = {p.name for p in runner.output_dir.iterdir()}
-    assert remaining == {"data.fasta", "graph.gfa", "assembly.log"}
+    assert remaining == {"data.fasta", "graph.gfa", "assembly.log", runner.recruited_reads_qc_record_path.name}
 
 def test_postprocess_outputs_captures_assembly_status_before_cleanup(tmp_path: Path, paired_sample: Sample) -> None:
     """
@@ -386,14 +387,18 @@ def test_postprocess_outputs_skips_qc_and_cleans_up_when_recruited_reads_absent(
     No real recruited-reads files (e.g. an older GetOrganelle, or
     keep_temp_files didn't take effect) must not fail the whole
     assembly over a missing supplementary QC artifact -- cleanup still
-    runs normally and no FastQC directory gets created.
+    runs normally, no FastQC directory gets created, but a record of
+    the absence is still written explicitly (#413), not just logged.
     """
     runner = _make_runner(tmp_path, paired_sample)
     _write_native_outputs(runner.output_dir, prefix = "k75")
     runner.postprocess_outputs()
     remaining = {p.name for p in runner.output_dir.iterdir()}
-    assert remaining == {"data.fasta", "graph.gfa", "assembly.log"}
+    assert remaining == {"data.fasta", "graph.gfa", "assembly.log", runner.recruited_reads_qc_record_path.name}
     assert not runner.recruited_reads_fastqc_dir.exists()
+    record = json.loads(runner.recruited_reads_qc_record_path.read_text())
+    assert record["qc_ran"] is False
+    assert record["reason"] == "recruited-reads files not found"
 
 def test_postprocess_outputs_retains_recruited_reads_fastqc_dir(tmp_path: Path, paired_sample: Sample) -> None:
     """
@@ -409,3 +414,136 @@ def test_postprocess_outputs_retains_recruited_reads_fastqc_dir(tmp_path: Path, 
     remaining = {p.name for p in runner.output_dir.iterdir()}
     assert "recruited_reads_fastqc" in remaining
     assert (runner.recruited_reads_fastqc_dir / "recruited_R1_fastqc.html").is_file()
+
+# ---------------------------------------------------------------------------
+# #413: recruited-reads QC artifact contract -- nonempty/pairing validation,
+# and the record written for every outcome (success, empty, malformed,
+# pairing mismatch, and FastQC tool failure).
+# ---------------------------------------------------------------------------
+
+def _fastq_text(n_records: int) -> str:
+    """Builds a minimal, well-formed FASTQ body with n_records records."""
+    return "".join(f"@read{i}\nACGT\n+\nIIII\n" for i in range(n_records))
+
+def _fake_fastqc_result(success: bool = True, return_code: int = 0):
+    from datetime import datetime
+    from mitopipeline.models.command_result.command_result import CommandResult
+    now = datetime.now()
+    return CommandResult(
+        command = [], return_code = return_code, stdout = "", stderr = "", runtime_seconds = 0.5,
+        success = success, tool_name = "fastqc", started_at = now, ended_at = now,
+        peak_memory_mb = 0.0, user_cpu_seconds = 0.0, system_cpu_seconds = 0.0,
+    )
+
+def test_recruited_reads_qc_record_written_on_success(tmp_path: Path, paired_sample: Sample, monkeypatch: pytest.MonkeyPatch) -> None:
+    from mitopipeline.api.fastqc import FastQCRunner
+    runner = _make_runner(tmp_path, paired_sample)
+    runner.output_dir.mkdir(parents = True)
+    r1, r2 = runner._recruited_reads_paths()
+    r1.write_text(_fastq_text(3))
+    r2.write_text(_fastq_text(3))
+
+    monkeypatch.setattr(FastQCRunner, "run", lambda self: _fake_fastqc_result(success = True))
+    runner._run_recruited_reads_qc()
+
+    record = json.loads(runner.recruited_reads_qc_record_path.read_text())
+    assert record["qc_ran"] is True
+    assert record["r1_read_count"] == 3
+    assert record["r2_read_count"] == 3
+    assert record["paired"] is True
+    assert record["fastqc_dir"] == str(runner.recruited_reads_fastqc_dir)
+    assert record["reason"] == "qc completed"
+
+def test_recruited_reads_qc_record_pairing_mismatch_still_runs_qc(tmp_path: Path, paired_sample: Sample, monkeypatch: pytest.MonkeyPatch) -> None:
+    from mitopipeline.api.fastqc import FastQCRunner
+    runner = _make_runner(tmp_path, paired_sample)
+    runner.output_dir.mkdir(parents = True)
+    r1, r2 = runner._recruited_reads_paths()
+    r1.write_text(_fastq_text(5))
+    r2.write_text(_fastq_text(3))
+
+    monkeypatch.setattr(FastQCRunner, "run", lambda self: _fake_fastqc_result(success = True))
+    runner._run_recruited_reads_qc()
+
+    record = json.loads(runner.recruited_reads_qc_record_path.read_text())
+    assert record["r1_read_count"] == 5
+    assert record["r2_read_count"] == 3
+    assert record["paired"] is False
+    assert record["qc_ran"] is True   # pairing mismatch does not block QC itself
+
+def test_recruited_reads_qc_skipped_when_files_empty(tmp_path: Path, paired_sample: Sample, monkeypatch: pytest.MonkeyPatch) -> None:
+    from mitopipeline.api.fastqc import FastQCRunner
+    runner = _make_runner(tmp_path, paired_sample)
+    runner.output_dir.mkdir(parents = True)
+    r1, r2 = runner._recruited_reads_paths()
+    r1.touch(); r2.touch()
+
+    def _must_not_run(self):
+        raise AssertionError("FastQC must not run on empty recruited-reads files")
+    monkeypatch.setattr(FastQCRunner, "run", _must_not_run)
+
+    runner._run_recruited_reads_qc()
+    record = json.loads(runner.recruited_reads_qc_record_path.read_text())
+    assert record["qc_ran"] is False
+    assert record["paired"] is None
+    assert record["reason"] == "recruited-reads file(s) empty"
+
+def test_recruited_reads_qc_malformed_fastq_runs_qc_with_unknown_pairing(tmp_path: Path, paired_sample: Sample, monkeypatch: pytest.MonkeyPatch) -> None:
+    from mitopipeline.api.fastqc import FastQCRunner
+    runner = _make_runner(tmp_path, paired_sample)
+    runner.output_dir.mkdir(parents = True)
+    r1, r2 = runner._recruited_reads_paths()
+    r1.write_text("@read0\nACGT\n+\n")   # 3 lines -- not a multiple of 4
+    r2.write_text(_fastq_text(2))
+
+    monkeypatch.setattr(FastQCRunner, "run", lambda self: _fake_fastqc_result(success = True))
+    runner._run_recruited_reads_qc()
+
+    record = json.loads(runner.recruited_reads_qc_record_path.read_text())
+    assert record["r1_read_count"] is None
+    assert record["r2_read_count"] == 2
+    assert record["paired"] is None
+    assert record["qc_ran"] is True   # malformed counting does not block QC itself
+
+def test_recruited_reads_qc_tool_failure_is_recorded_not_raised(tmp_path: Path, paired_sample: Sample, monkeypatch: pytest.MonkeyPatch) -> None:
+    from mitopipeline.api.fastqc import FastQCRunner
+    runner = _make_runner(tmp_path, paired_sample)
+    runner.output_dir.mkdir(parents = True)
+    r1, r2 = runner._recruited_reads_paths()
+    r1.write_text(_fastq_text(1)); r2.write_text(_fastq_text(1))
+
+    monkeypatch.setattr(FastQCRunner, "run", lambda self: _fake_fastqc_result(success = False, return_code = 1))
+    runner._run_recruited_reads_qc()   # must not raise
+
+    record = json.loads(runner.recruited_reads_qc_record_path.read_text())
+    assert record["qc_ran"] is False
+    assert record["reason"] == "fastqc exited 1"
+    assert record["fastqc_dir"] is None
+
+def test_recruited_reads_qc_tool_systemexit_is_recorded_not_raised(tmp_path: Path, paired_sample: Sample, monkeypatch: pytest.MonkeyPatch) -> None:
+    from mitopipeline.api.fastqc import FastQCRunner
+    runner = _make_runner(tmp_path, paired_sample)
+    runner.output_dir.mkdir(parents = True)
+    r1, r2 = runner._recruited_reads_paths()
+    r1.write_text(_fastq_text(1)); r2.write_text(_fastq_text(1))
+
+    def _raise(self):
+        raise SystemExit(1)
+    monkeypatch.setattr(FastQCRunner, "run", _raise)
+    runner._run_recruited_reads_qc()   # must not raise
+
+    record = json.loads(runner.recruited_reads_qc_record_path.read_text())
+    assert record["qc_ran"] is False
+    assert record["reason"] == "fastqc failed validation"
+
+def test_recruited_reads_qc_record_is_attempt_specific(tmp_path: Path, paired_sample: Sample) -> None:
+    """
+    Two runners for different rescue attempts (different output_dir)
+    must never share a record path -- each attempt's output_dir is
+    already distinct, so the record naturally never collides.
+    """
+    attempt1 = _make_runner(tmp_path, paired_sample, output_dir = tmp_path / "rescue_attempt_1")
+    attempt2 = _make_runner(tmp_path, paired_sample, output_dir = tmp_path / "rescue_attempt_2")
+    assert attempt1.recruited_reads_qc_record_path != attempt2.recruited_reads_qc_record_path
+    assert attempt1.recruited_reads_qc_record_path.parent == attempt1.output_dir
+    assert attempt2.recruited_reads_qc_record_path.parent == attempt2.output_dir
