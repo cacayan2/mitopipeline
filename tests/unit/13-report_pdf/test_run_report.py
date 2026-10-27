@@ -53,6 +53,20 @@ def test_phylogeny_section_handles_failed_tree(tmp_path: Path) -> None:
     text = render_run_report(run_data, tmp_path / "run.report.md")
     assert "not enough taxa" in text
 
+def test_phylogeny_section_embeds_the_tree_figure_when_present(tmp_path: Path) -> None:
+    figure_png = tmp_path / "tree_figure.png"
+    figure_png.write_bytes(b"fake png bytes")
+    phylogeny = PhylogenySummary(success = True, tip_count = 5, newick_path = None, reason = "completed", tree_figure_png = figure_png)
+    run_data = RunReportData(job_id = "job1", generated_at = "now", samples = (), phylogeny = phylogeny)
+    text = render_run_report(run_data, tmp_path / "run.report.md")
+    assert "![Maximum-likelihood phylogeny]" in text
+
+def test_phylogeny_section_omits_the_image_embed_without_a_tree_figure(tmp_path: Path) -> None:
+    phylogeny = PhylogenySummary(success = True, tip_count = 5, newick_path = None, reason = "completed")
+    run_data = RunReportData(job_id = "job1", generated_at = "now", samples = (), phylogeny = phylogeny)
+    text = render_run_report(run_data, tmp_path / "run.report.md")
+    assert "![Maximum-likelihood phylogeny]" not in text
+
 def test_run_report_includes_real_typst_preamble(tmp_path: Path) -> None:
     run_data = RunReportData(job_id = "job1", generated_at = "now", samples = ())
     text = render_run_report(run_data, tmp_path / "run.report.md")

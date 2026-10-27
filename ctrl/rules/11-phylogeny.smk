@@ -100,3 +100,36 @@ rule iqtree_inference:
         mkdir -p $(dirname {output.done:q})
         touch {output.done:q}
         """
+
+rule tree_figure:
+    input:
+        phylogeny_done = str(JOB_DIR / "11-phylogeny" / "phylogeny.done")
+    output:
+        # tree_figure.png/tree_figure_result.json are NOT declared --
+        # never written when IQ-TREE itself produced no usable tree
+        # (zero/one accepted sample); the done marker alone proves
+        # this rule completed.
+        done = str(JOB_DIR / "11-phylogeny" / "tree_figure.done")
+    params:
+        iqtree_result_json = str(JOB_DIR / "11-phylogeny" / "iqtree_result.json"),
+        dpi = IQTREE_CONFIG.get("render_dpi", 600),
+        midpoint_flag = "--midpoint-root" if IQTREE_CONFIG.get("midpoint_root_figure", True) else "",
+        output_dir = str(JOB_DIR / "11-phylogeny"),
+        log_file = str(JOB_DIR / "logs" / "11-phylogeny" / "tree_figure.log"),
+        global_log_file = str(GLOBAL_LOG_FILE),
+        exec_script = str(SRC_DIR / "mitopipeline" / "exec" / "11-phylogeny" / "run_tree_figure.py")
+    conda:
+        "../../envs/08-phylogeny.yaml"
+    shell:
+        """
+        {PYTHON_BIN:q} {params.exec_script:q} \
+            --iqtree-result-json {params.iqtree_result_json:q} \
+            --dpi {params.dpi} \
+            {params.midpoint_flag} \
+            --output-dir {params.output_dir:q} \
+            --log-file {params.log_file:q} \
+            --global-log-file {params.global_log_file:q} \
+            || true
+        mkdir -p $(dirname {output.done:q})
+        touch {output.done:q}
+        """

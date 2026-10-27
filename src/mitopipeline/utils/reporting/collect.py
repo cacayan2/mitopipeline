@@ -220,13 +220,15 @@ def collect_sample_report_data(sample_id: str, runtime_manifest_path: str | Path
         blast_config = blast_config, annotation_config = annotation_config, archival = archival,
     )
 
-def collect_phylogeny_summary(iqtree_result_json: str | Path | None, model: str | None = None) -> PhylogenySummary | None:
+def collect_phylogeny_summary(iqtree_result_json: str | Path | None, model: str | None = None,
+                               tree_figure_png: str | Path | None = None) -> PhylogenySummary | None:
     """
     Reads the batch-level phylogeny outcome.
 
     Args:
         iqtree_result_json (str | Path | None): The result JSON written by run_iqtree.py.
         model (str | None): The substitution model IQ-TREE was run with, when known.
+        tree_figure_png (str | Path | None): The rendered tree figure PNG, when run_tree_figure.py produced one.
 
     Returns:
         PhylogenySummary | None: The outcome, or None if phylogeny didn't run.
@@ -234,10 +236,12 @@ def collect_phylogeny_summary(iqtree_result_json: str | Path | None, model: str 
     result = _read_json(Path(iqtree_result_json) if iqtree_result_json else None)
     if result is None:
         return None
+    figure_path = Path(tree_figure_png) if tree_figure_png else None
     return PhylogenySummary(
         success = result.get("success", False), tip_count = result.get("tip_count"),
         newick_path = Path(result["newick_path"]) if result.get("newick_path") else None,
         reason = result.get("reason", ""), model = model,
+        tree_figure_png = figure_path if (figure_path and figure_path.is_file()) else None,
     )
 
 def collect_run_report_data(job_id: str, generated_at: str, samples: list[SampleReportData],

@@ -92,6 +92,7 @@ def _run_report_inputs(wildcards):
     # phylogeny to run even when a user explicitly disabled it.
     if stage_enabled("11-phylogeny"):
         inputs["phylogeny_done"] = str(JOB_DIR / "11-phylogeny" / "phylogeny.done")
+        inputs["tree_figure_done"] = str(JOB_DIR / "11-phylogeny" / "tree_figure.done")
     if stage_enabled("14a-sra_archival"):
         inputs["sra_archival_done"] = str(JOB_DIR / "14a-sra_archival" / "sra_archival.done")
     if stage_enabled("14b-biosample_archival"):
@@ -112,6 +113,7 @@ rule run_report:
         job_dir = str(JOB_DIR),
         iqtree_result_json = str(JOB_DIR / "11-phylogeny" / "iqtree_result.json"),
         phylogeny_model = config["stage_options"]["phylogeny"]["iqtree"].get("model", "") if stage_enabled("11-phylogeny") else "",
+        tree_figure_png = str(JOB_DIR / "11-phylogeny" / "tree_figure.png"),
         pandoc_bin = config["stage_options"]["report_export"]["pandoc"]["bin"],
         pdf_engine = config["stage_options"]["report_export"]["pandoc"]["engine"],
         output_dir = str(JOB_DIR / "13-report_pdf"),
@@ -133,6 +135,7 @@ rule run_report:
             --job-dir {params.job_dir:q} \
             --iqtree-result-json {params.iqtree_result_json:q} \
             $MODEL_ARGS \
+            --tree-figure-png {params.tree_figure_png:q} \
             --pandoc-bin {params.pandoc_bin:q} \
             --pdf-engine {params.pdf_engine:q} \
             --output-dir {params.output_dir:q} \

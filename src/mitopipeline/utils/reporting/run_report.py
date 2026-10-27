@@ -62,7 +62,7 @@ def render_archival_summary_section(run_data: RunReportData) -> list[str]:
         "This pipeline prepares submission-ready files only; it never submits to NCBI directly.", "",
     ]
 
-def render_phylogeny_section(run_data: RunReportData) -> list[str]:
+def render_phylogeny_section(run_data: RunReportData, report_path: Path) -> list[str]:
     """Renders the batch-level phylogeny outcome."""
     lines = ["## Phylogenetic validation", ""]
     phylogeny = run_data.phylogeny
@@ -73,7 +73,13 @@ def render_phylogeny_section(run_data: RunReportData) -> list[str]:
     rows = [["Tree tips", format_integer(phylogeny.tip_count)]]
     if phylogeny.model is not None:
         rows.append(["Substitution model", phylogeny.model])
-    return [*lines, markdown_table(["Metric", "Value"], rows), ""]
+    lines += [markdown_table(["Metric", "Value"], rows), ""]
+
+    link = file_link("PNG tree figure", phylogeny.tree_figure_png, report_path)
+    if link is not None:
+        image_path = relative_path(phylogeny.tree_figure_png, report_path)
+        lines += [f"- {link}", "", "![Maximum-likelihood phylogeny]" + f"({image_path})", ""]
+    return lines
 
 def render_run_report(run_data: RunReportData, report_path: str | Path) -> str:
     """
@@ -95,7 +101,7 @@ def render_run_report(run_data: RunReportData, report_path: str | Path) -> str:
         ),
         *render_run_overview_section(run_data),
         *render_sample_status_section(run_data, report_path),
-        *render_phylogeny_section(run_data),
+        *render_phylogeny_section(run_data, report_path),
         *render_archival_summary_section(run_data),
     ]
     return "\n".join(lines)

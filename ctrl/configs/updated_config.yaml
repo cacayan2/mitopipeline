@@ -205,10 +205,10 @@ stage_options:
       ultrafast_bootstrap: 1000
       sh_alrt: 1000
       random_seed: 12345
-      # NOT YET WIRED: no tree-figure renderer exists in the codebase
-      # yet, so these two have no effect -- IQ-TREE's own real output
-      # (iqtree_result.json, the .treefile/.log/.iqtree files) is what
-      # the run-level report actually reads.
+      # Rendered automatically into the run-level report's tree
+      # figure (ctrl/rules/11-phylogeny.smk's tree_figure rule).
+      # midpoint_root_figure: IQ-TREE's own ML output is unrooted; set
+      # false to draw it exactly as IQ-TREE wrote it instead.
       render_dpi: 600
       midpoint_root_figure: true
   report_export: 

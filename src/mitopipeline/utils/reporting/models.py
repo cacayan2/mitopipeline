@@ -121,12 +121,14 @@ class PhylogenySummary:
         newick_path (Path | None): The real Newick tree path, or None.
         reason (str): A short, human-readable explanation of the outcome.
         model (str | None): The substitution model IQ-TREE was run with, when known.
+        tree_figure_png (Path | None): The rendered tree figure PNG, or None if rendering didn't run/succeed.
     """
     success: bool
     tip_count: int | None
     newick_path: Path | None
     reason: str
     model: str | None = None
+    tree_figure_png: Path | None = None
 
 @dataclass(frozen = True, slots = True)
 class RunReportData:

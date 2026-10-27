@@ -131,6 +131,23 @@ def test_collect_phylogeny_summary(tmp_path: Path) -> None:
 def test_collect_phylogeny_summary_none_when_missing(tmp_path: Path) -> None:
     assert collect_phylogeny_summary(tmp_path / "missing.json") is None
 
+def test_collect_phylogeny_summary_includes_the_tree_figure_when_it_exists(tmp_path: Path) -> None:
+    result_json = _write_json(tmp_path / "iqtree_result.json", {
+        "success": True, "tip_count": 5, "newick_path": str(tmp_path / "tree.nwk"), "reason": "completed",
+    })
+    figure_png = tmp_path / "tree_figure.png"
+    figure_png.write_bytes(b"fake png bytes")
+
+    summary = collect_phylogeny_summary(result_json, tree_figure_png = figure_png)
+    assert summary.tree_figure_png == figure_png
+
+def test_collect_phylogeny_summary_omits_a_tree_figure_that_was_never_rendered(tmp_path: Path) -> None:
+    result_json = _write_json(tmp_path / "iqtree_result.json", {
+        "success": True, "tip_count": 5, "newick_path": str(tmp_path / "tree.nwk"), "reason": "completed",
+    })
+    summary = collect_phylogeny_summary(result_json, tree_figure_png = tmp_path / "never_rendered.png")
+    assert summary.tree_figure_png is None
+
 def test_collect_run_report_data_joins_samples(tmp_path: Path) -> None:
     manifest = tmp_path / "manifest.tsv"
     manifest.write_text("sample_id\tr1\tr2\nsample1\ta\tb\n")

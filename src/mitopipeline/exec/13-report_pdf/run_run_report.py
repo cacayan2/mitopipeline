@@ -32,6 +32,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--job-dir", type = Path, required = True, help = "The pipeline job's own output directory, used to resolve every per-sample result JSON by its known stage-relative path.")
     parser.add_argument("--iqtree-result-json", type = Path, default = None, help = "The batch-level IQ-TREE result JSON, if phylogeny ran.")
     parser.add_argument("--phylogeny-model", type = str, default = None, help = "The substitution model IQ-TREE was run with, if known.")
+    parser.add_argument("--tree-figure-png", type = Path, default = None, help = "The rendered tree figure PNG, if run_tree_figure.py produced one.")
     parser.add_argument("--pandoc-bin", type = str, default = "pandoc", help = "The pandoc executable name. Defaults to 'pandoc'.")
     parser.add_argument("--pdf-engine", type = str, default = "typst", help = "The PDF engine pandoc should use. Defaults to 'typst'.")
     parser.add_argument("--output-dir", type = Path, required = True, help = "The directory to write the run-level report to.")
@@ -75,7 +76,7 @@ def main() -> int:
                                    **_sample_paths(args.job_dir, sample_id))
         for sample_id in args.sample_id
     ]
-    phylogeny = collect_phylogeny_summary(args.iqtree_result_json, model = args.phylogeny_model)
+    phylogeny = collect_phylogeny_summary(args.iqtree_result_json, model = args.phylogeny_model, tree_figure_png = args.tree_figure_png)
     generated_at = datetime.now(timezone.utc).isoformat(timespec = "seconds")
     run_data = collect_run_report_data(args.job_id, generated_at, samples, phylogeny = phylogeny)
 
