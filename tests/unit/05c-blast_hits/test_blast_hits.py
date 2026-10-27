@@ -10,6 +10,7 @@ import pytest
 from mitopipeline.utils.blast.blast_hits import (
     parse_blast_tsv,
     rank_blast_hits,
+    read_top_blast_hits,
     select_top_blast_hits,
     write_top_blast_hits,
 )
@@ -229,3 +230,38 @@ def test_write_top_blast_hits_round_trips(tmp_path: Path) -> None:
     lines = output_path.read_text().strip().splitlines()
     assert lines[0].split("\t")[:2] == ["sample_id", "rank"]
     assert lines[1].split("\t")[:2] == ["SAMPLE_01", "1"]
+
+def test_read_top_blast_hits_round_trips_through_write(tmp_path: Path) -> None:
+    """
+    read_top_blast_hits() is the real inverse of write_top_blast_hits()
+    -- NOT parse_blast_tsv(), which expects raw 16-column blastn output
+    and would reject this format's two extra leading columns outright.
+    """
+    hit = BlastHit(qseqid = "q1", sseqid = "s1", pident = 99.0, length = 500, mismatch = 1, gapopen = 0,
+                    qstart = 1, qend = 500, sstart = 1, send = 500, evalue = 1e-50, bitscore = 200.0,
+                    qcovs = 95.0, staxids = "9606", sscinames = "Homo sapiens", stitle = "title", rank = 1)
+    output_path = tmp_path / "top_hits.tsv"
+    write_top_blast_hits([hit], output_path, sample_id = "SAMPLE_01")
+
+    read_back = read_top_blast_hits(output_path)
+    assert len(read_back) == 1
+    assert read_back[0] == hit
+
+def test_read_top_blast_hits_filters_by_sample_id(tmp_path: Path) -> None:
+    hit_a = BlastHit(qseqid = "q1", sseqid = "a", pident = 99.0, length = 500, mismatch = 1, gapopen = 0,
+                     qstart = 1, qend = 500, sstart = 1, send = 500, evalue = 1e-50, bitscore = 200.0,
+                     qcovs = 95.0, staxids = "9606", sscinames = "a", stitle = "a", rank = 1)
+    hit_b = BlastHit(qseqid = "q2", sseqid = "b", pident = 90.0, length = 400, mismatch = 2, gapopen = 0,
+                     qstart = 1, qend = 400, sstart = 1, send = 400, evalue = 1e-30, bitscore = 150.0,
+                     qcovs = 85.0, staxids = "9606", sscinames = "b", stitle = "b", rank = 1)
+    shared_path = tmp_path / "shared_top_hits.tsv"
+    write_top_blast_hits([hit_a], shared_path, sample_id = "SAMPLE_A")
+    with shared_path.open("a") as handle:
+        handle.write("SAMPLE_B\t1\tq2\tb\t90.0\t400\t2\t0\t1\t400\t1\t400\t1e-30\t150.0\t85.0\t9606\tb\tb\n")
+
+    assert [h.sseqid for h in read_top_blast_hits(shared_path, sample_id = "SAMPLE_A")] == ["a"]
+    assert [h.sseqid for h in read_top_blast_hits(shared_path, sample_id = "SAMPLE_B")] == ["b"]
+
+def test_read_top_blast_hits_rejects_missing_file(tmp_path: Path) -> None:
+    with pytest.raises(FileNotFoundError):
+        read_top_blast_hits(tmp_path / "does_not_exist.tsv")

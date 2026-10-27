@@ -177,4 +177,43 @@ def write_top_blast_hits(hits: list[BlastHit], output_path: str | Path, sample_i
             row = {"sample_id": sample_id, **asdict(hit)}
             writer.writerow(row)
 
+def read_top_blast_hits(path: str | Path, sample_id: str | None = None, logger: Logger | None = None) -> list[BlastHit]:
+    """
+    Reads back a TSV write_top_blast_hits() wrote -- the inverse of
+    that function, NOT parse_blast_tsv(), since this format carries
+    two extra leading columns (sample_id, rank) that raw blastn
+    tabular output never has.
+
+    Args:
+        path (str | Path): The top-hit TSV to read.
+        sample_id (str | None): If given, only rows for this sample are returned (the TSV may carry multiple samples' hits).
+        logger (Logger | None): Logger to use. Defaults to None.
+
+    Returns:
+        list[BlastHit]: The hits read, already ranked (write_top_blast_hits itself always writes them in rank order).
+
+    Raises:
+        FileNotFoundError: If path does not exist.
+    """
+    path = Path(path)
+    if not path.is_file():
+        if logger is not None: logger.error(f"File {path} not found.")
+        raise FileNotFoundError(f"File {path} not found.")
+
+    hits: list[BlastHit] = []
+    with path.open("r", encoding = "utf-8", newline = "") as handle:
+        for row in csv.DictReader(handle, delimiter = "\t"):
+            if sample_id is not None and row.get("sample_id") != sample_id:
+                continue
+            fields = {column: row[column] for column in BLAST_COLUMNS}
+            for column in INTEGER_COLUMNS:
+                fields[column] = int(fields[column])
+            for column in FLOAT_COLUMNS:
+                fields[column] = float(fields[column])
+            fields["rank"] = int(row["rank"]) if row.get("rank") else None
+            hits.append(BlastHit(**fields))
+
+    if logger is not None: logger.info(f"Read {len(hits)} top BLAST hit(s) from {path}.")
+    return hits
+
     if logger is not None: logger.info(f"Wrote {len(hits)} BLAST hits to {output_path}.")
