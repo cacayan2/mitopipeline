@@ -48,20 +48,22 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--config", type = Path, required = True, help = "The path to the config file.")
     parser.add_argument("--snakefile", type = Path, default = "ctrl/Snakefile", help = "The path to the snakefile (optional).")
     parser.add_argument("--cores", type = int, default = 1, help = "The number of cores to use for the job (optional, but 1 is default so recommend changing this).")
-    parser.add_argument("--no-conda", action = "store_false", help = "The flag to disable the conda environment (optional, but recommend not messing with this).")
+    parser.add_argument("--no-conda", action = "store_true", help = "The flag to disable the conda environment (optional, but recommend not messing with this).")
     parser.add_argument("--dry-run", action = "store_true", help = "The flag to run the pipeline in dry-run mode (optional).")
     parser.add_argument("--printshellcmds", action = "store_true", help = "The flag to print shell commands (optional - useful for debugging).")
 
     # Returning the parsed arguments.
     return parser.parse_args()
 
-def load_config(config_path: Path, job: PipelineJob) -> dict:
+def load_config(config_path: Path) -> dict:
     """
-    Loads a YAML configuration file.
+    Loads a YAML configuration file. Runs before any PipelineJob
+    exists -- the job itself can't be created until the config's own
+    output_root/job_id are known -- so this logs through the module
+    logger directly rather than a job logger.
 
     Args:
         config_path (Path): The path to the YAML configuration file.
-        job (PipelineJob): The pipeline job object - used for logging.
 
     Returns:
         dict: The loaded configuration as a dictionary.
@@ -69,18 +71,34 @@ def load_config(config_path: Path, job: PipelineJob) -> dict:
     # Normalizing the config path and validating that it exists.
     config_path = Path(config_path)
     if not config_path.exists() or not config_path.is_file():
-        job.job_logger.error(f"Config file does not exist: {config_path}.")
+        logging.error(f"Config file does not exist: {config_path}.")
         sys.exit(1)
 
     # Loading the config file and validating that it is not empty.
-    with open(config_path, "r", encoding = "utf-8") as handle: 
+    with open(config_path, "r", encoding = "utf-8") as handle:
         config = yaml.safe_load(handle)
     if config is None:
-        job.job_logger.error(f"Config file is empty: {config_path}.")
+        logging.error(f"Config file is empty: {config_path}.")
         sys.exit(1)
 
     # Returning the loaded config.
     return config
+
+def _job_configuration(config: dict) -> dict:
+    """
+    Reads the config's own job_configuration block -- output_root,
+    manifest, input_directory, job_id, validate_input_files -- the
+    same block every config file documents under its own
+    "job_configuration:" heading. Falls back to the config itself
+    when that block is absent, so a flat config still works.
+
+    Args:
+        config (dict): The pipeline configuration.
+
+    Returns:
+        dict: The job_configuration block, or config itself as a fallback.
+    """
+    return config.get("job_configuration") or config
 
 def discover_fastq_pairs(input_dir: Path, job: PipelineJob) -> list[dict[str, str]]:
     """
@@ -271,10 +289,11 @@ def prepare_runtime_manifest(config: dict, job: PipelineJob) -> tuple[Path, list
     """
     # Creating path to validated runtime manifest.
     runtime_manifest = job.job_dir / "runtime_manifest.tsv"
-    manifest_value = config.get("manifest")
+    job_configuration = _job_configuration(config)
+    manifest_value = job_configuration.get("manifest")
 
     # Obtaining and validating the input directory if provided.
-    input_dir_value = config.get("input_directory")
+    input_dir_value = job_configuration.get("input_directory")
     input_directory = Path(input_dir_value).expanduser().resolve() if input_dir_value is not None else None
 
     # If a manifest is provided, this pathway is followed.
@@ -291,7 +310,7 @@ def prepare_runtime_manifest(config: dict, job: PipelineJob) -> tuple[Path, list
 
     # If no manifest is provided, this pathway is followed.
     if input_directory is None:
-        job.logger.error("Neither sample manifest nor input directory is provided. Aborting.")
+        job.job_logger.error("Neither sample manifest nor input directory is provided. Aborting.")
         sys.exit(1)
     records = discover_fastq_pairs(input_dir = input_directory, job = job)
     write_discovered_manifest(manifest_path = runtime_manifest,
@@ -392,18 +411,36 @@ def run_snakemake(
     Returns:
         tuple[subprocess.CompletedProcess, str]: The result of the Snakemake run, and its full captured stdout+stderr (Snakemake's own output is still streamed live to the console as it runs -- capturing it doesn't silence it).
     """
+    # Resolved against the running interpreter's own venv (sys.executable's
+    # directory) rather than a bare "snakemake" -- subprocess.Popen does not
+    # activate a venv, so a bare name only resolves if the venv's bin/ is
+    # already first on $PATH, which invoking this launcher via its own
+    # venv's python directly does not guarantee.
+    snakemake_binary = str(Path(sys.executable).parent / "snakemake")
+
     # This is the command syntax required for snakemake. We explicitly set entrez to 1 to prevent
     # entrez from timing out/overloading when the task is parallelized.
+    # --conda-not-block-search-path-envvars is required because Snakemake
+    # otherwise sanitizes $PATH for any rule carrying a conda: directive
+    # even without --use-conda, breaking resolution of externally-prepared
+    # tool binaries (minimap2/samtools/blastn/GetOrganelle/mitos2).
     command = [
-        "snakemake",
+        snakemake_binary,
         "-s",
         str(snakefile),
         "--configfile",
         str(runtime_config),
         "--cores",
         str(cores),
+        "--conda-not-block-search-path-envvars",
+        # Conda activation adds real per-job overhead once --use-conda
+        # is actually in effect; the default 5s latency-wait is too
+        # tight for a rule's declared outputs to always be visible by
+        # the time Snakemake checks for them.
+        "--latency-wait",
+        "30",
         "--resources",
-        "entrez = 1"
+        "entrez=1"
     ]
     if use_conda: command.append("--use-conda")
     if dry_run: command.append("--dry-run")
@@ -464,10 +501,11 @@ def launch_pipeline(
         None
     """
     config = load_config(config_path)
-    output_root = Path(config["output_root"])
+    job_configuration = _job_configuration(config)
+    output_root = Path(job_configuration["output_root"])
     output_root.mkdir(parents = True, exist_ok = True)
 
-    job_id = _configured_job_id(config.get("job_id"))
+    job_id = _configured_job_id(job_configuration.get("job_id"))
     job = PipelineJob(parent_dir = output_root, job_id = job_id)
 
     # Running the pipeline - the try block 
@@ -510,27 +548,6 @@ def launch_pipeline(
         job.mark_failed(failure_reason = f"{type(error).__name__}: {error}")
         return 1
 
-def main() -> int:
-    """
-    Runs the pipeline launcher from the command line.
-
-    Returns:
-        int: Pipeline process return code.
-    """
-    args = parse_args()
-    return launch_pipeline(
-        config_path = Path(args.config),
-        snakefile = Path(args.snakefile),
-        cores = args.cores,
-        use_conda = not args.no_conda,
-        dry_run = args.dry_run,
-        printshellcmds = args.printshellcmds
-    )
-
-# Running the main command. 
-if __name__ == "__main__":
-    raise SystemExit(main())
-
 def _configured_job_id(value: object) -> str | None:
     """
     Normalizes a job ID from the config.
@@ -549,3 +566,24 @@ def _configured_job_id(value: object) -> str | None:
     text = str(value).strip()
     if text == "" or text.lower() == "null": return None
     return text
+
+def main() -> int:
+    """
+    Runs the pipeline launcher from the command line.
+
+    Returns:
+        int: Pipeline process return code.
+    """
+    args = parse_args()
+    return launch_pipeline(
+        config_path = Path(args.config),
+        snakefile = Path(args.snakefile),
+        cores = args.cores,
+        use_conda = not args.no_conda,
+        dry_run = args.dry_run,
+        printshellcmds = args.printshellcmds
+    )
+
+# Running the main command.
+if __name__ == "__main__":
+    raise SystemExit(main())

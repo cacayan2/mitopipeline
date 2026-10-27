@@ -70,7 +70,7 @@ def test_build_command_includes_required_flags(tmp_path: Path, paired_sample: Sa
     assert command[command.index("--threads") + 1] == "4"
     assert str(paired_sample.r1) in command
     assert str(paired_sample.r2) in command
-    assert "-o" in command
+    assert "--outdir" in command
 
 def test_build_command_creates_output_directory(tmp_path: Path, paired_sample: Sample) -> None:
     """

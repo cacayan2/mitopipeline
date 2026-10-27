@@ -123,7 +123,7 @@ class FastQCRunner(BaseTool):
             str(self.threads),
             str(self.sample.r1),
             str(self.sample.r2),
-            "-o",
+            "--outdir",
             str(self.output_dir)
         ]
 

@@ -117,7 +117,7 @@ def parse_sample_manifest(
                         r1 = r1_path,
                         r2 = r2_path,
                         genus = _optional_value(metadata, "genus"),
-                        speices = _optional_value(metadata, "species"),
+                        species = _optional_value(metadata, "species"),
                         source = _optional_value(metadata, "source"),
                         metadata = metadata)
         samples.append(sample)
