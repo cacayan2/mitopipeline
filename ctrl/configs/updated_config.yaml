@@ -140,11 +140,9 @@ stage_options:
       conda_env: mito-annotation
       env_file: envs/annotation.yaml
       genetic_code: 2
-      # refdir must currently be populated by hand (download Zenodo
-      # record 4284483 and extract refseqver's own subdirectory into
-      # it) -- NOT YET WIRED: no automatic downloader exists for this
-      # yet, unlike the MitoFish database below (assembly.seed), which
-      # now downloads itself automatically.
+      # Downloaded automatically from Zenodo record zenodo_record
+      # (ctrl/rules/08a-mitos2_config.smk's mitos_database_setup
+      # rule) -- never a manual setup step.
       refdir: resources/mitos
       refseqver: refseq89m
       zenodo_record: '4284483'
