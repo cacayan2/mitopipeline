@@ -113,3 +113,43 @@ def test_multiple_genes_preserve_file_order(tmp_path: Path) -> None:
     )
     features = parse_mitos_gff(path)
     assert [f.gene_id for f in features] == ["cox2", "nad1"]
+
+# ---- #433: circular wraparound, reverse strand, missing genes, invalid coordinates ----
+
+def test_circular_wraparound_feature_parses_with_start_greater_than_end(tmp_path: Path) -> None:
+    # A gene spanning a circular genome's origin is represented with
+    # start > end -- real and valid, never rejected as malformed.
+    path = tmp_path / "result.gff"
+    path.write_text("test_mitogenome\tmitos\tgene\t16500\t120\t.\t+\t.\tID=gene_trnF;Name=trnF\n")
+    feature = parse_mitos_gff(path)[0]
+    assert feature.start == 16500
+    assert feature.end == 120
+    assert feature.gene_id == "trnF"
+
+def test_reverse_strand_gene_with_full_real_qualifiers(tmp_path: Path) -> None:
+    path = tmp_path / "result.gff"
+    path.write_text("test_mitogenome\tmitos\tgene\t5000\t5800\t.\t-\t.\tID=gene_nad6;Name=nad6;gene_id=nad6\n")
+    feature = parse_mitos_gff(path)[0]
+    assert feature.strand == "-"
+    assert feature.gene_id == "nad6"
+    assert feature.qualifiers["gene_id"] == "nad6"
+
+def test_missing_genes_entirely_is_an_empty_list_not_an_error(tmp_path: Path) -> None:
+    # Zero gene features (e.g. a failed/empty annotation) is a valid,
+    # non-error outcome -- consumers must handle an empty list, not a
+    # crash.
+    path = tmp_path / "result.gff"
+    path.write_text("test_mitogenome\tmitos\tregion\t1\t16682\t.\t+\t.\tID=region1\n")
+    assert parse_mitos_gff(path) == []
+
+def test_zero_coordinate_is_rejected_as_invalid(tmp_path: Path) -> None:
+    path = tmp_path / "result.gff"
+    path.write_text("test_mitogenome\tmitos\tgene\t0\t600\t.\t+\t.\tID=gene_cox2;Name=cox2\n")
+    with pytest.raises(ValueError, match = "non-positive coordinates"):
+        parse_mitos_gff(path)
+
+def test_negative_coordinate_is_rejected_as_invalid(tmp_path: Path) -> None:
+    path = tmp_path / "result.gff"
+    path.write_text("test_mitogenome\tmitos\tgene\t-5\t600\t.\t+\t.\tID=gene_cox2;Name=cox2\n")
+    with pytest.raises(ValueError, match = "non-positive coordinates"):
+        parse_mitos_gff(path)

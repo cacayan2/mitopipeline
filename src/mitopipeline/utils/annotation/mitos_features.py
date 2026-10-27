@@ -107,6 +107,15 @@ def parse_mitos_gff(gff_path: str | Path, logger: Logger | None = None, feature_
                 if logger is not None: logger.error(message)
                 raise ValueError(message) from error
 
+            # GFF coordinates are 1-based and positive; a feature
+            # spanning a circular genome's origin is real and valid
+            # (represented as start > end, never rejected here) -- only
+            # a non-positive coordinate is actually malformed.
+            if start <= 0 or end <= 0:
+                message = f"MITOS2 GFF row {line_number}: non-positive coordinates ({start}, {end})."
+                if logger is not None: logger.error(message)
+                raise ValueError(message)
+
             strand = fields["strand"] if fields["strand"] in ("+", "-") else None
             score = None if fields["score"] == "." else float(fields["score"])
             qualifiers = _parse_attributes(fields["attributes"])
