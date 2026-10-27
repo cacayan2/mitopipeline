@@ -28,6 +28,7 @@ rule visualization:
     params:
         fasta_path = lambda wc, input: _selected_fasta(input.selection),
         gff_path = str(JOB_DIR / "08b-annotation" / "{sample}" / "result.gff"),
+        dpi = config["stage_options"]["annotation_viz"]["dpi"],
         output_dir = str(JOB_DIR / "09-visualization" / "{sample}"),
         log_file = str(JOB_DIR / "logs" / "09-visualization" / "{sample}.log"),
         global_log_file = str(GLOBAL_LOG_FILE),
@@ -41,6 +42,7 @@ rule visualization:
                 --sample-id {wildcards.sample} \
                 --gff-path {params.gff_path:q} \
                 --fasta-path {params.fasta_path:q} \
+                --dpi {params.dpi} \
                 --output-dir {params.output_dir:q} \
                 --log-file {params.log_file:q} \
                 --global-log-file {params.global_log_file:q} \

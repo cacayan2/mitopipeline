@@ -38,6 +38,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--sra-metadata-tsv", type = Path, default = None, help = "The SRA metadata table written by run_sra_metadata.py.")
     parser.add_argument("--biosample-metadata-tsv", type = Path, default = None, help = "The BioSample metadata table written by run_biosample_metadata.py.")
     parser.add_argument("--genbank-record-json", type = Path, default = None, help = "This sample's own GenBank record JSON written by run_mitogenome_metadata.py.")
+    parser.add_argument("--pandoc-bin", type = str, default = "pandoc", help = "The pandoc executable name. Defaults to 'pandoc'.")
+    parser.add_argument("--pdf-engine", type = str, default = "typst", help = "The PDF engine pandoc should use. Defaults to 'typst'.")
     parser.add_argument("--output-dir", type = Path, required = True, help = "The directory to write this sample's report to.")
     parser.add_argument("--log-file", type = Path, required = True, help = "The path to the log file.")
     parser.add_argument("--global-log-file", type = Path, required = True, help = "The path to the global log file.")
@@ -94,7 +96,7 @@ def main() -> int:
 
     pdf_path, pdf_success, reason = None, False, "completed successfully"
     try:
-        result = export_markdown_to_pdf(markdown_path, logger = logger)
+        result = export_markdown_to_pdf(markdown_path, pandoc_bin = args.pandoc_bin, pdf_engine = args.pdf_engine, logger = logger)
         pdf_path, pdf_success = result.pdf_path, result.success
         if not pdf_success:
             reason = f"pdf export failed: {result.stderr.strip()[:200]}"

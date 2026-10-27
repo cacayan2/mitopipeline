@@ -47,6 +47,8 @@ rule sample_report:
         sra_metadata_tsv = str(JOB_DIR / "14a-sra_archival" / "sra_metadata.tsv"),
         biosample_metadata_tsv = str(JOB_DIR / "14b-biosample_archival" / "biosample_metadata.tsv"),
         genbank_record_json = str(JOB_DIR / "14c-mitogenome_archival" / "{sample}.genbank_record.json"),
+        pandoc_bin = config["stage_options"]["report_export"]["pandoc"]["bin"],
+        pdf_engine = config["stage_options"]["report_export"]["pandoc"]["engine"],
         output_dir = str(JOB_DIR / "13-report_pdf" / "{sample}"),
         log_file = str(JOB_DIR / "logs" / "13-report_pdf" / "{sample}.log"),
         global_log_file = str(GLOBAL_LOG_FILE),
@@ -68,6 +70,8 @@ rule sample_report:
             --sra-metadata-tsv {params.sra_metadata_tsv:q} \
             --biosample-metadata-tsv {params.biosample_metadata_tsv:q} \
             --genbank-record-json {params.genbank_record_json:q} \
+            --pandoc-bin {params.pandoc_bin:q} \
+            --pdf-engine {params.pdf_engine:q} \
             --output-dir {params.output_dir:q} \
             --log-file {params.log_file:q} \
             --global-log-file {params.global_log_file:q} \
@@ -108,6 +112,8 @@ rule run_report:
         job_dir = str(JOB_DIR),
         iqtree_result_json = str(JOB_DIR / "11-phylogeny" / "iqtree_result.json"),
         phylogeny_model = config["stage_options"]["phylogeny"]["iqtree"].get("model", "") if stage_enabled("11-phylogeny") else "",
+        pandoc_bin = config["stage_options"]["report_export"]["pandoc"]["bin"],
+        pdf_engine = config["stage_options"]["report_export"]["pandoc"]["engine"],
         output_dir = str(JOB_DIR / "13-report_pdf"),
         log_file = str(JOB_DIR / "logs" / "13-report_pdf" / "run_report.log"),
         global_log_file = str(GLOBAL_LOG_FILE),
@@ -127,6 +133,8 @@ rule run_report:
             --job-dir {params.job_dir:q} \
             --iqtree-result-json {params.iqtree_result_json:q} \
             $MODEL_ARGS \
+            --pandoc-bin {params.pandoc_bin:q} \
+            --pdf-engine {params.pdf_engine:q} \
             --output-dir {params.output_dir:q} \
             --log-file {params.log_file:q} \
             --global-log-file {params.global_log_file:q} \

@@ -5,6 +5,7 @@ Executes and validates trimming on raw data.
 """
 
 # Imports
+import shlex
 from pathlib import Path
 from typing import Any
 
@@ -38,15 +39,23 @@ def fastp_optional_args(config: dict) -> str:
         "cut_mean_quality": "--cut_mean_quality",
         "n_base_limit": "--n_base_limit",
         "unqualified_percent_limit": "--unqualified_percent_limit",
-        "average_qual": "--average_qual"
+        "average_qual": "--average_qual",
+        # Regression: these four real run_fastp.py arguments were
+        # configurable in updated_config.yaml but never actually
+        # wired through here -- changing them in config had no effect.
+        "adapter_sequence": "--adapter_sequence",
+        "adapter_sequence_r2": "--adapter_sequence_r2",
+        "adapter_fasta": "--adapter_fasta",
+        "report_title": "--report_title",
     }
 
-    # Now we iterate through each of the value options and
-    # append values that are not None to args.
+    # Now we iterate through each of the value options and append
+    # values that are not None to args, shell-quoted since a string
+    # option (report_title especially) can genuinely contain spaces.
     for key, flag in value_options.items():
         value = FASTP_CONFIG.get(key)
         if value is not None:
-            args.append(f"{flag} {value}")
+            args.append(f"{flag} {shlex.quote(str(value))}")
     
     # Dictionary mapping options that are boolean - the config name is mapped to the true flag passed to fastp.
     # For more informatino about these flags, see fastp documentation or see this repository's README to view
@@ -59,7 +68,12 @@ def fastp_optional_args(config: dict) -> str:
         "disable_quality_filtering": "--disable_quality_filtering",
         "disable_length_filtering": "--disable_length_filtering",
         "trim_poly_g": "--trim_poly_g",
-        "disable_trim_poly_g": "--disable_trim_polyg",
+        # Regression: this flag didn't match run_fastp.py's real
+        # argparse name (--disable_trim_poly_g, with the underscore
+        # before "g") -- dormant only because no shipped config ever
+        # sets this key; would have raised "unrecognized arguments"
+        # the moment it did.
+        "disable_trim_poly_g": "--disable_trim_poly_g",
         "trim_poly_x": "--trim_poly_x"
     }
 

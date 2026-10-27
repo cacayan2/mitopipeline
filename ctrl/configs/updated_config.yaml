@@ -67,10 +67,23 @@ stage_options:
       threads: 2
   assembly:
     seed:
-      database_dir: tmp_playground/mitofish_tables
+      # Downloaded automatically (ctrl/rules/04c-seed_sequences.smk's
+      # mitofish_database_setup rule) -- never a manual setup step.
+      database_dir: resources/mitofish
+      # Pin a specific MitoFish release (format "YYYY.MM") for
+      # reproducibility; null resolves and downloads the latest
+      # release automatically on every fresh run.
+      version: null
     getorganelle:
       threads: 4
       database_type: animal_mt
+      # NOT YET WIRED: nothing in the pipeline currently reads this key.
+      # GetOrganelle's own bundled label database (used to classify
+      # assembled contigs) ships in a BLAST database format its own
+      # bundled blastn can't read on some installs and must be rebuilt
+      # by hand once per installation -- see Development Status.md,
+      # "GetOrganelle real version/environment details." This key is a
+      # placeholder for automating that rebuild; currently a no-op.
       initialize_database: true
       max_rounds: null
       kmer: null
@@ -103,23 +116,16 @@ stage_options:
     assembly_assessment:
       complete_min_length: 14000
       complete_max_length: 22000
-      minimum_fragment_length: 200
-    assembly_rescue: 
+    # Rescue's own real decision logic (utils/rescue/trigger.py) only
+    # ever reads trigger_statuses and getorganelle_profiles -- each
+    # rescue attempt tries the next untried profile in that list, and
+    # an empty list means rescue is effectively off. No other knob
+    # (overlap merging, reference-guided scaffolding, a megahit
+    # consensus path, etc.) is implemented.
+    assembly_rescue:
       trigger_statuses:
       - fragmented
       - partial
-      complete_min_length: 14000
-      complete_max_length: 22000
-      minimum_score_improvement: 5.0
-      maximum_gap_size: 5000
-      reference_gap_n: 100
-      terminal_overlap_min: 40
-      terminal_overlap_max: 1000
-      terminal_overlap_identity: 0.98
-      run_read_mapping: true
-      run_graph_resolution: true
-      run_reference_scaffolding: true
-      run_megahit: true
       getorganelle_profiles:
       - name: reduced_coverage
         kmer: 21,33,55,85,115
@@ -134,6 +140,11 @@ stage_options:
       conda_env: mito-annotation
       env_file: envs/annotation.yaml
       genetic_code: 2
+      # refdir must currently be populated by hand (download Zenodo
+      # record 4284483 and extract refseqver's own subdirectory into
+      # it) -- NOT YET WIRED: no automatic downloader exists for this
+      # yet, unlike the MitoFish database below (assembly.seed), which
+      # now downloads itself automatically.
       refdir: resources/mitos
       refseqver: refseq89m
       zenodo_record: '4284483'
@@ -152,6 +163,13 @@ stage_options:
       database: resources/blast/actinopterygii_mt_refs
       reference_fasta: resources/blast/reference_mitogenomes.fasta
       database_title: MitoPipeline mitochondrial reference database
+      # NOT YET WIRED: a real, working builder already exists
+      # (utils/blast/reference_database.py::setup_reference_database,
+      # pulls RefSeq mitogenomes from NCBI Entrez and builds the local
+      # BLAST database) but no rule calls it yet -- database/
+      # reference_fasta above must currently be built by hand before
+      # a real run, the same gap the MitoFish database (assembly.seed)
+      # had until this pass.
       initialize_database: true
       overwrite_database: true
       parse_seqids: true
@@ -181,6 +199,10 @@ stage_options:
       ultrafast_bootstrap: 1000
       sh_alrt: 1000
       random_seed: 12345
+      # NOT YET WIRED: no tree-figure renderer exists in the codebase
+      # yet, so these two have no effect -- IQ-TREE's own real output
+      # (iqtree_result.json, the .treefile/.log/.iqtree files) is what
+      # the run-level report actually reads.
       render_dpi: 600
       midpoint_root_figure: true
   report_export: 
