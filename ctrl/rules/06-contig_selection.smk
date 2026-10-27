@@ -67,6 +67,11 @@ rule biological_validation:
         # markers are the real dependency edges; their paths are
         # referenced in params and existence-checked in the shell.
         blast_done = str(JOB_DIR / "05b-blast" / "{sample}" / "{sample}.blast.done"),
+        # top_hits.tsv (referenced only in params below) is
+        # blast_hit_selection's own output, not blast's -- without this
+        # edge, Snakemake has no dependency forcing it to exist before
+        # this rule reads it, and the two rules can race.
+        hit_selection_done = str(JOB_DIR / "05c-blast_hits" / "{sample}" / "{sample}.hit_selection.done"),
         circular_coverage_done = str(JOB_DIR / "05c-blast_hits" / "{sample}" / "{sample}.circular_coverage.done"),
         annotation_done = str(JOB_DIR / "08b-annotation" / "{sample}" / "{sample}.annotation.done")
     output:
