@@ -203,6 +203,10 @@ def enabled_targets() -> list[str]:
         targets.extend(sample_target("12-stats_aggregation", "{sample}.stats_aggregation.done"))
     if stage_enabled("13-report_pdf"):
         targets.extend(sample_target("13-report_pdf", "{sample}.report_pdf.done"))
+        # The run-level report (#360) is a single job-level artifact
+        # aggregating every sample, the same batch-level pattern as
+        # #10/#11's own job-level targets above.
+        targets.append(str(JOB_DIR / "13-report_pdf" / "run_report.done"))
     if stage_enabled("14a-sra_archival"):
         targets.extend(sample_target("14a-sra_archival", "{sample}.sra_archival.done"))
     if stage_enabled("14b-biosample_archival"):
