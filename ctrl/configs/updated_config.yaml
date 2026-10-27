@@ -163,13 +163,11 @@ stage_options:
       database: resources/blast/actinopterygii_mt_refs
       reference_fasta: resources/blast/reference_mitogenomes.fasta
       database_title: MitoPipeline mitochondrial reference database
-      # NOT YET WIRED: a real, working builder already exists
-      # (utils/blast/reference_database.py::setup_reference_database,
-      # pulls RefSeq mitogenomes from NCBI Entrez and builds the local
-      # BLAST database) but no rule calls it yet -- database/
-      # reference_fasta above must currently be built by hand before
-      # a real run, the same gap the MitoFish database (assembly.seed)
-      # had until this pass.
+      # Downloaded and built automatically (ctrl/rules/05a-blast_config.smk's
+      # blast_database_setup rule) -- never a manual setup step.
+      # initialize_database: false skips this entirely (e.g. a
+      # database_dir prepared out of band); overwrite_database forces
+      # a rebuild even if a valid database is already present.
       initialize_database: true
       overwrite_database: true
       parse_seqids: true
@@ -184,8 +182,18 @@ stage_options:
       word_size: null
       entrez_email: ecacayan@luc.edu
       entrez_api_key: null
-      ncbi_query: mitochondrion[filter] AND refseq[filter] AND "complete genome"[Title]
-      ncbi_max_records: 250
+      # The NCBI organism-level scope to search within -- broad enough
+      # to include real confound species (e.g. marine fish when the
+      # target is freshwater), not narrowed to the sample's own
+      # lineage. See utils/blast/reference_database.py's own
+      # DEFAULT_TAXON_SCOPE/build_ncbi_query().
+      taxon_scope: Actinopterygii
+      # A high ceiling, not a real limit (~3900 real records for
+      # Actinopterygii, measured 2026-10-19) -- the historical bug
+      # this whole module exists to fix was exactly this value set
+      # too low (250), silently truncating the real reference set to
+      # an arbitrary small, untargeted subsample.
+      ncbi_max_records: 10000
       ncbi_batch_size: 50
       output_format: 6 qseqid sseqid pident length mismatch gapopen qstart qend sstart
         send evalue bitscore qcovs staxids sscinames stitle

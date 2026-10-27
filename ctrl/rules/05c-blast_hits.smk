@@ -42,7 +42,10 @@ rule blast_hit_selection:
 
 rule circular_coverage:
     input:
-        selection = str(JOB_DIR / "06-contig_selection" / "{sample}" / "{sample}.contig_selection.json")
+        selection = str(JOB_DIR / "06-contig_selection" / "{sample}" / "{sample}.contig_selection.json"),
+        # Reads the BLAST database directly, not through blast_config's
+        # own chain -- needs this edge declared separately.
+        database_done = str(JOB_DIR / "05a-blast_config" / "blast_database.done")
     output:
         # {sample}.circular_coverage_result.json is NOT declared --
         # the exec script always writes it, including a clean
