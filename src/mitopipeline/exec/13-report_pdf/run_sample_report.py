@@ -35,6 +35,9 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--getorganelle-config-json", type = Path, default = None, help = "The resolved GetOrganelle config JSON.")
     parser.add_argument("--blast-config-json", type = Path, default = None, help = "The resolved BLAST config JSON.")
     parser.add_argument("--mitos2-config-json", type = Path, default = None, help = "The resolved MITOS2 config JSON.")
+    parser.add_argument("--sra-metadata-tsv", type = Path, default = None, help = "The SRA metadata table written by run_sra_metadata.py.")
+    parser.add_argument("--biosample-metadata-tsv", type = Path, default = None, help = "The BioSample metadata table written by run_biosample_metadata.py.")
+    parser.add_argument("--genbank-record-json", type = Path, default = None, help = "This sample's own GenBank record JSON written by run_mitogenome_metadata.py.")
     parser.add_argument("--output-dir", type = Path, required = True, help = "The directory to write this sample's report to.")
     parser.add_argument("--log-file", type = Path, required = True, help = "The path to the log file.")
     parser.add_argument("--global-log-file", type = Path, required = True, help = "The path to the global log file.")
@@ -75,7 +78,9 @@ def main() -> int:
         biological_validation_json = args.biological_validation_json,
         visualization_result_json = args.visualization_result_json, fastp_json = args.fastp_json,
         getorganelle_config_json = args.getorganelle_config_json, blast_config_json = args.blast_config_json,
-        mitos2_config_json = args.mitos2_config_json, logger = logger,
+        mitos2_config_json = args.mitos2_config_json, sra_metadata_tsv = args.sra_metadata_tsv,
+        biosample_metadata_tsv = args.biosample_metadata_tsv, genbank_record_json = args.genbank_record_json,
+        logger = logger,
     )
 
     markdown_path = args.output_dir / f"{args.sample_id}.report.md"

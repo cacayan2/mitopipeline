@@ -6,11 +6,29 @@ then the run-level Markdown + PDF report (#360/#441/#443) aggregating
 every sample plus the batch-level phylogeny outcome.
 """
 
+def _sample_report_inputs(wildcards):
+    inputs = {
+        "stats_done": str(JOB_DIR / "12-stats_aggregation" / wildcards.sample / f"{wildcards.sample}.stats_aggregation.done"),
+        "validation_done": str(JOB_DIR / "06-contig_selection" / wildcards.sample / f"{wildcards.sample}.biological_validation.done"),
+        "visualization_done": str(JOB_DIR / "09-visualization" / wildcards.sample / f"{wildcards.sample}.visualization.done"),
+    }
+    # Archival dependencies are only real dependency edges when those
+    # stages are actually enabled -- otherwise their own .done markers
+    # are never produced by anything else in the DAG (see run_report's
+    # own identical reasoning for phylogeny, below).
+    if stage_enabled("14a-sra_archival"):
+        inputs["sra_archival_done"] = str(JOB_DIR / "14a-sra_archival" / "sra_archival.done")
+    if stage_enabled("14b-biosample_archival"):
+        inputs["biosample_archival_done"] = str(JOB_DIR / "14b-biosample_archival" / "biosample_archival.done")
+    if stage_enabled("14c-mitogenome_archival"):
+        inputs["mitogenome_archival_done"] = str(
+            JOB_DIR / "14c-mitogenome_archival" / wildcards.sample / f"{wildcards.sample}.mitogenome_archival.done"
+        )
+    return inputs
+
 rule sample_report:
     input:
-        stats_done = str(JOB_DIR / "12-stats_aggregation" / "{sample}" / "{sample}.stats_aggregation.done"),
-        validation_done = str(JOB_DIR / "06-contig_selection" / "{sample}" / "{sample}.biological_validation.done"),
-        visualization_done = str(JOB_DIR / "09-visualization" / "{sample}" / "{sample}.visualization.done")
+        unpack(_sample_report_inputs)
     output:
         # {sample}.report_result.json is NOT declared -- the exec
         # script always writes it (missing stats simply render as
@@ -26,6 +44,9 @@ rule sample_report:
         getorganelle_config_json = str(JOB_DIR / "04a-getorganelle_config" / "{sample}" / "{sample}.getorganelle_config.json"),
         blast_config_json = str(JOB_DIR / "05a-blast_config" / "{sample}" / "{sample}.blast_config.json"),
         mitos2_config_json = str(JOB_DIR / "08a-mitos2_config" / "{sample}" / "{sample}.mitos2_config.json"),
+        sra_metadata_tsv = str(JOB_DIR / "14a-sra_archival" / "sra_metadata.tsv"),
+        biosample_metadata_tsv = str(JOB_DIR / "14b-biosample_archival" / "biosample_metadata.tsv"),
+        genbank_record_json = str(JOB_DIR / "14c-mitogenome_archival" / "{sample}.genbank_record.json"),
         output_dir = str(JOB_DIR / "13-report_pdf" / "{sample}"),
         log_file = str(JOB_DIR / "logs" / "13-report_pdf" / "{sample}.log"),
         global_log_file = str(GLOBAL_LOG_FILE),
@@ -44,6 +65,9 @@ rule sample_report:
             --getorganelle-config-json {params.getorganelle_config_json:q} \
             --blast-config-json {params.blast_config_json:q} \
             --mitos2-config-json {params.mitos2_config_json:q} \
+            --sra-metadata-tsv {params.sra_metadata_tsv:q} \
+            --biosample-metadata-tsv {params.biosample_metadata_tsv:q} \
+            --genbank-record-json {params.genbank_record_json:q} \
             --output-dir {params.output_dir:q} \
             --log-file {params.log_file:q} \
             --global-log-file {params.global_log_file:q} \
@@ -64,6 +88,12 @@ def _run_report_inputs(wildcards):
     # phylogeny to run even when a user explicitly disabled it.
     if stage_enabled("11-phylogeny"):
         inputs["phylogeny_done"] = str(JOB_DIR / "11-phylogeny" / "phylogeny.done")
+    if stage_enabled("14a-sra_archival"):
+        inputs["sra_archival_done"] = str(JOB_DIR / "14a-sra_archival" / "sra_archival.done")
+    if stage_enabled("14b-biosample_archival"):
+        inputs["biosample_archival_done"] = str(JOB_DIR / "14b-biosample_archival" / "biosample_archival.done")
+    if stage_enabled("14c-mitogenome_archival"):
+        inputs["mitogenome_archival_done"] = sample_target("14c-mitogenome_archival", "{sample}.mitogenome_archival.done")
     return inputs
 
 rule run_report:

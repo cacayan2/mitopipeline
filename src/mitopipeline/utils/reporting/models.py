@@ -41,6 +41,35 @@ class AnnotationConfigSummary:
     refseqver: str
 
 @dataclass(frozen = True, slots = True)
+class ArchivalSummary:
+    """
+    One sample's real NCBI archival preparation status (#367-376),
+    read from the same SRA/BioSample/GenBank tables a human reviewer
+    would open before uploading through the NCBI Submission Portal --
+    this pipeline never submits directly.
+
+    Attributes:
+        sra_review_status (str | None): The SRA record's own review_status (READY/MANUAL_REVIEW_REQUIRED), or None if no record exists.
+        sra_missing_fields (str): The SRA record's own missing_fields, semicolon-delimited.
+        biosample_review_status (str | None): The BioSample record's own review_status, or None if no record exists.
+        biosample_missing_fields (str): The BioSample record's own missing_fields, semicolon-delimited.
+        genbank_review_status (str | None): The GenBank submission folder's own review_status, or None if no record exists.
+        genbank_missing (str): The GenBank record's own missing_files + missing_metadata, semicolon-delimited.
+        ready_for_review (bool): Whether every real archival source is READY for this sample.
+    """
+    sra_review_status: str | None = None
+    sra_missing_fields: str = ""
+    biosample_review_status: str | None = None
+    biosample_missing_fields: str = ""
+    genbank_review_status: str | None = None
+    genbank_missing: str = ""
+
+    @property
+    def ready_for_review(self) -> bool:
+        statuses = (self.sra_review_status, self.biosample_review_status, self.genbank_review_status)
+        return all(s == "READY" for s in statuses)
+
+@dataclass(frozen = True, slots = True)
 class SampleReportData:
     """
     Everything #358's per-sample report (and the live methods
@@ -59,6 +88,7 @@ class SampleReportData:
         assembly_config (AssemblyConfigSummary | None): The real GetOrganelle settings used, or None.
         blast_config (BlastConfigSummary | None): The real BLAST settings used, or None.
         annotation_config (AnnotationConfigSummary | None): The real MITOS2 settings used, or None.
+        archival (ArchivalSummary | None): This sample's real NCBI archival preparation status, or None when the archival stages didn't run.
         rescued (bool): Whether the selected attempt came from a rescue retry (source_attempt > 0), not the primary assembly.
     """
     sample_id: str
@@ -73,6 +103,7 @@ class SampleReportData:
     assembly_config: AssemblyConfigSummary | None = None
     blast_config: BlastConfigSummary | None = None
     annotation_config: AnnotationConfigSummary | None = None
+    archival: ArchivalSummary | None = None
 
     @property
     def rescued(self) -> bool:
@@ -122,3 +153,8 @@ class RunReportData:
             key = sample.overall_verdict or "not assessed"
             counts[key] = counts.get(key, 0) + 1
         return counts
+
+    @property
+    def archival_ready_count(self) -> int:
+        """How many samples have every real archival source (SRA/BioSample/GenBank) at READY."""
+        return sum(1 for sample in self.samples if sample.archival is not None and sample.archival.ready_for_review)

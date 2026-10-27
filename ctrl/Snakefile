@@ -102,6 +102,11 @@ _STAGE_CONFIG_KEYS: dict[str, tuple[str, ...]] = {
     "11-phylogeny": ("phylogeny",),
     "12-stats_aggregation": ("reporting",),
     "13-report_pdf": ("pdf_export",),
+    "14a-sra_archival": ("sra_archival",),
+    "14b-biosample_archival": ("biosample_archival",),
+    "14c-mitogenome_archival": ("mitogenome_archival",),
+    "15-archival_validation": ("archival_validation",),
+    "16-table2asn_validation": ("table2asn_validation",),
 }
 
 def stage_enabled(stage_name: str) -> bool:
@@ -207,14 +212,20 @@ def enabled_targets() -> list[str]:
         # aggregating every sample, the same batch-level pattern as
         # #10/#11's own job-level targets above.
         targets.append(str(JOB_DIR / "13-report_pdf" / "run_report.done"))
+    # #367-369's SRA/BioSample metadata tables are genuinely job-level
+    # artifacts (one table covering every sample, built in a single
+    # call, the same real v0.1.0 design) -- job-level targets, not
+    # sample_target()'s per-sample expansion. #370's GenBank
+    # submission folder is genuinely per-sample (each one depends
+    # only on that sample's own selected assembly/annotation).
     if stage_enabled("14a-sra_archival"):
-        targets.extend(sample_target("14a-sra_archival", "{sample}.sra_archival.done"))
+        targets.append(str(JOB_DIR / "14a-sra_archival" / "sra_archival.done"))
     if stage_enabled("14b-biosample_archival"):
-        targets.extend(sample_target("14b-biosample_archival", "{sample}.biosample_archival.done"))
+        targets.append(str(JOB_DIR / "14b-biosample_archival" / "biosample_archival.done"))
     if stage_enabled("14c-mitogenome_archival"):
         targets.extend(sample_target("14c-mitogenome_archival", "{sample}.mitogenome_archival.done"))
     if stage_enabled("15-archival_validation"):
-        targets.extend(sample_target("15-archival_validation", "{sample}.archival_validation.done"))
+        targets.append(str(JOB_DIR / "15-archival_validation" / "archival_validation.done"))
     if stage_enabled("16-table2asn_validation"):
         targets.extend(sample_target("16-table2asn_validation", "{sample}.table2asn_validation.done"))
     

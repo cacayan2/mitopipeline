@@ -39,6 +39,29 @@ def render_sample_status_section(run_data: RunReportData, report_path: Path) -> 
         ])
     return ["## Sample status", "", markdown_table(["Sample", "Verdict", "Rescued", "Report"], rows), ""]
 
+def render_archival_summary_section(run_data: RunReportData) -> list[str]:
+    """Renders the run-level NCBI archival preparation summary (#367-376)."""
+    lines = ["## NCBI archival summary", ""]
+    samples_with_archival = [s for s in run_data.samples if s.archival is not None]
+    if not samples_with_archival:
+        return [*lines, "_Archival preparation was not available for this run._", ""]
+
+    rows = [
+        ["Samples ready for submission review", f"{run_data.archival_ready_count} / {len(run_data.samples)}"],
+    ]
+    per_sample_rows = [
+        [s.sample_id, s.archival.sra_review_status or "Not available",
+         s.archival.biosample_review_status or "Not available", s.archival.genbank_review_status or "Not available",
+         "Yes" if s.archival.ready_for_review else "No"]
+        for s in samples_with_archival
+    ]
+    return [
+        *lines, markdown_table(["Metric", "Value"], rows), "",
+        "### Per-sample archival status", "",
+        markdown_table(["Sample", "SRA", "BioSample", "GenBank", "Ready"], per_sample_rows), "",
+        "This pipeline prepares submission-ready files only; it never submits to NCBI directly.", "",
+    ]
+
 def render_phylogeny_section(run_data: RunReportData) -> list[str]:
     """Renders the batch-level phylogeny outcome."""
     lines = ["## Phylogenetic validation", ""]
@@ -73,6 +96,7 @@ def render_run_report(run_data: RunReportData, report_path: str | Path) -> str:
         *render_run_overview_section(run_data),
         *render_sample_status_section(run_data, report_path),
         *render_phylogeny_section(run_data),
+        *render_archival_summary_section(run_data),
     ]
     return "\n".join(lines)
 

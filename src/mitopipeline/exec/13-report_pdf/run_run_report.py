@@ -48,6 +48,9 @@ def _sample_paths(job_dir: Path, sample_id: str) -> dict:
         "getorganelle_config_json": job_dir / "04a-getorganelle_config" / sample_id / f"{sample_id}.getorganelle_config.json",
         "blast_config_json": job_dir / "05a-blast_config" / sample_id / f"{sample_id}.blast_config.json",
         "mitos2_config_json": job_dir / "08a-mitos2_config" / sample_id / f"{sample_id}.mitos2_config.json",
+        "sra_metadata_tsv": job_dir / "14a-sra_archival" / "sra_metadata.tsv",
+        "biosample_metadata_tsv": job_dir / "14b-biosample_archival" / "biosample_metadata.tsv",
+        "genbank_record_json": job_dir / "14c-mitogenome_archival" / f"{sample_id}.genbank_record.json",
     }
 
 def main() -> int:

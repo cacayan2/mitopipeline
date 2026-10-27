@@ -141,6 +141,27 @@ def render_validation_section(report_data: SampleReportData) -> list[str]:
         lines += [markdown_table(["Check", "Verdict", "Reason"], rows), ""]
     return lines
 
+def render_archival_section(report_data: SampleReportData) -> list[str]:
+    """Renders this sample's real NCBI archival preparation status (#367-376)."""
+    lines = ["## NCBI archival readiness", ""]
+    archival = report_data.archival
+    if archival is None:
+        return [*lines, "_Archival preparation was not available._", ""]
+
+    rows = [
+        ["SRA", archival.sra_review_status or "Not available", archival.sra_missing_fields or "—"],
+        ["BioSample", archival.biosample_review_status or "Not available", archival.biosample_missing_fields or "—"],
+        ["GenBank", archival.genbank_review_status or "Not available", archival.genbank_missing or "—"],
+    ]
+    lines += [markdown_table(["Record", "Review status", "Needs review"], rows), ""]
+    lines += [f"**Ready for submission review: {'Yes' if archival.ready_for_review else 'No'}**", ""]
+    lines += [
+        "This pipeline prepares submission-ready files only; it never submits to NCBI directly. "
+        "A human reviewer should resolve any fields listed above before uploading through the "
+        "NCBI Submission Portal.", "",
+    ]
+    return lines
+
 def render_visualization_section(report_data: SampleReportData, report_path: Path) -> list[str]:
     """Renders the circular mitochondrial genome map."""
     lines = ["## Circular mitochondrial genome map", ""]
@@ -184,6 +205,7 @@ def render_sample_report(report_data: SampleReportData, report_path: str | Path)
         *render_blast_section(report_data),
         *render_validation_section(report_data),
         *render_visualization_section(report_data, report_path),
+        *render_archival_section(report_data),
         *render_methods_section(report_data),
     ]
     return "\n".join(lines)

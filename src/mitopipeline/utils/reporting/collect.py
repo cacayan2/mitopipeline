@@ -15,6 +15,7 @@ from logging import Logger
 from pathlib import Path
 from mitopipeline.utils.reporting.models import (
     AnnotationConfigSummary,
+    ArchivalSummary,
     AssemblyConfigSummary,
     BlastConfigSummary,
     PhylogenySummary,
@@ -86,6 +87,50 @@ def parse_fastp_stats(fastp_json_path: str | Path | None) -> dict | None:
     except (KeyError, TypeError, ValueError):
         return None
 
+def _read_tsv_row(path: Path | None, key_column: str, key_value: str) -> dict[str, str] | None:
+    """Reads one row from a TSV, matched by key_column == key_value, or None when absent."""
+    if path is None or not Path(path).is_file():
+        return None
+    with Path(path).open("r", encoding = "utf-8", newline = "") as handle:
+        for row in csv.DictReader(handle, delimiter = "\t"):
+            if row.get(key_column) == key_value:
+                return row
+    return None
+
+def collect_archival_summary(sample_id: str, sra_metadata_tsv: str | Path | None = None,
+                              biosample_metadata_tsv: str | Path | None = None,
+                              genbank_record_json: str | Path | None = None) -> ArchivalSummary | None:
+    """
+    Reads one sample's real NCBI archival preparation status from the
+    SRA/BioSample tables and its own GenBank submission record.
+
+    Args:
+        sample_id (str): The sample id.
+        sra_metadata_tsv (str | Path | None): The SRA metadata table written by run_sra_metadata.py.
+        biosample_metadata_tsv (str | Path | None): The BioSample metadata table written by run_biosample_metadata.py.
+        genbank_record_json (str | Path | None): This sample's own GenBank record JSON written by run_mitogenome_metadata.py.
+
+    Returns:
+        ArchivalSummary | None: The summary, or None when no archival source was supplied at all.
+    """
+    if sra_metadata_tsv is None and biosample_metadata_tsv is None and genbank_record_json is None:
+        return None
+
+    sra_row = _read_tsv_row(Path(sra_metadata_tsv) if sra_metadata_tsv else None, "sample_name", sample_id)
+    biosample_row = _read_tsv_row(Path(biosample_metadata_tsv) if biosample_metadata_tsv else None, "sample_name", sample_id)
+    genbank_record = _read_json(Path(genbank_record_json) if genbank_record_json else None)
+
+    return ArchivalSummary(
+        sra_review_status = sra_row.get("review_status") if sra_row else None,
+        sra_missing_fields = sra_row.get("missing_fields", "") if sra_row else "",
+        biosample_review_status = biosample_row.get("review_status") if biosample_row else None,
+        biosample_missing_fields = biosample_row.get("missing_fields", "") if biosample_row else "",
+        genbank_review_status = genbank_record.get("review_status") if genbank_record else None,
+        genbank_missing = ";".join(f for f in [
+            (genbank_record or {}).get("missing_files", ""), (genbank_record or {}).get("missing_metadata", ""),
+        ] if f),
+    )
+
 def collect_sample_report_data(sample_id: str, runtime_manifest_path: str | Path,
                                 statistics_json: str | Path | None = None,
                                 biological_validation_json: str | Path | None = None,
@@ -94,6 +139,9 @@ def collect_sample_report_data(sample_id: str, runtime_manifest_path: str | Path
                                 getorganelle_config_json: str | Path | None = None,
                                 blast_config_json: str | Path | None = None,
                                 mitos2_config_json: str | Path | None = None,
+                                sra_metadata_tsv: str | Path | None = None,
+                                biosample_metadata_tsv: str | Path | None = None,
+                                genbank_record_json: str | Path | None = None,
                                 logger: Logger | None = None) -> SampleReportData:
     """
     Assembles one sample's report data from its real result JSON.
@@ -108,6 +156,9 @@ def collect_sample_report_data(sample_id: str, runtime_manifest_path: str | Path
         getorganelle_config_json (str | Path | None): The resolved GetOrganelle config JSON.
         blast_config_json (str | Path | None): The resolved BLAST config JSON.
         mitos2_config_json (str | Path | None): The resolved MITOS2 config JSON.
+        sra_metadata_tsv (str | Path | None): The SRA metadata table written by run_sra_metadata.py.
+        biosample_metadata_tsv (str | Path | None): The BioSample metadata table written by run_biosample_metadata.py.
+        genbank_record_json (str | Path | None): This sample's own GenBank record JSON written by run_mitogenome_metadata.py.
         logger (Logger | None): Logger to use. Defaults to None.
 
     Returns:
@@ -159,12 +210,14 @@ def collect_sample_report_data(sample_id: str, runtime_manifest_path: str | Path
             genetic_code = m_config.get("genetic_code", 2), refseqver = m_config.get("refseqver", ""),
         )
 
+    archival = collect_archival_summary(sample_id, sra_metadata_tsv, biosample_metadata_tsv, genbank_record_json)
+
     return SampleReportData(
         sample_id = sample_id, metadata = metadata, fastp_stats = parse_fastp_stats(fastp_json),
         assembly = assembly, blast = blast, annotation = annotation,
         overall_verdict = overall_verdict, validation_checks = validation_checks,
         visualization_png = visualization_png, assembly_config = assembly_config,
-        blast_config = blast_config, annotation_config = annotation_config,
+        blast_config = blast_config, annotation_config = annotation_config, archival = archival,
     )
 
 def collect_phylogeny_summary(iqtree_result_json: str | Path | None, model: str | None = None) -> PhylogenySummary | None:
