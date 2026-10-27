@@ -191,10 +191,14 @@ def enabled_targets() -> list[str]:
         targets.extend(sample_target("08b-annotation", "{sample}.annotation.done"))
     if stage_enabled("09-visualization"):
         targets.extend(sample_target("09-visualization", "{sample}.visualization.done"))
+    # #344/#345's combined FASTA and #346-348's alignment/tree are
+    # genuinely batch-level artifacts (one dataset/tree per run, built
+    # across every accepted sample), never per-sample -- a single
+    # job-level target, not sample_target()'s per-sample expansion.
     if stage_enabled("10-alignment_dataset"):
-        targets.extend(sample_target("10-alignment_dataset", "{sample}.alignment_dataset.done"))
+        targets.append(str(JOB_DIR / "10-alignment_dataset" / "alignment_dataset.done"))
     if stage_enabled("11-phylogeny"):
-        targets.extend(sample_target("11-phylogeny", "{sample}.phylogeny.done"))
+        targets.append(str(JOB_DIR / "11-phylogeny" / "phylogeny.done"))
     if stage_enabled("12-stats_aggregation"):
         targets.extend(sample_target("12-stats_aggregation", "{sample}.stats_aggregation.done"))
     if stage_enabled("13-report_pdf"):
@@ -233,20 +237,23 @@ include: "rules/06-contig_selection.smk"
 include: "rules/07-assembly_rescue.smk"
 include: "rules/08a-mitos2_config.smk"
 include: "rules/08b-annotation.smk"
-# Visualization/phylogeny/stats/report stages: included only when
-# actually enabled, same reasoning as the archival stages below --
-# avoids a parse-time failure over a rule file still being built.
-if stage_enabled("09-visualization"): include: "rules/09-visualization.smk"
-if stage_enabled("10-alignment_dataset"): include: "rules/10-alignment_dataset.smk"
-if stage_enabled("11-phylogeny"): include: "rules/11-phylogeny.smk"
-if stage_enabled("12-stats_aggregation"): include: "rules/12-stats_aggregation.smk"
-if stage_enabled("13-report_pdf"): include: "rules/13-report_pdf.smk"
-
-# Archival/validation stages (14a-16) aren't built yet -- included only
-# when actually enabled, so a run that never turns them on doesn't fail
-# at parse time over a rule file that doesn't exist.
-if stage_enabled("14a-sra_archival"): include: "rules/14a-sra_archival.smk"
-if stage_enabled("14b-biosample_archival"): include: "rules/14b-biosample_archival.smk"
-if stage_enabled("14c-mitogenome_archival"): include: "rules/14c-mitogenome_archival.smk"
-if stage_enabled("15-archival_validation"): include: "rules/15-archival_validation.smk"
-if stage_enabled("16-table2asn_validation"): include: "rules/16-table2asn_validation.smk"
+# Every rule file is included unconditionally -- confirmed by a real
+# failure that Snakemake's own `include:` directive is resolved at
+# PARSE time, not runtime, so wrapping it in `if stage_enabled(...):`
+# silently never includes the file at all, even when the stage really
+# is enabled (the rules just don't exist; no error, no warning).
+# stage_enabled() still correctly gates what rule all actually
+# requests (see enabled_targets() above) -- that's the real on/off
+# switch. A stage not yet built (archival/validation, 14a-16) gets a
+# placeholder rule file with no real rules, so an unconditional
+# include never fails to parse regardless of build progress.
+include: "rules/09-visualization.smk"
+include: "rules/10-alignment_dataset.smk"
+include: "rules/11-phylogeny.smk"
+include: "rules/12-stats_aggregation.smk"
+include: "rules/13-report_pdf.smk"
+include: "rules/14a-sra_archival.smk"
+include: "rules/14b-biosample_archival.smk"
+include: "rules/14c-mitogenome_archival.smk"
+include: "rules/15-archival_validation.smk"
+include: "rules/16-table2asn_validation.smk"
