@@ -146,6 +146,76 @@ def test_select_top_blast_hits_rejects_non_positive_maximum() -> None:
     with pytest.raises(ValueError):
         select_top_blast_hits([], maximum_hits = 0)
 
+def test_rank_blast_hits_breaks_evalue_tie_by_bitscore(tmp_path: Path) -> None:
+    """
+    Equal e-values are broken by bitscore (higher wins).
+    """
+    path = tmp_path / "blast.tsv"
+    path.write_text(_row(sseqid = "low_score", evalue = "1e-50", bitscore = "100") + "\n"
+                    + _row(sseqid = "high_score", evalue = "1e-50", bitscore = "200") + "\n")
+    ranked = rank_blast_hits(parse_blast_tsv(path))
+    assert ranked[0].sseqid == "high_score"
+
+def test_rank_blast_hits_breaks_bitscore_tie_by_qcovs(tmp_path: Path) -> None:
+    """
+    Equal e-value and bitscore are broken by query coverage (higher wins).
+    """
+    path = tmp_path / "blast.tsv"
+    path.write_text(_row(sseqid = "low_cov", evalue = "1e-50", bitscore = "200", qcovs = "50") + "\n"
+                    + _row(sseqid = "high_cov", evalue = "1e-50", bitscore = "200", qcovs = "95") + "\n")
+    ranked = rank_blast_hits(parse_blast_tsv(path))
+    assert ranked[0].sseqid == "high_cov"
+
+def test_rank_blast_hits_breaks_qcovs_tie_by_pident(tmp_path: Path) -> None:
+    """
+    Equal e-value, bitscore, and coverage are broken by percent
+    identity (higher wins).
+    """
+    path = tmp_path / "blast.tsv"
+    path.write_text(_row(sseqid = "low_ident", evalue = "1e-50", bitscore = "200", qcovs = "95", pident = "90.0") + "\n"
+                    + _row(sseqid = "high_ident", evalue = "1e-50", bitscore = "200", qcovs = "95", pident = "99.5") + "\n")
+    ranked = rank_blast_hits(parse_blast_tsv(path))
+    assert ranked[0].sseqid == "high_ident"
+
+def test_rank_blast_hits_breaks_pident_tie_by_length(tmp_path: Path) -> None:
+    """
+    Equal e-value, bitscore, coverage, and identity are broken by
+    alignment length (longer wins).
+    """
+    path = tmp_path / "blast.tsv"
+    path.write_text(_row(sseqid = "short", evalue = "1e-50", bitscore = "200", qcovs = "95", pident = "99.0", length = "400") + "\n"
+                    + _row(sseqid = "long", evalue = "1e-50", bitscore = "200", qcovs = "95", pident = "99.0", length = "800") + "\n")
+    ranked = rank_blast_hits(parse_blast_tsv(path))
+    assert ranked[0].sseqid == "long"
+
+def test_rank_blast_hits_breaks_full_tie_alphabetically_by_accession(tmp_path: Path) -> None:
+    """
+    A complete tie across every other criterion falls back to the
+    subject accession itself, alphabetically -- fully deterministic,
+    never arbitrary dict/set ordering.
+    """
+    path = tmp_path / "blast.tsv"
+    path.write_text(_row(sseqid = "zzz_subject") + "\n" + _row(sseqid = "aaa_subject") + "\n")
+    ranked = rank_blast_hits(parse_blast_tsv(path))
+    assert [hit.sseqid for hit in ranked] == ["aaa_subject", "zzz_subject"]
+
+def test_rank_blast_hits_deduplicates_repeated_accession_keeping_the_strongest(tmp_path: Path) -> None:
+    """
+    The same accession appearing in 3 separate rows (e.g. multiple
+    local alignments against the same reference) is deduplicated down
+    to exactly one hit -- the strongest of the three, not the first
+    or last seen.
+    """
+    path = tmp_path / "blast.tsv"
+    path.write_text(
+        _row(sseqid = "dup", evalue = "1e-10", bitscore = "80") + "\n"
+        + _row(sseqid = "dup", evalue = "1e-90", bitscore = "300") + "\n"
+        + _row(sseqid = "dup", evalue = "1e-30", bitscore = "150") + "\n"
+    )
+    ranked = rank_blast_hits(parse_blast_tsv(path))
+    assert len(ranked) == 1
+    assert ranked[0].bitscore == 300
+
 def test_write_top_blast_hits_round_trips(tmp_path: Path) -> None:
     """
     Writing selected hits produces a TSV with the sample ID and rank
