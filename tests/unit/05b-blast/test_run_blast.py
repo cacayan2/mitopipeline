@@ -50,6 +50,7 @@ def _argv(tmp_path: Path, sample_id: str, config_json: Path) -> list[str]:
         "run_blast.py",
         "--sample-id", sample_id,
         "--config-json", str(config_json),
+        "--output-dir", str(tmp_path / "out"),
         "--working-dir", str(tmp_path),
         "--threads", "2",
         "--log-file", str(tmp_path / "logs" / "blast.log"),
@@ -74,7 +75,7 @@ def test_successful_run_with_hits_records_hit_count(tmp_path: Path, monkeypatch:
     monkeypatch.setattr(sys, "argv", _argv(tmp_path, sample_id, config_json))
 
     assert run_blast.main() == 0
-    result = json.loads((tmp_path / f"{sample_id}.blast_result.json").read_text())
+    result = json.loads((tmp_path / "out" / f"{sample_id}.blast_result.json").read_text())
     assert result["success"] is True
     assert result["hit_count"] == 1
     assert result["output_file"] == str(output_file)
@@ -93,7 +94,7 @@ def test_successful_run_with_zero_hits_is_not_a_failure(tmp_path: Path, monkeypa
     monkeypatch.setattr(sys, "argv", _argv(tmp_path, sample_id, config_json))
 
     assert run_blast.main() == 0
-    result = json.loads((tmp_path / f"{sample_id}.blast_result.json").read_text())
+    result = json.loads((tmp_path / "out" / f"{sample_id}.blast_result.json").read_text())
     assert result["success"] is True
     assert result["hit_count"] == 0
 
@@ -106,7 +107,7 @@ def test_tool_failure_is_recorded_not_fabricated(tmp_path: Path, monkeypatch: py
     monkeypatch.setattr(sys, "argv", _argv(tmp_path, sample_id, config_json))
 
     assert run_blast.main() == 1
-    result = json.loads((tmp_path / f"{sample_id}.blast_result.json").read_text())
+    result = json.loads((tmp_path / "out" / f"{sample_id}.blast_result.json").read_text())
     assert result["success"] is False
     assert result["hit_count"] is None
     assert result["output_file"] is None

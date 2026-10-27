@@ -132,7 +132,7 @@ rule trimming:
         "../../envs/02-trimming.yaml"
     shell:
         """
-        python {params.exec_script:q} \
+        {PYTHON_BIN:q} {params.exec_script:q} \
             --sample-id {wildcards.sample} \
             --in1 {input.r1:q} \
             --in2 {input.r2:q} \

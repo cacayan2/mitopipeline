@@ -17,10 +17,11 @@ stages:
   trimming: true
   qc_trimmed: true
   assembly: true
-  assembly_post: 
+  blast: true
+  assembly_post:
     contig_selection: true
     assembly_rescue: true
-  annotation: true 
+  annotation: true
   visualization: true
   phylogeny: true
   reporting: true
@@ -65,7 +66,9 @@ stage_options:
     fastqc: 
       threads: 2
   assembly:
-    getorganelle: 
+    seed:
+      database_dir: tmp_playground/mitofish_tables
+    getorganelle:
       threads: 4
       database_type: animal_mt
       initialize_database: true
@@ -146,6 +149,7 @@ stage_options:
       mode: local
       database_source: ncbi
       database_dir: resources/blast
+      database: resources/blast/actinopterygii_mt_refs
       reference_fasta: resources/blast/reference_mitogenomes.fasta
       database_title: MitoPipeline mitochondrial reference database
       initialize_database: true

@@ -17,6 +17,26 @@ wildcard_constraints:
 PROJECT_ROOT = Path(workflow.basedir).parent.resolve()
 SRC_DIR = PROJECT_ROOT / "src"
 
+# Every rule invokes its exec script via THIS exact interpreter, never
+# bare "python" -- confirmed by a real failure: a rule's own tool conda
+# env (blastn/mitos2/GetOrganelle/etc, each a DIFFERENT, older Python)
+# gets prepended ahead of this project's own venv on PATH, so bare
+# "python" silently resolved to one of those instead and crashed on
+# "from __future__ import annotations" (a Python 2/very-old-3 error).
+# The project's own venv is the only interpreter with mitopipeline
+# itself installed, regardless of which tool env is active for the
+# external binary a given rule also needs on PATH.
+#
+# Deliberately NOT .resolve()'d -- confirmed by a second real failure:
+# .venv/bin/python is itself a symlink to the system python3, and
+# Python's own venv activation depends on being invoked through THAT
+# symlink path (it looks for a sibling pyvenv.cfg next to the path it
+# was actually invoked as) -- resolving the symlink first silently
+# invokes the bare system interpreter instead, with no venv
+# site-packages at all (biopython and everything else installed
+# there became unimportable).
+PYTHON_BIN = str(PROJECT_ROOT / ".venv" / "bin" / "python")
+
 # Setting a shell prefix such that the source directory is included in the PATH.
 shell.prefix(f'export PYTHONPATH="{SRC_DIR}:$PYTHONPATH"; ')
 
@@ -55,17 +75,51 @@ if "sample_id" not in SAMPLE_TABLE.columns: raise ValueError("Runtime manifest m
 SAMPLE_TABLE = SAMPLE_TABLE.set_index("sample_id", drop = False)
 SAMPLES = SAMPLE_TABLE.index.tolist()
 
+# Maps each numbered pipeline stage (used throughout this file and
+# ctrl/rules/ for target/include naming) to the path of keys that
+# actually toggle it in config.yaml's own "stages:" block -- that
+# block uses coarser, human-facing names (e.g. one "assembly" toggle
+# covers 04a/04c/04d; "assembly_post" nests contig_selection and
+# assembly_rescue as separate toggles), never the numbered names
+# themselves. A stage with no entry here is assumed to share its own
+# name with the config key directly.
+_STAGE_CONFIG_KEYS: dict[str, tuple[str, ...]] = {
+    "01-qc_raw": ("qc_raw",),
+    "02-trimming": ("trimming",),
+    "03-qc_trimmed": ("qc_trimmed",),
+    "04a-getorganelle_config": ("assembly",),
+    "04c-seed_sequences": ("assembly",),
+    "04d-assembly": ("assembly",),
+    "05a-blast_config": ("blast",),
+    "05b-blast": ("blast",),
+    "05c-blast_hits": ("blast",),
+    "06-contig_selection": ("assembly_post", "contig_selection"),
+    "07-assembly_rescue": ("assembly_post", "assembly_rescue"),
+    "08a-mitos2_config": ("annotation",),
+    "08b-annotation": ("annotation",),
+    "09-visualization": ("visualization",),
+    "10-alignment_dataset": ("phylogeny",),
+    "11-phylogeny": ("phylogeny",),
+    "12-stats_aggregation": ("reporting",),
+    "13-report_pdf": ("pdf_export",),
+}
+
 def stage_enabled(stage_name: str) -> bool:
     """
     Determine from the config whether a configured stage is enabled.
 
     Args:
-        stage_name (str): The name of the stage.
-    
+        stage_name (str): The numbered stage name (e.g. "04d-assembly").
+
     Returns:
         bool: True if the stage is enabled, False otherwise.
     """
-    return bool(STAGES.get(stage_name, False))
+    value = STAGES
+    for key in _STAGE_CONFIG_KEYS.get(stage_name, (stage_name,)):
+        if not isinstance(value, dict):
+            return False
+        value = value.get(key, False)
+    return bool(value)
 
 def sample_target(stage: str, filename: str) -> list[str]:
     """
@@ -82,7 +136,12 @@ def sample_target(stage: str, filename: str) -> list[str]:
     Returns:
         list[str]: A list of expanded paths.
     """
-    return expand(str(JOB_DIR / stage / filename), sample = SAMPLES)
+    # Every real stage's own rule nests its output one level deeper,
+    # under a per-sample directory (JOB_DIR/stage/{sample}/filename) --
+    # confirmed against every rule file's own output: block, not
+    # assumed. Missing this nesting here meant `rule all` requested
+    # paths no rule actually produced.
+    return expand(str(JOB_DIR / stage / "{sample}" / filename), sample = SAMPLES)
 
 def enabled_targets() -> list[str]:
     """
@@ -101,29 +160,33 @@ def enabled_targets() -> list[str]:
     # Each stage produces a "done" file which serves as a checkpoint for Snakemake to build the DAG.
     # In this way, we are making forcing a DAG of targets making debugging easier and enforcing step ordering.
     if stage_enabled("01-qc_raw"): 
-        targets.extend(sample_target("01-qc_raw", "{sample}.qc_raw.done"))
+        targets.extend(sample_target("qc/raw", "{sample}.qc_raw.done"))
     if stage_enabled("02-trimming"): 
-        targets.extend(sample_target("02-trimming", "{sample}.trimming.done"))
+        targets.extend(sample_target("trimming", "{sample}.trimming.done"))
     if stage_enabled("03-qc_trimmed"): 
-        targets.extend(sample_target("03-qc_trimmed", "{sample}.qc_trimmed.done"))
+        targets.extend(sample_target("qc/trimmed", "{sample}.qc_trimmed.done"))
     if stage_enabled("04a-getorganelle_config"): 
-        targets.append(str(JOB_DIR / "04a-getorganelle_config" / "getorganelle_config.done"))
-    if stage_enabled("04b-seed_sequences"): 
-        targets.extend(sample_target("04b-seed_sequences", "{sample}.seed_sequences.done"))
-    if stage_enabled("04c-assembly"):
-        targets.extend(sample_target("04c-assembly", "{sample}.assembly.done"))
+        targets.extend(sample_target("04a-getorganelle_config", "{sample}.getorganelle_config.done"))
+    if stage_enabled("04c-seed_sequences"): 
+        targets.extend(sample_target("04c-seed_sequences", "{sample}.seed_sequences.done"))
+    if stage_enabled("04d-assembly"):
+        targets.extend(sample_target("04d-assembly", "{sample}.assembly.done"))
     if stage_enabled("05a-blast_config"):
-        targets.append(str(JOB_DIR / "05a-blast_config" / "blast_config.done"))
+        targets.extend(sample_target("05a-blast_config", "{sample}.blast_config.done"))
     if stage_enabled("05b-blast"):
         targets.extend(sample_target("05b-blast", "{sample}.blast.done"))
     if stage_enabled("05c-blast_hits"):
         targets.extend(sample_target("05c-blast_hits", "{sample}.blast_hits.done"))
     if stage_enabled("06-contig_selection"):
         targets.extend(sample_target("06-contig_selection", "{sample}.contig_selection.done"))
+        # biological_validation (#414) lives in the same rule file and
+        # extends this same stage's selection -- requested here too, so
+        # `rule all` actually triggers it, not just contig_selection itself.
+        targets.extend(sample_target("06-contig_selection", "{sample}.biological_validation.done"))
     if stage_enabled("07-assembly_rescue"):
         targets.extend(sample_target("07-assembly_rescue", "{sample}.assembly_rescue.done"))
     if stage_enabled("08a-mitos2_config"):
-        targets.append(str(JOB_DIR / "08a-mitos2_config" / "mitos2_config.done"))
+        targets.extend(sample_target("08a-mitos2_config", "{sample}.mitos2_config.done"))
     if stage_enabled("08b-annotation"):
         targets.extend(sample_target("08b-annotation", "{sample}.annotation.done"))
     if stage_enabled("09-visualization"):
@@ -161,8 +224,8 @@ include: "rules/01-qc_raw.smk"
 include: "rules/02-trimming.smk"
 include: "rules/03-qc_trimmed.smk"
 include: "rules/04a-getorganelle_config.smk"
-include: "rules/04b-seed_sequences.smk"
-include: "rules/04c-assembly.smk"
+include: "rules/04c-seed_sequences.smk"
+include: "rules/04d-assembly.smk"
 include: "rules/05a-blast_config.smk"
 include: "rules/05b-blast.smk"
 include: "rules/05c-blast_hits.smk"
@@ -170,13 +233,20 @@ include: "rules/06-contig_selection.smk"
 include: "rules/07-assembly_rescue.smk"
 include: "rules/08a-mitos2_config.smk"
 include: "rules/08b-annotation.smk"
-include: "rules/09-visualization.smk"
-include: "rules/10-alignment_dataset.smk"
-include: "rules/11-phylogeny.smk"
-include: "rules/12-stats_aggregation.smk"
-include: "rules/13-report_pdf.smk"
-include: "rules/14a-sra_archival.smk"
-include: "rules/14b-biosample_archival.smk"
-include: "rules/14c-mitogenome_archival.smk"
-include: "rules/15-archival_validation.smk"
-include: "rules/16-table2asn_validation.smk"
+# Visualization/phylogeny/stats/report stages: included only when
+# actually enabled, same reasoning as the archival stages below --
+# avoids a parse-time failure over a rule file still being built.
+if stage_enabled("09-visualization"): include: "rules/09-visualization.smk"
+if stage_enabled("10-alignment_dataset"): include: "rules/10-alignment_dataset.smk"
+if stage_enabled("11-phylogeny"): include: "rules/11-phylogeny.smk"
+if stage_enabled("12-stats_aggregation"): include: "rules/12-stats_aggregation.smk"
+if stage_enabled("13-report_pdf"): include: "rules/13-report_pdf.smk"
+
+# Archival/validation stages (14a-16) aren't built yet -- included only
+# when actually enabled, so a run that never turns them on doesn't fail
+# at parse time over a rule file that doesn't exist.
+if stage_enabled("14a-sra_archival"): include: "rules/14a-sra_archival.smk"
+if stage_enabled("14b-biosample_archival"): include: "rules/14b-biosample_archival.smk"
+if stage_enabled("14c-mitogenome_archival"): include: "rules/14c-mitogenome_archival.smk"
+if stage_enabled("15-archival_validation"): include: "rules/15-archival_validation.smk"
+if stage_enabled("16-table2asn_validation"): include: "rules/16-table2asn_validation.smk"

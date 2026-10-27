@@ -80,7 +80,7 @@ rule qc_trimmed:
         "../../envs/01-qc.yaml"
     shell:
         """
-        python {params.exec_script:q} \
+        {PYTHON_BIN:q} {params.exec_script:q} \
             --sample-id {wildcards.sample} \
             --r1 {input.r1:q} \
             --r2 {input.r2:q} \

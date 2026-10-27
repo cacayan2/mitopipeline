@@ -33,6 +33,7 @@ def parse_args() -> argparse.Namespace:
 
     parser.add_argument("--sample-id", type = str, required = True, help = "The sample id.")
     parser.add_argument("--config-json", type = Path, required = True, help = "The resolved BLAST configuration JSON written by run_blast_config.py.")
+    parser.add_argument("--output-dir", type = Path, required = True, help = "The directory to write this step's own result record to.")
     parser.add_argument("--working-dir", type = Path, required = True, help = "The working directory.")
     parser.add_argument("--threads", type = int, required = True, help = "The number of threads to use.")
     parser.add_argument("--log-file", type = Path, required = True, help = "The path to the log file.")
@@ -119,19 +120,19 @@ def main() -> int:
         result = runner.run()
     except SystemExit as e:
         logger.error(f"{context} BLAST did not produce a usable output (exit {e.code}).")
-        _write_result(args.working_dir, args.sample_id, success = False, hit_count = None,
+        _write_result(args.output_dir, args.sample_id, success = False, hit_count = None,
                      output_file = None, reason = f"blast validation failed (exit {e.code})")
         return 1
 
     if not result.success:
         logger.error(f"{context} BLAST exited with return code {result.return_code} after {result.runtime_seconds:.1f}s.")
-        _write_result(args.working_dir, args.sample_id, success = False, hit_count = None,
+        _write_result(args.output_dir, args.sample_id, success = False, hit_count = None,
                      output_file = None, reason = f"blast exited {result.return_code}")
         return result.return_code or 1
 
     hits = parse_blast_tsv(output_file, logger = logger)
     logger.info(f"{context} BLAST complete after {result.runtime_seconds:.1f}s: {len(hits)} hit(s) found.")
-    _write_result(args.working_dir, args.sample_id, success = True, hit_count = len(hits),
+    _write_result(args.output_dir, args.sample_id, success = True, hit_count = len(hits),
                  output_file = output_file, reason = "completed successfully")
     return 0
 
