@@ -6,6 +6,7 @@ Downloads and manages the local MitoFish reference database.
 
 # Imports
 from __future__ import annotations
+import json
 import logging
 import sys
 import shutil
@@ -13,6 +14,65 @@ import tarfile
 import tempfile
 import urllib.request
 from pathlib import Path
+
+# MitoFish's own site builds its bulk-download links from the latest
+# release's "YYYY.MM" version string (confirmed directly against the
+# real site: https://mitofish.aori.u-tokyo.ac.jp/app/api/stat/latest
+# returns {"version": {"species": "YYYY.MM", "sequences": "YYYY.MM"},
+# ...}, and the Download page's own real download buttons build their
+# href as /download/tables/{year}/{month}/tables.tar and
+# /download/fullseq/{year}/{month}/mitofishdb.fa.gz from that same
+# string) -- there is no stable, version-independent URL.
+MITOFISH_STAT_URL = "https://mitofish.aori.u-tokyo.ac.jp/app/api/stat/latest"
+MITOFISH_TABLES_URL_TEMPLATE = "https://mitofish.aori.u-tokyo.ac.jp/download/tables/{year}/{month}/tables.tar"
+MITOFISH_SEQUENCES_URL_TEMPLATE = "https://mitofish.aori.u-tokyo.ac.jp/download/fullseq/{year}/{month}/mitofishdb.fa.gz"
+
+def mitofish_urls_for_version(version: str) -> tuple[str, str]:
+    """
+    Builds the real MitoFish tables/sequences download URLs for a
+    given "YYYY.MM" release version string.
+
+    Args:
+        version (str): The MitoFish release version, formatted "YYYY.MM" (e.g. "2026.09").
+
+    Returns:
+        tuple[str, str]: The (tables_url, sequences_url) pair for this version.
+
+    Raises:
+        ValueError: If version is not in "YYYY.MM" form.
+    """
+    parts = version.split(".")
+    if len(parts) != 2 or not all(part.isdigit() for part in parts):
+        raise ValueError(f"MitoFish version must be formatted 'YYYY.MM', got: {version!r}.")
+    year, month = parts
+    return (
+        MITOFISH_TABLES_URL_TEMPLATE.format(year = year, month = month.zfill(2)),
+        MITOFISH_SEQUENCES_URL_TEMPLATE.format(year = year, month = month.zfill(2)),
+    )
+
+def resolve_latest_mitofish_version(logger: logging.Logger, stat_url: str = MITOFISH_STAT_URL) -> str:
+    """
+    Queries MitoFish's own real stat API for the current release
+    version, so a fresh install always fetches the latest database
+    without a maintainer having to update a hardcoded version string
+    every time MitoFish publishes a new monthly release.
+
+    Args:
+        logger (logging.Logger): The logger to use for logging messages.
+        stat_url (str): The MitoFish stat API URL. Defaults to the real endpoint.
+
+    Returns:
+        str: The latest release version, formatted "YYYY.MM".
+
+    Raises:
+        OSError: If the stat API can't be reached.
+        (KeyError, ValueError): If the response doesn't carry the expected version field.
+    """
+    with urllib.request.urlopen(stat_url) as response:
+        payload = json.loads(response.read())
+    version = payload["version"]["sequences"]
+    logger.info(f"Resolved latest MitoFish release version: {version}.")
+    return version
 
 class MitoFishDatabase:
     """
@@ -26,10 +86,19 @@ class MitoFishDatabase:
         logger (logging.Logger): The logger to use for logging messages.
     """
 
+    # The exact 5 tables mitofish.py's own MitoFishReferenceLookup reads
+    # (taxonid_name/speciesid_lineageid/taxonid_speciesid for the
+    # scientific-name resolution chain, seq_taxonid/seq_annotation for
+    # the per-sequence gene lookup) -- confirmed against its real
+    # column access, not guessed from the archive's own larger
+    # contents (which also includes seq_description/seq_heterospecific,
+    # neither ever read here).
     REQUIRED_METADATA_FILES = (
         "taxonid_name.parquet",
+        "speciesid_lineageid.parquet",
+        "taxonid_speciesid.parquet",
         "seq_taxonid.parquet",
-        "seq_annotation.parquet"
+        "seq_annotation.parquet",
     )
 
     SEQUENCE_FILE = "mitofishdb.fa.gz"
