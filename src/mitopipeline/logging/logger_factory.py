@@ -124,9 +124,15 @@ def make_logger(
     # 1. We create a file handler that will output to the global log file.
     # 2. We set the level of the file handler to the file_level argument.
     # 3. We set the formatter of the file handler to the file_formatter we defined
+    # 4. We add the same tool-output filter used for the console: the
+    #    global log is shared across every sample's parallel jobs, so a
+    #    raw multi-line tool stdout dump here is unattributable noise
+    #    interleaved with other samples' own lines. The full dump still
+    #    reaches the per-sample component log below, which has no filter.
     global_handler = logging.FileHandler(global_log, mode = "a", encoding = "utf-8")
     global_handler.setLevel(file_level)
     global_handler.setFormatter(file_formatter)
+    global_handler.addFilter(ExcludeToolOutputFilter())
 
     # Finally we add the handlers to the logger.
     logger.addHandler(console_handler)

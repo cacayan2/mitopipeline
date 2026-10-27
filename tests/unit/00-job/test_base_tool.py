@@ -56,6 +56,25 @@ def test_run_returns_successful_command_result(tmp_path: Path) -> None:
     assert "hello world" in result.stdout
     assert result.tool_name == "echo"
 
+def test_run_tags_the_raw_stdout_log_as_tool_output(tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
+    """Regression: the raw multi-line stdout dump must carry
+    event_type=TOOL_OUTPUT_EVENT so logger_factory's own
+    ExcludeToolOutputFilter can keep it out of the shared global log --
+    without this tag, the filter is a no-op and every sample's raw
+    tool console output interleaves untagged into the global log."""
+    from mitopipeline.logging.logger_factory import TOOL_OUTPUT_EVENT
+
+    logger = logging.getLogger("test_tool_output_tag")
+    logger.setLevel(logging.DEBUG)
+    tool = _EchoTool(working_dir = tmp_path, logger = logger, message = "hello world")
+
+    with caplog.at_level(logging.DEBUG, logger = "test_tool_output_tag"):
+        tool.run()
+
+    stdout_records = [r for r in caplog.records if "stdout:" in r.getMessage()]
+    assert stdout_records
+    assert all(getattr(r, "event_type", None) == TOOL_OUTPUT_EVENT for r in stdout_records)
+
 def test_run_postprocesses_and_validates_on_success(tmp_path: Path) -> None:
     """
     A successful run should call postprocess_outputs before validate_outputs.

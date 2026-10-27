@@ -18,6 +18,7 @@ import resource
 import tempfile
 import json
 from mitopipeline.models.command_result.command_result import CommandResult
+from mitopipeline.logging.logger_factory import TOOL_OUTPUT_EVENT
 
 class BaseTool(ABC):
     """
@@ -177,7 +178,9 @@ class BaseTool(ABC):
 
         # Logic for dealing with different command result success states.
         self.logger.info(f"{context} Execution finished with return code {command_result.return_code} after {command_result.runtime_seconds} seconds.")
-        if command_result.stdout: self.logger.debug(f"{context} stdout:\n{command_result.stdout.rstrip()}")
+        if command_result.stdout:
+            self.logger.debug(f"{context} stdout:\n{command_result.stdout.rstrip()}",
+                              extra = {"event_type": TOOL_OUTPUT_EVENT})
         if not command_result.success:
             self.logger.error(f"{context} Execution failed with return code {command_result.return_code} after {command_result.runtime_seconds} seconds.")
             return command_result
