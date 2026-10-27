@@ -115,6 +115,26 @@ def test_extract_blast_statistics_none_when_no_hits(tmp_path: Path) -> None:
 def test_extract_blast_statistics_none_when_tsv_missing(tmp_path: Path) -> None:
     assert extract_blast_statistics("sample1", tmp_path / "does_not_exist.tsv") is None
 
+def test_extract_blast_statistics_uses_circular_coverage_correction(tmp_path: Path) -> None:
+    top_hits_tsv = tmp_path / "top_hits.tsv"
+    write_top_blast_hits([_real_blast_hit(qcovs = 53.0)], top_hits_tsv, sample_id = "sample1")
+    circular_coverage_json = _write_json(tmp_path / "circular_coverage.json", {
+        "success": True, "corrected_query_coverage": 100.0,
+    })
+
+    stats = extract_blast_statistics("sample1", top_hits_tsv, circular_coverage_json = circular_coverage_json)
+
+    assert stats.top_query_coverage_percent == pytest.approx(100.0)
+
+def test_extract_blast_statistics_ignores_a_failed_circular_coverage_correction(tmp_path: Path) -> None:
+    top_hits_tsv = tmp_path / "top_hits.tsv"
+    write_top_blast_hits([_real_blast_hit(qcovs = 53.0)], top_hits_tsv, sample_id = "sample1")
+    circular_coverage_json = _write_json(tmp_path / "circular_coverage.json", {"success": False})
+
+    stats = extract_blast_statistics("sample1", top_hits_tsv, circular_coverage_json = circular_coverage_json)
+
+    assert stats.top_query_coverage_percent == pytest.approx(53.0)
+
 # --- Annotation statistics (#355) ---
 
 def test_extract_annotation_statistics_counts_core_genes(tmp_path: Path) -> None:

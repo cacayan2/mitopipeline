@@ -76,6 +76,7 @@ def extract_assembly_statistics(sample_id: str, contig_selection_json: str | Pat
 
 def extract_blast_statistics(sample_id: str, top_hits_tsv: str | Path,
                               biological_validation_json: str | Path | None = None,
+                              circular_coverage_json: str | Path | None = None,
                               logger: Logger | None = None) -> BlastStatistics | None:
     """
     Extracts BLAST statistics from the ranked top-hit TSV's own
@@ -86,6 +87,7 @@ def extract_blast_statistics(sample_id: str, top_hits_tsv: str | Path,
         sample_id (str): The sample id.
         top_hits_tsv (str | Path): The ranked top-hit TSV written by run_blast_hit_selection.py.
         biological_validation_json (str | Path | None): The validation result JSON written by run_biological_validation.py, if available.
+        circular_coverage_json (str | Path | None): The result JSON written by run_circular_coverage.py, for a circular selected attempt only -- when present and successful, this replaces the raw top-hit query coverage in the reported statistics too, so the report never shows the same misleading number the validation gate itself no longer uses.
         logger (Logger | None): Logger to use. Defaults to None.
 
     Returns:
@@ -114,9 +116,14 @@ def extract_blast_statistics(sample_id: str, top_hits_tsv: str | Path,
                         decision_status = check.get("verdict")
                 break
 
+    top_query_coverage_percent = top_hit.qcovs
+    circular_coverage = _read_json(Path(circular_coverage_json)) if circular_coverage_json else None
+    if circular_coverage is not None and circular_coverage.get("success") and circular_coverage.get("corrected_query_coverage") is not None:
+        top_query_coverage_percent = circular_coverage["corrected_query_coverage"]
+
     return BlastStatistics(
         sample_id = sample_id, top_accession = top_hit.sseqid, top_scientific_name = top_hit.sscinames,
-        top_identity_percent = top_hit.pident, top_query_coverage_percent = top_hit.qcovs,
+        top_identity_percent = top_hit.pident, top_query_coverage_percent = top_query_coverage_percent,
         top_evalue = top_hit.evalue, decision_status = decision_status,
     )
 

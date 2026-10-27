@@ -41,6 +41,8 @@ def _argv(tmp_path: Path, sample_id: str, attempt_dirs: list[Path], selection_js
         argv += ["--blast-result-json", str(extra["blast_result_json"])]
     if "annotation_result_json" in extra:
         argv += ["--annotation-result-json", str(extra["annotation_result_json"])]
+    if "circular_coverage_json" in extra:
+        argv += ["--circular-coverage-json", str(extra["circular_coverage_json"])]
     return argv
 
 def test_validates_primary_only_when_no_rescue_attempts(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -136,3 +138,41 @@ def test_missing_contig_selection_json_is_recorded_not_a_crash(tmp_path: Path, m
     _write_attempt(primary_dir, sample_id, "circular")
     monkeypatch.setattr(sys, "argv", _argv(tmp_path, sample_id, [primary_dir], tmp_path / "does_not_exist.json"))
     assert run_biological_validation.main() == 1
+
+def test_circular_coverage_correction_overrides_the_raw_top_hit_coverage(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    sample_id = "SAMPLE_06"
+    primary_dir = tmp_path / "assembly"
+    _write_attempt(primary_dir, sample_id, "circular")
+    selection_json = tmp_path / f"{sample_id}.contig_selection.json"
+    _write_selection(selection_json, sample_id, selected = True, source_attempt = 0, reason = "circular, 16000bp")
+
+    blast_result_json = tmp_path / f"{sample_id}.blast_result.json"
+    blast_result_json.write_text(json.dumps({"success": True, "hit_count": 1, "output_file": None}))
+
+    from mitopipeline.utils.blast.blast_hits import write_top_blast_hits
+    from mitopipeline.utils.blast.models import BlastHit
+    top_hits_tsv = tmp_path / "top_hits.tsv"
+    # A real raw top hit showing the exact symptom this fixes: strong
+    # identity, weak coverage, because the origin-crossing match only
+    # shows up as a single partial HSP on the real, undoubled query.
+    write_top_blast_hits([BlastHit(qseqid = "q1", sseqid = "s1", pident = 100.0, length = 8857, mismatch = 0,
+                                   gapopen = 0, qstart = 7740, qend = 16596, sstart = 1, send = 8857, evalue = 0.0,
+                                   bitscore = 15000.0, qcovs = 53.0, staxids = "7955", sscinames = "Danio rerio",
+                                   stitle = "title", rank = 1)], top_hits_tsv, sample_id = sample_id)
+
+    circular_coverage_json = tmp_path / f"{sample_id}.circular_coverage_result.json"
+    circular_coverage_json.write_text(json.dumps({
+        "sample_id": sample_id, "success": True, "corrected_query_coverage": 100.0,
+        "alignment_length": 16596, "genome_length": 16596, "reason": "completed successfully",
+    }))
+
+    argv = _argv(tmp_path, sample_id, [primary_dir], selection_json,
+                blast_result_json = blast_result_json, circular_coverage_json = circular_coverage_json)
+    argv += ["--blast-top-hits-tsv", str(top_hits_tsv)]
+    monkeypatch.setattr(sys, "argv", argv)
+    assert run_biological_validation.main() == 0
+
+    result = json.loads((tmp_path / "validation" / f"{sample_id}.biological_validation.json").read_text())
+    checks = {c["name"]: c for c in result["results"][0]["checks"]}
+    assert checks["blast_identity"]["verdict"] == "PASS"
+    assert "100.0% query coverage" in checks["blast_identity"]["reason"]

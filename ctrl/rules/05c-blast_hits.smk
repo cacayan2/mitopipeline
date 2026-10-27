@@ -40,6 +40,39 @@ rule blast_hit_selection:
         touch {output.done:q}
         """
 
+rule circular_coverage:
+    input:
+        selection = str(JOB_DIR / "06-contig_selection" / "{sample}" / "{sample}.contig_selection.json")
+    output:
+        # {sample}.circular_coverage_result.json is NOT declared --
+        # the exec script always writes it, including a clean
+        # "not circular" record for a non-circular/unselected sample,
+        # so the done marker alone is a sufficient dependency edge.
+        done = str(JOB_DIR / "05c-blast_hits" / "{sample}" / "{sample}.circular_coverage.done")
+    params:
+        database = str((PROJECT_ROOT / BLAST_CONFIG["database"]).resolve()),
+        output_dir = str(JOB_DIR / "05c-blast_hits" / "{sample}"),
+        working_dir = str(Path.cwd()),
+        log_file = str(JOB_DIR / "logs" / "05c-blast_hits" / "{sample}.circular_coverage.log"),
+        global_log_file = str(GLOBAL_LOG_FILE),
+        exec_script = str(SRC_DIR / "mitopipeline" / "exec" / "05c-blast_hits" / "run_circular_coverage.py")
+    conda:
+        "../../envs/05-blast.yaml"
+    shell:
+        """
+        {PYTHON_BIN:q} {params.exec_script:q} \
+            --sample-id {wildcards.sample} \
+            --contig-selection-json {input.selection:q} \
+            --database {params.database:q} \
+            --working-dir {params.working_dir:q} \
+            --output-dir {params.output_dir:q} \
+            --log-file {params.log_file:q} \
+            --global-log-file {params.global_log_file:q} \
+            || true
+        mkdir -p $(dirname {output.done:q})
+        touch {output.done:q}
+        """
+
 rule blast_reference_retrieval:
     input:
         hit_selection_done = str(JOB_DIR / "05c-blast_hits" / "{sample}" / "{sample}.hit_selection.done")

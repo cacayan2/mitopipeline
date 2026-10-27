@@ -41,6 +41,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--blast-result-json", type = Path, default = None, help = "The result JSON written by run_blast.py, for the selected attempt only.")
     parser.add_argument("--blast-top-hits-tsv", type = Path, default = None, help = "The ranked top-hit TSV (write_top_blast_hits' own output), for the conflicting-taxa check.")
     parser.add_argument("--annotation-result-json", type = Path, default = None, help = "The result JSON written by run_mitos2_annotation.py, for the selected attempt only.")
+    parser.add_argument("--circular-coverage-json", type = Path, default = None,
+                        help = "The result JSON written by run_circular_coverage.py, for a circular selected attempt only -- when present and successful, this overrides the raw top-hit query coverage (linear BLAST can't see across a circular genome's own origin).")
     parser.add_argument("--output-dir", type = Path, required = True, help = "The directory to write this step's own output to.")
     parser.add_argument("--log-file", type = Path, required = True, help = "The path to the log file.")
     parser.add_argument("--global-log-file", type = Path, required = True, help = "The path to the global log file.")
@@ -111,6 +113,20 @@ def main() -> int:
                 blast_top_hit_identity = hits[0].pident
                 blast_top_hit_coverage = hits[0].qcovs
                 blast_top_hits_for_conflict = [{"sscinames": h.sscinames, "pident": h.pident} for h in hits]
+
+    # Linear BLAST can't see across a circular genome's own origin, so
+    # a correctly-assembled circular genome whose rotation differs
+    # from its reference's own rotation reads as low coverage on the
+    # raw top hit above. When a circular-coverage correction is
+    # available, it replaces that raw value here -- never the other
+    # way around, since the correction is only ever computed for a
+    # circular selected attempt in the first place.
+    if args.circular_coverage_json is not None and args.circular_coverage_json.is_file():
+        circular_coverage = json.loads(args.circular_coverage_json.read_text(encoding = "utf-8"))
+        if circular_coverage.get("success") and circular_coverage.get("corrected_query_coverage") is not None:
+            logger.info(f"{context} Using circularity-corrected query coverage "
+                       f"({circular_coverage['corrected_query_coverage']:.2f}%) in place of the raw top-hit value.")
+            blast_top_hit_coverage = circular_coverage["corrected_query_coverage"]
 
     gene_names = None
     if args.annotation_result_json is not None and args.annotation_result_json.is_file():

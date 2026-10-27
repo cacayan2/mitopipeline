@@ -34,6 +34,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--recruited-reads-qc-json", type = Path, default = None, help = "The selected attempt's recruited-reads QC record, if available.")
     parser.add_argument("--top-hits-tsv", type = Path, default = None, help = "The ranked top-hit TSV written by run_blast_hit_selection.py, if available.")
     parser.add_argument("--biological-validation-json", type = Path, default = None, help = "The validation result JSON written by run_biological_validation.py, if available.")
+    parser.add_argument("--circular-coverage-json", type = Path, default = None, help = "The result JSON written by run_circular_coverage.py, for a circular selected attempt only, if available.")
     parser.add_argument("--annotation-result-json", type = Path, default = None, help = "The result JSON written by run_mitos2_annotation.py, if available.")
     parser.add_argument("--output-dir", type = Path, required = True, help = "The directory to write this step's own output to.")
     parser.add_argument("--log-file", type = Path, required = True, help = "The path to the log file.")
@@ -65,7 +66,8 @@ def main() -> int:
     if args.top_hits_tsv is not None:
         blast = extract_blast_statistics(
             args.sample_id, args.top_hits_tsv,
-            biological_validation_json = args.biological_validation_json, logger = logger,
+            biological_validation_json = args.biological_validation_json,
+            circular_coverage_json = args.circular_coverage_json, logger = logger,
         )
     annotation = None
     if args.annotation_result_json is not None:

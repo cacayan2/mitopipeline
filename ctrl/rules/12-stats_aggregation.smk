@@ -9,6 +9,7 @@ rule stats_aggregation:
     input:
         validation_done = str(JOB_DIR / "06-contig_selection" / "{sample}" / "{sample}.biological_validation.done"),
         hit_selection_done = str(JOB_DIR / "05c-blast_hits" / "{sample}" / "{sample}.hit_selection.done"),
+        circular_coverage_done = str(JOB_DIR / "05c-blast_hits" / "{sample}" / "{sample}.circular_coverage.done"),
         annotation_done = str(JOB_DIR / "08b-annotation" / "{sample}" / "{sample}.annotation.done")
     output:
         # {sample}.statistics.json is NOT declared -- the exec script
@@ -20,6 +21,7 @@ rule stats_aggregation:
         contig_selection_json = str(JOB_DIR / "06-contig_selection" / "{sample}" / "{sample}.contig_selection.json"),
         top_hits_tsv = str(JOB_DIR / "05c-blast_hits" / "{sample}" / "{sample}.top_hits.tsv"),
         biological_validation_json = str(JOB_DIR / "06-contig_selection" / "{sample}" / "{sample}.biological_validation.json"),
+        circular_coverage_json = str(JOB_DIR / "05c-blast_hits" / "{sample}" / "{sample}.circular_coverage_result.json"),
         annotation_result_json = str(JOB_DIR / "08b-annotation" / "{sample}" / "{sample}.mitos2_annotation_result.json"),
         output_dir = str(JOB_DIR / "12-stats_aggregation" / "{sample}"),
         log_file = str(JOB_DIR / "logs" / "12-stats_aggregation" / "{sample}.log"),
@@ -32,6 +34,9 @@ rule stats_aggregation:
         TOP_HITS_ARGS=""
         if [ -s {params.top_hits_tsv:q} ]; then
             TOP_HITS_ARGS="--top-hits-tsv {params.top_hits_tsv:q} --biological-validation-json {params.biological_validation_json:q}"
+            if [ -s {params.circular_coverage_json:q} ]; then
+                TOP_HITS_ARGS="$TOP_HITS_ARGS --circular-coverage-json {params.circular_coverage_json:q}"
+            fi
         fi
         ANNOTATION_ARGS=""
         if [ -s {params.annotation_result_json:q} ]; then

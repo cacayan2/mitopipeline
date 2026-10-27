@@ -67,6 +67,7 @@ rule biological_validation:
         # markers are the real dependency edges; their paths are
         # referenced in params and existence-checked in the shell.
         blast_done = str(JOB_DIR / "05b-blast" / "{sample}" / "{sample}.blast.done"),
+        circular_coverage_done = str(JOB_DIR / "05c-blast_hits" / "{sample}" / "{sample}.circular_coverage.done"),
         annotation_done = str(JOB_DIR / "08b-annotation" / "{sample}" / "{sample}.annotation.done")
     output:
         validation = str(JOB_DIR / "06-contig_selection" / "{sample}" / "{sample}.biological_validation.json"),
@@ -77,6 +78,7 @@ rule biological_validation:
         max_length = ASSESSMENT_CONFIG.get("complete_max_length", 22000),
         blast_result_json = str(JOB_DIR / "05b-blast" / "{sample}" / "{sample}.blast_result.json"),
         top_hits_tsv = str(JOB_DIR / "05c-blast_hits" / "{sample}" / "{sample}.top_hits.tsv"),
+        circular_coverage_json = str(JOB_DIR / "05c-blast_hits" / "{sample}" / "{sample}.circular_coverage_result.json"),
         annotation_result_json = str(JOB_DIR / "08b-annotation" / "{sample}" / "{sample}.mitos2_annotation_result.json"),
         output_dir = str(JOB_DIR / "06-contig_selection" / "{sample}"),
         log_file = str(JOB_DIR / "logs" / "06-contig_selection" / "{sample}.validation.log"),
@@ -94,12 +96,16 @@ rule biological_validation:
         if [ -s {params.annotation_result_json:q} ]; then
             ANNOTATION_ARGS="--annotation-result-json {params.annotation_result_json:q}"
         fi
+        CIRCULAR_COVERAGE_ARGS=""
+        if [ -s {params.circular_coverage_json:q} ]; then
+            CIRCULAR_COVERAGE_ARGS="--circular-coverage-json {params.circular_coverage_json:q}"
+        fi
         {PYTHON_BIN:q} {params.exec_script:q} \
             --sample-id {wildcards.sample} \
             {params.attempt_dir_flags} \
             --contig-selection-json {input.selection:q} \
             --min-length {params.min_length} --max-length {params.max_length} \
-            $BLAST_ARGS $ANNOTATION_ARGS \
+            $BLAST_ARGS $ANNOTATION_ARGS $CIRCULAR_COVERAGE_ARGS \
             --output-dir {params.output_dir:q} \
             --log-file {params.log_file:q} \
             --global-log-file {params.global_log_file:q} \
