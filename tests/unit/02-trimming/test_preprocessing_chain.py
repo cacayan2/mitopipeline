@@ -133,8 +133,8 @@ def test_preprocessing_chain_threads_trimmed_reads_into_trimmed_qc(
     assert len(output_dirs) == 3
 
     # Both QC stages produced real artifacts, in their own directories.
-    # Sample-id-prefixed (Emil's call, 2026-10-21): every stage's output
-    # carries the sample prefix, for unambiguous data reorg/access later.
+    # Sample-id-prefixed: every stage's output carries the sample
+    # prefix, for unambiguous data reorg/access later.
     assert (qc_raw_dir / f"{sample_id}.R1_fastqc.html").is_file()
     assert (qc_trimmed_dir / f"{sample_id}.R1_fastqc.html").is_file()
     assert (qc_raw_dir / f"{sample_id}.R1_fastqc.html") != (qc_trimmed_dir / f"{sample_id}.R1_fastqc.html")

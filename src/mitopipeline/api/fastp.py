@@ -66,9 +66,7 @@ class FastpRunner(BaseTool):
         self.sample = sample
         self.threads = int(threads)
         # Dot-separated, sample-id-prefixed, matching every other stage's
-        # output convention (Emil's call, 2026-10-21: the {sample} prefix
-        # is required on every step's output, for unambiguous data
-        # reorg/access later) -- 02-trimming.smk's declared output must
+        # output convention -- 02-trimming.smk's declared output must
         # match these exactly.
         self.output_r1 = Path(self.output_dir / f"{self.sample.sample_id}.R1.trimmed.fastq.gz")
         self.output_r2 = Path(self.output_dir / f"{self.sample.sample_id}.R2.trimmed.fastq.gz")

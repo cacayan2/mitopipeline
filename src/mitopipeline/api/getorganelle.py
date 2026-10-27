@@ -213,10 +213,10 @@ class GetOrganelleRunner(BaseTool):
     def _run_recruited_reads_qc(self) -> None:
         """
         Runs FastQC on the reads GetOrganelle recruited as
-        mitochondrial-like before assembly (Emil's request,
-        2026-10-19): a real, early look at whether what's about to be
-        assembled actually looks like clean, usable sequence, not just
-        trusting the final assembly's own quality.
+        mitochondrial-like before assembly -- a real, early look at
+        whether what's about to be assembled actually looks like
+        clean, usable sequence, not just trusting the final
+        assembly's own quality.
 
         Always writes a RecruitedReadsQCRecord (#413) -- including
         the absent/empty/malformed cases -- so a caller never has to

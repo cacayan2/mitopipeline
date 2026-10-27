@@ -60,9 +60,8 @@ def main() -> int:
     )
 
     # Creating the FastQC runner and obtaining context for logger.
-    # Output stems are sample-id-prefixed (Emil's call, 2026-10-21: every
-    # stage's output must carry the sample prefix, for unambiguous data
-    # reorg/access later) so the real files FastQCRunner writes match
+    # Output stems are sample-id-prefixed, matching every stage's
+    # output convention, so the real files FastQCRunner writes match
     # 01-qc_raw.smk's declared output exactly.
     runner = FastQCRunner(
         working_dir = Path(args.working_dir),

@@ -30,7 +30,7 @@ EUTILS_BASE = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils"
 # The taxonomic scope broad enough to include real confound species
 # (e.g. marine fish, when the target is freshwater) rather than being
 # narrowed to the sample's own lineage -- narrowing to the answer
-# being tested would make a "match" prove nothing (Emil, 2026-10-19).
+# being tested would make a "match" prove nothing.
 # A single named constant, never hard-coded past this point.
 DEFAULT_TAXON_SCOPE = "Actinopterygii"
 

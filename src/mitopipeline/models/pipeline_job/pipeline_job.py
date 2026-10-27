@@ -275,7 +275,7 @@ class PipelineJob:
         Mark the pipeline job as failed.
 
         Args:
-            failure_reason (str | None): A short, specific description of why the job failed (e.g. which rule failed and its exit code), when known. Emil's request, 2026-10-19: a crash should say more than just "failed".
+            failure_reason (str | None): A short, specific description of why the job failed (e.g. which rule failed and its exit code), when known.
             log_tail (str | None): The tail of captured Snakemake stdout/stderr around the failure, when captured.
 
         Returns:
@@ -328,9 +328,8 @@ class PipelineJob:
     def aggregate_history(self) -> dict:
         """
         Summarizes this job's historical_metadata.json across every
-        time it has been launched with this same job_id -- a job
-        resumed/retried several times before finally completing is
-        exactly the case this is for (Emil's request, 2026-10-19):
+        time it has been launched with this same job_id, covering a
+        job resumed/retried several times before finally completing:
         total attempts, cumulative runtime across all of them, and a
         per-status breakdown, ready for 12-stats_aggregation/
         13-report_pdf to include in a report.

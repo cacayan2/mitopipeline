@@ -85,9 +85,9 @@ class CommandResult:
 
     def to_dict(self) -> dict:
         """
-        Serializes this CommandResult to a JSON-safe dictionary (Emil's
-        request, 2026-10-19: per-step compute metrics, organized and
-        accessible for report generation later). stdout/stderr are
+        Serializes this CommandResult to a JSON-safe dictionary,
+        producing organized, report-ready per-step compute metrics.
+        stdout/stderr are
         included so a persisted metrics file also carries enough
         context to be useful on its own, without needing the tool's
         separate log file too.

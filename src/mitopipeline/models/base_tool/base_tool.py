@@ -41,7 +41,7 @@ class BaseTool(ABC):
             tool_name (str): The name of the tool.
             working_dir (Path): The working directory for the tool.
             logger (Logger): The logger to use for the step of the Pipeline.
-            metrics_dir (Path | None): Where to persist this run's CommandResult as JSON (Emil's request, 2026-10-19: organized, report-ready per-step compute metrics). run() already measures CPU/memory/runtime for every tool call via GNU time; without this, that measurement was computed and then discarded, never written anywhere. None (the default) skips persistence entirely -- existing callers that don't pass it keep working exactly as before.
+            metrics_dir (Path | None): Where to persist this run's CommandResult as JSON (organized, report-ready per-step compute metrics). run() already measures CPU/memory/runtime for every tool call via GNU time. None (the default) skips persistence entirely -- existing callers that don't pass it keep working exactly as before.
 
         Returns:
             None

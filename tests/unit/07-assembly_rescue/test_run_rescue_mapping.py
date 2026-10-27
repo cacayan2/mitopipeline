@@ -108,13 +108,10 @@ def test_chain_failure_is_recorded_not_an_uncaught_crash(tmp_path: Path, monkeyp
     assert result["rescued_r1"] is None
 
 def test_a_failed_but_non_raising_stage_is_also_caught(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """Confirmed against a real failure (2026-10-26): BaseTool.run()
-    does NOT raise when the underlying command exits nonzero -- it
-    just returns a CommandResult with success=False. samtools index/
-    fastq failing this way (an unsupported -@ flag on an older
-    samtools) was silently treated as a successful chain, writing a
-    decision record pointing at rescued FASTQ files that were never
-    created. This must be caught the same as a SystemExit."""
+    """BaseTool.run() does not raise when the underlying command
+    exits nonzero -- it just returns a CommandResult with
+    success=False, so a stage failure must be caught by checking
+    that flag, the same as a SystemExit is caught."""
     monkeypatch.setattr(Minimap2Runner, "run", _stub_minimap2_run)
     monkeypatch.setattr(SamtoolsRunner, "run", lambda self: _fake_result(success = False, return_code = 1))
     sample_id = "SAMPLE_06"
@@ -125,8 +122,8 @@ def test_a_failed_but_non_raising_stage_is_also_caught(tmp_path: Path, monkeypat
     result = json.loads((tmp_path / "rescue" / f"{sample_id}.rescue_mapping.json").read_text())
     assert result["attempted"] is True
     assert result["rescued_r1"] is None
-    # The real bug: these files must NOT exist just because the script
-    # claims attempted=True -- nothing should have been fabricated.
+    # These files must not exist just because the record claims
+    # attempted=True -- nothing here is fabricated.
     assert not (tmp_path / "rescue" / f"{sample_id}.rescue.R1.fastq").exists()
 
 def test_status_not_in_trigger_list_is_not_rescued(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

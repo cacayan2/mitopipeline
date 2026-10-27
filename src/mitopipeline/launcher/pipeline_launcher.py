@@ -345,8 +345,7 @@ def write_runtime_config(
 def _extract_failure_reason(output: str, return_code: int) -> str:
     """
     Picks a short, specific description of why Snakemake failed out of
-    its captured output (Emil's request, 2026-10-19: a crash should say
-    more than just "it failed"). Snakemake names the failing rule on a
+    its captured output. Snakemake names the failing rule on a
     line starting with "Error in rule <name>:"; that line (plus a
     couple that usually follow with the exit code/log path) is the
     most useful single thing to surface. Falls back to a generic,
@@ -413,10 +412,10 @@ def run_snakemake(
     # Logging and running the command. Output is streamed live to this
     # process's own stdout (so watching it run interactively still
     # works exactly as before) AND captured line-by-line into a buffer,
-    # so a failure can be reported with more than just a return code
-    # (Emil's request, 2026-10-19) -- previously this output went
-    # straight to the terminal and nowhere else, lost the moment the
-    # terminal scrolled past it or the session wasn't attended.
+    # so a failure can be reported with more than just a return code.
+    # Output is captured line-by-line into a buffer in addition to
+    # streaming live, so it survives even if the terminal scrolled
+    # past it or the session wasn't attended.
     logger.info(f"Running Snakemake with command: {' '.join(command)}")
     captured_lines: list[str] = []
     process = subprocess.Popen(command, cwd = Path.cwd(), stdout = subprocess.PIPE,
