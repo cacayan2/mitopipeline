@@ -136,6 +136,66 @@ def test_missing_config_json_fails_cleanly(tmp_path: Path, monkeypatch: pytest.M
     monkeypatch.setattr(sys, "argv", _argv(tmp_path, sample_id, tmp_path / "does_not_exist.json"))
     assert run_getorganelle_assembly.main() == 1
 
+def test_a_re_run_against_an_already_completed_output_dir_is_skipped_not_reclassified(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Regression: Snakemake's --rerun-incomplete re-running this job
+    after an interruption can land here once the sample already
+    assembled successfully -- postprocess_outputs() has already
+    standardized the directory to data.fasta/graph.gfa and deleted
+    GetOrganelle's native output, so a real re-invocation of
+    GetOrganelle against that same directory fails (it refuses to
+    reuse an existing -o directory) and discover_assembly_artifacts()
+    finds zero native candidates, silently reclassifying a genuine
+    prior success as "missing". The exec script must recognize the
+    already-standardized output plus its own recorded success and
+    skip straight to exit 0 without touching GetOrganelle at all."""
+    sample_id = "SAMPLE_07"
+    assembly_dir = tmp_path / "assembly" / sample_id
+    config_json = _write_config(tmp_path, sample_id, assembly_dir)
+
+    assembly_dir.mkdir(parents = True)
+    (assembly_dir / "data.fasta").write_text(">seq\nACGT\n")
+    (assembly_dir / "graph.gfa").write_text("H\n")
+    (assembly_dir / f"{sample_id}.assembly_status.json").write_text(
+        json.dumps({"sample_id": sample_id, "status": "circular", "success": True})
+    )
+
+    def _stub_run(self: GetOrganelleRunner) -> CommandResult:
+        raise AssertionError("GetOrganelle must not be re-invoked against an already-completed output directory.")
+
+    monkeypatch.setattr(GetOrganelleRunner, "run", _stub_run)
+    monkeypatch.setattr(sys, "argv", _argv(tmp_path, sample_id, config_json))
+
+    assert run_getorganelle_assembly.main() == 0
+    status = json.loads((assembly_dir / f"{sample_id}.assembly_status.json").read_text())
+    assert status == {"sample_id": sample_id, "status": "circular", "success": True}
+
+def test_a_re_run_against_a_genuinely_incomplete_output_dir_still_runs(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """A directory missing the standardized output (or recording a
+    prior failure) is not a prior success -- it must still run for
+    real, not be short-circuited."""
+    sample_id = "SAMPLE_08"
+    assembly_dir = tmp_path / "assembly" / sample_id
+    config_json = _write_config(tmp_path, sample_id, assembly_dir)
+
+    assembly_dir.mkdir(parents = True)
+    (assembly_dir / f"{sample_id}.assembly_status.json").write_text(
+        json.dumps({"sample_id": sample_id, "status": "missing", "success": False})
+    )
+
+    def _stub_run(self: GetOrganelleRunner) -> CommandResult:
+        self.output_dir.mkdir(parents = True, exist_ok = True)
+        (self.output_dir / "k75.complete.path_sequence.fasta").write_text(">seq\nACGT\n")
+        (self.output_dir / "k75.complete.selected_graph.gfa").write_text("H\n")
+        self.assembly_status = discover_assembly_artifacts(self.output_dir, self.logger)
+        return _fake_result()
+
+    monkeypatch.setattr(GetOrganelleRunner, "run", _stub_run)
+    monkeypatch.setattr(sys, "argv", _argv(tmp_path, sample_id, config_json))
+
+    assert run_getorganelle_assembly.main() == 0
+    status = json.loads((assembly_dir / f"{sample_id}.assembly_status.json").read_text())
+    assert status == {"sample_id": sample_id, "status": "circular", "success": True}
+
 def test_seeded_config_passes_seed_file_through_to_the_runner(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     sample_id = "SAMPLE_06"
     assembly_dir = tmp_path / "assembly" / sample_id

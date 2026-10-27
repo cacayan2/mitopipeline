@@ -439,6 +439,15 @@ def run_snakemake(
         # the time Snakemake checks for them.
         "--latency-wait",
         "30",
+        # A real interruption (this process killed, the machine
+        # rebooted, etc.) leaves Snakemake's own job metadata unable
+        # to confirm the in-flight job's output is trustworthy -- it
+        # refuses to proceed at all (a real IncompleteFilesException)
+        # until told explicitly it's safe to redo that one job. Since
+        # this launcher's whole purpose is unattended, resumable runs,
+        # that confirmation has to be automatic, not a manual step
+        # left for whoever restarts it.
+        "--rerun-incomplete",
         "--resources",
         "entrez=1"
     ]

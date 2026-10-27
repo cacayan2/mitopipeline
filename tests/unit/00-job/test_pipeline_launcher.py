@@ -104,3 +104,8 @@ def test_run_snakemake_resolves_the_binary_against_sys_executable(tmp_path: Path
     # --use-conda's real per-job activation overhead was ever actually
     # exercised, raising a real MissingOutputException.
     assert command[command.index("--latency-wait") + 1] == "30"
+    # Regression: a real interruption leaves Snakemake unable to trust
+    # an in-flight job's own output (a real IncompleteFilesException)
+    # without this flag -- an unattended launcher must resume on its
+    # own, not require a manual --cleanup-metadata/--rerun-incomplete step.
+    assert "--rerun-incomplete" in command

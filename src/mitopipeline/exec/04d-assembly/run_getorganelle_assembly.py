@@ -68,6 +68,22 @@ def main() -> int:
     tool_options = {"seed_file": config["seed_file"]} if config.get("seeded") else {}
     output_dir = Path(config["assembly_output_dir"])
 
+    # A re-invocation (Snakemake's --rerun-incomplete re-running a job
+    # it can no longer trust, a manual retry, etc.) can land here after
+    # GetOrganelle already finished this sample successfully. By then
+    # postprocess_outputs() has already standardized the directory to
+    # data.fasta/graph.gfa and deleted GetOrganelle's native output, so
+    # the directory is neither fresh (GetOrganelle refuses to reuse an
+    # existing -o directory) nor does it still hold the native filenames
+    # discover_assembly_artifacts() looks for -- a genuine prior success
+    # would otherwise be reclassified as "missing". Trusting the
+    # standardized output plus its own recorded status avoids re-running
+    # GetOrganelle at all in that case.
+    prior_status = _prior_success(output_dir, args.sample_id)
+    if prior_status is not None:
+        logger.info(f"{context} GetOrganelle assembly already completed for this sample (classified as '{prior_status}'); skipping re-run.")
+        return 0
+
     runner = GetOrganelleRunner(
         working_dir = Path(args.working_dir),
         output_dir = output_dir,
@@ -112,6 +128,40 @@ def main() -> int:
     logger.info(f"{context} GetOrganelle assembly complete after {result.runtime_seconds:.1f}s; classified as '{status.status}' ({status.candidate_count} native candidate(s)).")
     _write_status(output_dir, args.sample_id, status.status, success = True)
     return 0
+
+def _prior_success(output_dir: Path, sample_id: str) -> str | None:
+    """
+    Checks whether this sample's output_dir already holds a validated,
+    successful assembly from an earlier invocation -- the standardized
+    data.fasta/graph.gfa pair plus a status record reporting success.
+    All three must be present and non-empty; a partial or failed prior
+    attempt (missing file, empty file, or a recorded failure) is never
+    treated as a prior success, so a genuinely incomplete directory
+    still gets a real re-run.
+
+    Args:
+        output_dir (Path): The sample's assembly output directory.
+        sample_id (str): The sample id.
+
+    Returns:
+        str | None: The prior classification ("circular" or "fragmented") if a validated success is already present, otherwise None.
+    """
+    status_path = output_dir / f"{sample_id}.assembly_status.json"
+    standardized_fasta = output_dir / "data.fasta"
+    standardized_gfa = output_dir / "graph.gfa"
+
+    for path in (status_path, standardized_fasta, standardized_gfa):
+        if not path.is_file() or path.stat().st_size == 0:
+            return None
+
+    try:
+        record = json.loads(status_path.read_text(encoding = "utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+
+    if not record.get("success"):
+        return None
+    return record.get("status")
 
 def _write_status(output_dir: Path, sample_id: str, status: str, success: bool) -> None:
     """
