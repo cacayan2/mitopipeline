@@ -16,7 +16,7 @@ import pytest
 from mitopipeline.utils.blast.blast_hits import write_top_blast_hits
 from mitopipeline.utils.blast.models import BlastHit
 
-run_stats_aggregation = importlib.import_module("mitopipeline.exec.12-stats_aggregation.run_stats_aggregation")
+run_stats_aggregation = importlib.import_module("mitopipeline.exec.12a-stats_aggregation.run_stats_aggregation")
 
 def _write_json(path: Path, data: dict) -> Path:
     path.parent.mkdir(parents = True, exist_ok = True)

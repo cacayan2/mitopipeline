@@ -70,10 +70,16 @@ def select_seed(sample_id: str,
                  loci: tuple[str, ...] = LOCUS_FALLBACK_ORDER) -> SeedSelectionResult:
     """
     Selects and writes a mitochondrial seed sequence for one sample,
-    trying each locus in loci in order until one yields exactly one
-    unambiguous MitoFish candidate with a fetchable sequence. Falls
-    back to no seed (GetOrganelle's own default database) only once
-    every locus in the chain has been tried.
+    trying each locus in loci in order until one yields a MitoFish
+    candidate with a fetchable sequence. Multiple candidates at a
+    locus are resolved deterministically (longest available sequence
+    record first, accession as a final tie-breaker) rather than
+    skipped as "ambiguous" -- a well-documented organism (e.g. Danio
+    rerio, with 16 complete MitoFish genomes) still deserves a real,
+    reproducible seed, not an unseeded fallback just because more
+    than one real reference happens to exist. Falls back to no seed
+    (GetOrganelle's own default database) only once every locus in
+    the chain has been tried and none had a fetchable candidate.
 
     Args:
         sample_id (str): The sample to select a seed for.
@@ -106,49 +112,47 @@ def select_seed(sample_id: str,
             logger.info(f"{context} No MitoFish candidate for {scientific_name} ({gene}); trying the next locus.")
             continue
 
-        # An ambiguous match at this locus -- trying the next one
-        # rather than guessing; a different locus's annotations may
-        # not share the same ambiguity.
-        if len(candidates) > 1:
-            logger.info(f"{context} {len(candidates)} ambiguous MitoFish candidates for {scientific_name} ({gene}); trying the next locus rather than guessing.")
-            continue
+        multiple_candidates = len(candidates) > 1
+        if multiple_candidates:
+            logger.info(f"{context} {len(candidates)} MitoFish candidates for {scientific_name} ({gene}); selecting the best-documented one deterministically.")
+            candidates = sorted(candidates, key = lambda c: (-(c.sequence_length or 0), c.accession))
 
-        candidate = candidates[0]
+        # Trying each candidate at this locus, best (longest, most
+        # complete record) first -- a missing accession (metadata/
+        # sequence-file sync issue) is specific to one candidate, not
+        # the whole locus, so the next-best candidate at the SAME
+        # locus is tried before giving up on this locus entirely.
+        for candidate in candidates:
+            try:
+                sequence = lookup.fetch_sequence(candidate.accession)
+            except SystemExit:
+                logger.info(f"{context} Failed to fetch sequence for accession {candidate.accession} ({gene}); trying the next candidate.")
+                continue
 
-        # Fetching the candidate's actual sequence. A missing accession
-        # (metadata/sequence-file sync issue) is specific to this
-        # locus's candidate, not the organism as a whole -- a
-        # different locus points to a different accession that may
-        # still be present, so this also tries the next locus rather
-        # than giving up outright.
-        try:
-            sequence = lookup.fetch_sequence(candidate.accession)
-        except SystemExit:
-            logger.info(f"{context} Failed to fetch sequence for accession {candidate.accession} ({gene}); trying the next locus.")
-            continue
+            # Writing the seed FASTA and returning the successful result.
+            seq_record = SeqRecord(Seq(sequence), id = candidate.accession,
+                                   description = f"{gene} seed for {sample_id}, {scientific_name}")
+            fasta_path = output_dir / f"{sample_id}.seed.fasta"
+            write_gene_fasta(seq_record, fasta_path)
 
-        # Writing the seed FASTA and returning the successful result.
-        seq_record = SeqRecord(Seq(sequence), id = candidate.accession,
-                               description = f"{gene} seed for {sample_id}, {scientific_name}")
-        fasta_path = output_dir / f"{sample_id}.seed.fasta"
-        write_gene_fasta(seq_record, fasta_path)
+            logger.info(f"{context} Selected MitoFish seed {candidate.accession} ({gene}) for {scientific_name}; written to {fasta_path}.")
 
-        logger.info(f"{context} Selected MitoFish seed {candidate.accession} ({gene}) for {scientific_name}; written to {fasta_path}.")
+            return SeedSelectionResult(
+                sample_id = sample_id,
+                scientific_name = scientific_name,
+                gene = gene,
+                accession = candidate.accession,
+                source = "mitofish",
+                fasta_path = fasta_path,
+                fallback_used = False,
+                match_level = "best_of_multiple" if multiple_candidates else "exact",
+                checksum = _checksum(sequence),
+                ncbi_taxon_id = candidate.ncbi_taxon_id,
+                sequence_length = len(sequence),
+            )
 
-        return SeedSelectionResult(
-            sample_id = sample_id,
-            scientific_name = scientific_name,
-            gene = gene,
-            accession = candidate.accession,
-            source = "mitofish",
-            fasta_path = fasta_path,
-            fallback_used = False,
-            match_level = "exact",
-            checksum = _checksum(sequence),
-            ncbi_taxon_id = candidate.ncbi_taxon_id,
-            sequence_length = len(sequence),
-        )
+        logger.info(f"{context} No fetchable MitoFish candidate for {scientific_name} ({gene}); trying the next locus.")
 
-    # Every locus in the chain was exhausted without a clean match.
-    logger.warning(f"{context} No clean MitoFish match for {scientific_name} across {len(loci)} loci; falling back to GetOrganelle's default database.")
-    return _fallback(sample_id, scientific_name, loci[0] if loci else DEFAULT_SEED_LOCUS, "no_clean_mitofish_match")
+    # Every locus in the chain was exhausted without a fetchable match.
+    logger.warning(f"{context} No usable MitoFish match for {scientific_name} across {len(loci)} loci; falling back to GetOrganelle's default database.")
+    return _fallback(sample_id, scientific_name, loci[0] if loci else DEFAULT_SEED_LOCUS, "no_fetchable_mitofish_match")

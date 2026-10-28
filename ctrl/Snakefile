@@ -100,7 +100,8 @@ _STAGE_CONFIG_KEYS: dict[str, tuple[str, ...]] = {
     "09-visualization": ("visualization",),
     "10-alignment_dataset": ("phylogeny",),
     "11-phylogeny": ("phylogeny",),
-    "12-stats_aggregation": ("reporting",),
+    "12a-stats_aggregation": ("reporting",),
+    "12b-data_aggregation": ("reporting",),
     "13-report_pdf": ("pdf_export",),
     "14a-sra_archival": ("sra_archival",),
     "14b-biosample_archival": ("biosample_archival",),
@@ -206,8 +207,14 @@ def enabled_targets() -> list[str]:
     if stage_enabled("11-phylogeny"):
         targets.extend(sample_target("11-phylogeny", "{sample}.phylogeny.done"))
         targets.extend(sample_target("11-phylogeny", "{sample}.tree_figure.done"))
-    if stage_enabled("12-stats_aggregation"):
-        targets.extend(sample_target("12-stats_aggregation", "{sample}.stats_aggregation.done"))
+    if stage_enabled("12a-stats_aggregation"):
+        targets.extend(sample_target("12a-stats_aggregation", "{sample}.stats_aggregation.done"))
+    # Data aggregation is a job-level artifact (one consolidated
+    # aggregated_data/ tree per run, covering every sample), never
+    # per-sample -- a single job-level target, not sample_target()'s
+    # per-sample expansion.
+    if stage_enabled("12b-data_aggregation"):
+        targets.append(str(JOB_DIR / "aggregated_data" / "data_aggregation.done"))
     if stage_enabled("13-report_pdf"):
         targets.extend(sample_target("13-report_pdf", "{sample}.report_pdf.done"))
         # The run-level report (#360) is a single job-level artifact
@@ -267,7 +274,8 @@ include: "rules/08b-annotation.smk"
 include: "rules/09-visualization.smk"
 include: "rules/10-alignment_dataset.smk"
 include: "rules/11-phylogeny.smk"
-include: "rules/12-stats_aggregation.smk"
+include: "rules/12a-stats_aggregation.smk"
+include: "rules/12b-data_aggregation.smk"
 include: "rules/13-report_pdf.smk"
 include: "rules/14a-sra_archival.smk"
 include: "rules/14b-biosample_archival.smk"

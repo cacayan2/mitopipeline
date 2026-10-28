@@ -331,7 +331,7 @@ class PipelineJob:
         time it has been launched with this same job_id, covering a
         job resumed/retried several times before finally completing:
         total attempts, cumulative runtime across all of them, and a
-        per-status breakdown, ready for 12-stats_aggregation/
+        per-status breakdown, ready for 12a-stats_aggregation/
         13-report_pdf to include in a report.
 
         An empty or unreadable history is reported as zero attempts
