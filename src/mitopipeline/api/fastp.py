@@ -102,6 +102,10 @@ class FastpRunner(BaseTool):
             self.logger.error(f"{context} Number of threads is greater than number of cores. Please reduce the number of threads to {os.cpu_count()}.")
             sys.exit(1)
 
+    def version_command(self) -> list[str] | None:
+        """Real, confirmed flag: `fastp --version` prints e.g. "fastp 1.4.0" (to stderr)."""
+        return ["fastp", "--version"]
+
     def build_command(self) -> list[str]:
         """
         Constructs the command to run fastp.

@@ -15,7 +15,7 @@ import os
 import platform
 import re
 import subprocess
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 @dataclass(frozen = True, slots = True)
@@ -30,6 +30,7 @@ class StageComputeSummary:
         total_runtime_seconds (float): Summed wall-clock runtime across every invocation.
         total_cpu_seconds (float): Summed user+system CPU time across every invocation.
         peak_memory_mb (float): The single highest peak memory observed across every invocation.
+        tool_versions (dict[str, str]): The real detected version string per tool name actually invoked under this stage (e.g. {"minimap2": "2.31-r1302", "samtools": "1.24"}) -- a tool missing here means BaseTool.version_command() wasn't overridden for it, or the real check failed; never fabricated.
     """
     stage: str
     tools: str
@@ -37,6 +38,7 @@ class StageComputeSummary:
     total_runtime_seconds: float
     total_cpu_seconds: float
     peak_memory_mb: float
+    tool_versions: dict[str, str] = field(default_factory = dict)
 
 @dataclass(frozen = True, slots = True)
 class MachineInfo:
@@ -238,20 +240,30 @@ def collect_machine_info() -> MachineInfo:
 
 def _iter_metrics_records(metrics_dir: Path, sample_id: str | None = None) -> list[tuple[str, dict]]:
     """
-    Reads every real *.metrics.json under metrics_dir (layout:
-    metrics/{stage}/{sample}/{tool}.{sample}.{timestamp}.metrics.json),
-    returning (stage, record) pairs. Filters to one sample's own
+    Reads every real *.metrics.json under metrics_dir, at any real
+    depth (most stages use metrics/{stage}/{sample}/{file}, but
+    01-qc_raw/03-qc_trimmed nest one level deeper --
+    metrics/qc/raw/{sample}/{file} and metrics/qc/trimmed/{sample}/{file}
+    -- so a fixed two-level glob silently missed them; a real,
+    confirmed gap, now fixed). The "stage" for a given file is every
+    real path component between metrics_dir and the sample directory
+    (its own immediate parent), joined with "/" -- "08b-annotation"
+    for the common case, "qc/raw" / "qc/trimmed" for the deeper one.
+    Returns (stage, record) pairs, filtered to one sample's own
     records when sample_id is given. A single malformed/unreadable
     record is skipped, not fatal to the rest.
     """
     results: list[tuple[str, dict]] = []
     if not metrics_dir.is_dir():
         return results
-    for path in metrics_dir.glob("*/*/*.metrics.json"):
-        stage = path.parent.parent.name
+    for path in metrics_dir.rglob("*.metrics.json"):
         this_sample = path.parent.name
         if sample_id is not None and this_sample != sample_id:
             continue
+        stage_parts = path.parent.relative_to(metrics_dir).parts[:-1]
+        if not stage_parts:
+            continue
+        stage = "/".join(stage_parts)
         try:
             record = json.loads(path.read_text(encoding = "utf-8"))
         except (OSError, json.JSONDecodeError):
@@ -279,6 +291,16 @@ def collect_compute_summary(metrics_dir: str | Path, sample_id: str | None = Non
     for stage in sorted(by_stage):
         records = by_stage[stage]
         tools = ", ".join(dict.fromkeys(r.get("tool_name", "") for r in records if r.get("tool_name")))
+        # First real detected version per tool name wins -- every real
+        # invocation of the same tool within one run uses the same
+        # installed binary, so later records are redundant, not
+        # conflicting; a tool with no version ever detected is simply
+        # absent from this dict, never fabricated.
+        tool_versions: dict[str, str] = {}
+        for record in records:
+            tool_name, version = record.get("tool_name"), record.get("tool_version")
+            if tool_name and version and tool_name not in tool_versions:
+                tool_versions[tool_name] = version
         summaries.append(StageComputeSummary(
             stage = stage,
             tools = tools,
@@ -288,5 +310,26 @@ def collect_compute_summary(metrics_dir: str | Path, sample_id: str | None = Non
                 float(r.get("user_cpu_seconds") or 0.0) + float(r.get("system_cpu_seconds") or 0.0) for r in records
             ),
             peak_memory_mb = max((float(r.get("peak_memory_mb") or 0.0) for r in records), default = 0.0),
+            tool_versions = tool_versions,
         ))
     return tuple(summaries)
+
+def tool_version_for_stage(compute_summary: tuple[StageComputeSummary, ...], stage: str, tool_name: str) -> str | None:
+    """
+    Looks up one real tool's own detected version within one real
+    stage's compute summary -- the lookup every Methods-section
+    sentence uses to cite a tool's real version alongside its real
+    settings.
+
+    Args:
+        compute_summary (tuple[StageComputeSummary, ...]): A sample's or run's own collected compute summary.
+        stage (str): The real stage directory name (e.g. "07-assembly_rescue").
+        tool_name (str): The real tool name (e.g. "minimap2").
+
+    Returns:
+        str | None: The real detected version, or None if that stage/tool combination was never recorded or no version was ever detected for it.
+    """
+    for summary in compute_summary:
+        if summary.stage == stage:
+            return summary.tool_versions.get(tool_name)
+    return None

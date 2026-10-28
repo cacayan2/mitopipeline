@@ -52,6 +52,50 @@ class BaseTool(ABC):
         self.logger = logger
         self.metrics_dir = Path(metrics_dir) if metrics_dir is not None else None
 
+    def version_command(self) -> list[str] | None:
+        """
+        The real command to query this tool's own version (e.g.
+        ["fastp", "--version"]). None (the base default) means this
+        tool's own version is never checked -- a subclass overrides
+        this only when it knows the real, correct flag for its own
+        wrapped tool; never guessed.
+
+        Args:
+            None
+
+        Returns:
+            list[str] | None: The version-query command, or None to skip version detection entirely.
+        """
+        return None
+
+    def _detect_tool_version(self) -> str | None:
+        """
+        Runs this tool's own real version_command(), if provided, and
+        returns the first real non-empty line of its output (stdout
+        preferred; some tools print their version to stderr instead).
+        Never raises -- a missing binary, an unexpected flag, or any
+        other real failure here must never block the actual pipeline
+        command this exists alongside; returns None in every such case.
+
+        Args:
+            None
+
+        Returns:
+            str | None: The real detected version string, or None if version_command() is None or the real check failed.
+        """
+        command = self.version_command()
+        if command is None:
+            return None
+        try:
+            result = subprocess.run(command, capture_output = True, text = True, timeout = 10)
+        except (OSError, subprocess.TimeoutExpired):
+            return None
+        for stream in (result.stdout, result.stderr):
+            for line in stream.splitlines():
+                if line.strip():
+                    return line.strip()
+        return None
+
     @abstractmethod
     def validate_inputs(self) -> None:
         """
@@ -169,7 +213,8 @@ class BaseTool(ABC):
                                        ended_at = ended_at,
                                        peak_memory_mb = peak_memory_mb,
                                        user_cpu_seconds = user_cpu_seconds,
-                                       system_cpu_seconds = system_cpu_seconds)
+                                       system_cpu_seconds = system_cpu_seconds,
+                                       tool_version = self._detect_tool_version())
 
         # Persisting compute metrics BEFORE the success/failure branch
         # below, so a failed run's metrics are captured too, not just a

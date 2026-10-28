@@ -117,6 +117,10 @@ class SamtoolsRunner(BaseTool):
             self.logger.error(f"{context} Number of threads is greater than number of cores. Please reduce the number of threads to {os.cpu_count()}.")
             sys.exit(1)
 
+    def version_command(self) -> list[str] | None:
+        """Real, confirmed flag: `samtools --version` prints e.g. "samtools 1.24" as its first line."""
+        return ["samtools", "--version"]
+
     def build_command(self) -> list[str]:
         """
         Constructs the samtools command for this runner's operation.

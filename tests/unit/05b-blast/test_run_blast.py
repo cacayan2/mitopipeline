@@ -80,6 +80,31 @@ def test_successful_run_with_hits_records_hit_count(tmp_path: Path, monkeypatch:
     assert result["hit_count"] == 1
     assert result["output_file"] == str(output_file)
 
+def test_metrics_dir_is_forwarded_to_the_real_blast_runner(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Regression: --metrics-dir was accepted by argparse but never
+    actually passed into BlastRunner's own constructor -- every real
+    BLAST invocation silently skipped compute-metrics persistence
+    (runtime/CPU/memory/tool_version), the only real tool stage with
+    this gap."""
+    sample_id = "SAMPLE_03"
+    output_file = tmp_path / "blast" / f"{sample_id}.blast.tsv"
+    config_json = _write_config(tmp_path, sample_id, output_file)
+    metrics_dir = tmp_path / "metrics"
+
+    captured = {}
+
+    def _stub_run(self: BlastRunner) -> CommandResult:
+        captured["metrics_dir"] = self.metrics_dir
+        self.output_file.parent.mkdir(parents = True, exist_ok = True)
+        self.output_file.write_text("")
+        return _fake_result()
+
+    monkeypatch.setattr(BlastRunner, "run", _stub_run)
+    monkeypatch.setattr(sys, "argv", [*_argv(tmp_path, sample_id, config_json), "--metrics-dir", str(metrics_dir)])
+
+    assert run_blast.main() == 0
+    assert captured["metrics_dir"] == metrics_dir
+
 def test_successful_run_with_zero_hits_is_not_a_failure(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     sample_id = "SAMPLE_02"
     output_file = tmp_path / "blast" / f"{sample_id}.blast.tsv"

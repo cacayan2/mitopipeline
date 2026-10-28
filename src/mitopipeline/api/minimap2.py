@@ -98,6 +98,10 @@ class Minimap2Runner(BaseTool):
             self.logger.error(f"{context} Number of threads is greater than number of cores. Please reduce the number of threads to {os.cpu_count()}.")
             sys.exit(1)
 
+    def version_command(self) -> list[str] | None:
+        """Real, confirmed flag: `minimap2 --version` prints e.g. "2.31-r1302"."""
+        return ["minimap2", "--version"]
+
     def build_command(self) -> list[str]:
         """
         Constructs the command to run minimap2 against this sample's

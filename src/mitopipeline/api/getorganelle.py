@@ -148,6 +148,10 @@ class GetOrganelleRunner(BaseTool):
             self.logger.error(f"{context} Number of threads is greater than number of cores. Please reduce the number of threads to {os.cpu_count()}.")
             sys.exit(1)
 
+    def version_command(self) -> list[str] | None:
+        """Real, confirmed flag: `get_organelle_from_reads.py --version` prints e.g. "GetOrganelle v1.7.7.1"."""
+        return ["get_organelle_from_reads.py", "--version"]
+
     def build_command(self) -> list[str]:
         """
         Constructs the command to run GetOrganelle, seeded or unseeded

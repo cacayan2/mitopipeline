@@ -25,6 +25,7 @@ class CommandResult:
         cpu_time_seconds (float): The CPU time of the command in seconds.
         user_cpu_seconds (float): The user CPU time of the command in seconds.
         system_cpu_seconds (float): The system CPU time of the command in seconds.
+        tool_version (str | None): The real external tool's own version string (from its own --version-equivalent output), or None when BaseTool.version_command() wasn't overridden for this tool or the real check failed.
     """
     def __init__(self, command: str,
                  return_code: int,
@@ -37,7 +38,8 @@ class CommandResult:
                  ended_at: datetime,
                  peak_memory_mb: float,
                  user_cpu_seconds: float,
-                 system_cpu_seconds: float
+                 system_cpu_seconds: float,
+                 tool_version: str | None = None
                  ):
         """
         Initializes a CommandResult object.
@@ -72,6 +74,7 @@ class CommandResult:
         self.peak_memory_mb = peak_memory_mb
         self.user_cpu_seconds = user_cpu_seconds
         self.system_cpu_seconds = system_cpu_seconds
+        self.tool_version = tool_version
 
     @property
     def cpu_time_seconds(self) -> float | None:
@@ -110,6 +113,7 @@ class CommandResult:
             "user_cpu_seconds": self.user_cpu_seconds,
             "system_cpu_seconds": self.system_cpu_seconds,
             "cpu_time_seconds": self.cpu_time_seconds,
+            "tool_version": self.tool_version,
             "stdout": self.stdout,
             "stderr": self.stderr,
         }

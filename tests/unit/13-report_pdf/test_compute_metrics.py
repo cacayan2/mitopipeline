@@ -9,14 +9,15 @@ collecting the real (non-identifying) execution-host specs.
 # Imports
 import json
 from pathlib import Path
-from mitopipeline.utils.reporting.compute_metrics import collect_compute_summary, collect_machine_info
+from mitopipeline.utils.reporting.compute_metrics import collect_compute_summary, collect_machine_info, tool_version_for_stage
 
 def _write_metric(path: Path, tool_name: str, runtime: float, user_cpu: float,
-                   system_cpu: float, peak_mb: float) -> None:
+                   system_cpu: float, peak_mb: float, tool_version: str | None = None) -> None:
     path.parent.mkdir(parents = True, exist_ok = True)
     path.write_text(json.dumps({
         "tool_name": tool_name, "runtime_seconds": runtime,
         "user_cpu_seconds": user_cpu, "system_cpu_seconds": system_cpu, "peak_memory_mb": peak_mb,
+        "tool_version": tool_version,
     }))
 
 def test_collect_compute_summary_aggregates_by_stage(tmp_path: Path) -> None:
@@ -78,6 +79,61 @@ def test_collect_compute_summary_skips_a_malformed_record(tmp_path: Path) -> Non
 
     summaries = collect_compute_summary(metrics_dir)
     assert summaries[0].invocation_count == 1
+
+def test_collect_compute_summary_finds_the_real_deeper_qc_raw_trimmed_layout(tmp_path: Path) -> None:
+    """Regression: 01-qc_raw/03-qc_trimmed nest one level deeper than
+    every other stage (metrics/qc/raw/{sample}/file vs. the usual
+    metrics/{stage}/{sample}/file) -- a fixed two-level glob silently
+    found nothing here at all, meaning FastQC never appeared anywhere
+    in either report. "qc/raw" and "qc/trimmed" must be distinct real
+    stage entries, not merged or dropped."""
+    metrics_dir = tmp_path / "metrics"
+    _write_metric(metrics_dir / "qc" / "raw" / "sample1" / "fastqc.sample1.1.metrics.json",
+                  "fastqc", runtime = 2.0, user_cpu = 1.0, system_cpu = 0.0, peak_mb = 50.0, tool_version = "FastQC v0.13.0")
+    _write_metric(metrics_dir / "qc" / "trimmed" / "sample1" / "fastqc.sample1.1.metrics.json",
+                  "fastqc", runtime = 3.0, user_cpu = 1.5, system_cpu = 0.0, peak_mb = 55.0, tool_version = "FastQC v0.13.0")
+
+    summaries = collect_compute_summary(metrics_dir)
+    stages = {s.stage: s for s in summaries}
+    assert "qc/raw" in stages
+    assert "qc/trimmed" in stages
+    assert stages["qc/raw"].invocation_count == 1
+    assert stages["qc/raw"].total_runtime_seconds == 2.0
+    assert stages["qc/trimmed"].total_runtime_seconds == 3.0
+
+def test_collect_compute_summary_aggregates_the_real_first_detected_tool_version(tmp_path: Path) -> None:
+    metrics_dir = tmp_path / "metrics"
+    _write_metric(metrics_dir / "11-phylogeny" / "sample1" / "iqtree.sample1.1.metrics.json",
+                  "iqtree", runtime = 10.0, user_cpu = 9.0, system_cpu = 1.0, peak_mb = 200.0,
+                  tool_version = "IQ-TREE version 3.1.2 for Linux x86 64-bit")
+    _write_metric(metrics_dir / "11-phylogeny" / "sample1" / "mafft.sample1.1.metrics.json",
+                  "mafft", runtime = 2.0, user_cpu = 1.0, system_cpu = 0.0, peak_mb = 40.0,
+                  tool_version = "v7.526 (2024/Apr/26)")
+
+    summaries = collect_compute_summary(metrics_dir)
+    versions = summaries[0].tool_versions
+    assert versions["iqtree"] == "IQ-TREE version 3.1.2 for Linux x86 64-bit"
+    assert versions["mafft"] == "v7.526 (2024/Apr/26)"
+
+def test_collect_compute_summary_tool_versions_empty_when_never_detected(tmp_path: Path) -> None:
+    metrics_dir = tmp_path / "metrics"
+    _write_metric(metrics_dir / "04d-assembly" / "sample1" / "getorganelle.sample1.1.metrics.json",
+                  "getorganelle", runtime = 10.0, user_cpu = 9.0, system_cpu = 1.0, peak_mb = 200.0)
+    summaries = collect_compute_summary(metrics_dir)
+    assert summaries[0].tool_versions == {}
+
+def test_tool_version_for_stage_looks_up_the_real_version(tmp_path: Path) -> None:
+    metrics_dir = tmp_path / "metrics"
+    _write_metric(metrics_dir / "07-assembly_rescue" / "sample1" / "minimap2.sample1.1.metrics.json",
+                  "minimap2", runtime = 1.0, user_cpu = 1.0, system_cpu = 0.0, peak_mb = 30.0, tool_version = "2.31-r1302")
+    _write_metric(metrics_dir / "07-assembly_rescue" / "sample1" / "samtools.sample1.1.metrics.json",
+                  "samtools", runtime = 1.0, user_cpu = 0.5, system_cpu = 0.0, peak_mb = 20.0, tool_version = "samtools 1.24")
+
+    summaries = collect_compute_summary(metrics_dir)
+    assert tool_version_for_stage(summaries, "07-assembly_rescue", "minimap2") == "2.31-r1302"
+    assert tool_version_for_stage(summaries, "07-assembly_rescue", "samtools") == "samtools 1.24"
+    assert tool_version_for_stage(summaries, "07-assembly_rescue", "getorganelle") is None
+    assert tool_version_for_stage(summaries, "does-not-exist", "minimap2") is None
 
 def test_collect_machine_info_returns_real_non_crashing_values() -> None:
     info = collect_machine_info()

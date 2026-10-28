@@ -112,6 +112,7 @@ def main() -> int:
         threads = args.threads,
         output_format = config["output_format"],
         logger = logger,
+        metrics_dir = args.metrics_dir,
     )
 
     logger.info(f"{context} Initiating BLAST ({config['mode']} mode, database={config['database']}).")

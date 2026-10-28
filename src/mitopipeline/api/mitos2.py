@@ -142,6 +142,10 @@ class Mitos2Runner(BaseTool):
             self.logger.error(f"{context} No such reference data directory: {reference_path}.")
             sys.exit(1)
 
+    def version_command(self) -> list[str] | None:
+        """Real, confirmed flag: `runmitos.py --version` prints e.g. "runmitos.py 2.1.9"."""
+        return ["runmitos.py", "--version"]
+
     def build_command(self) -> list[str]:
         """
         Constructs the command to run MITOS2 (runmitos.py).

@@ -12,7 +12,26 @@ identification, annotation, visualization, phylogeny, and validation.
 """
 
 # Imports
+import re
+from mitopipeline.utils.reporting.compute_metrics import tool_version_for_stage
 from mitopipeline.utils.reporting.models import SampleReportData
+
+def _short_version(raw: str) -> str:
+    """
+    Extracts a clean version-number-like substring (e.g. "1.4.0",
+    "2.31-r1302") from a tool's own real raw --version output, for
+    compact inline citation next to a tool's own name. Falls back to
+    the full raw string when no such pattern is found -- the
+    extraction only ever narrows what's shown, it never invents a
+    version that wasn't really there.
+    """
+    match = re.search(r"\d+(?:\.\d+)+(?:-\S+)?\+?", raw)
+    return match.group(0) if match else raw
+
+def _version_clause(report_data: SampleReportData, stage: str, tool_name: str) -> str:
+    """Returns " vX.Y.Z" (leading space, ready to splice right after a tool name) for a real detected tool version, or "" when none was ever recorded for that real stage/tool."""
+    raw = tool_version_for_stage(report_data.compute_summary, stage, tool_name)
+    return f" {_short_version(raw)}" if raw else ""
 
 def _trimming_sentence(report_data: SampleReportData) -> str:
     """Describes the real fastp settings used and the real FastQC verdicts recorded at each stage."""
@@ -30,9 +49,10 @@ def _trimming_sentence(report_data: SampleReportData) -> str:
     if stats.get("adapter_detection"):
         settings.append("automatic paired-end adapter detection")
     settings_clause = f" ({'; '.join(settings)})" if settings else ""
+    fastp_version = _version_clause(report_data, "trimming", "fastp")
 
     sentence = (
-        f"Raw reads were quality-trimmed with fastp{settings_clause}, retaining "
+        f"Raw reads were quality-trimmed with fastp{fastp_version}{settings_clause}, retaining "
         f"{format_percent(stats['read_retention_rate'], fraction = True)} of input reads."
     )
 
@@ -46,7 +66,11 @@ def _trimming_sentence(report_data: SampleReportData) -> str:
         if qc is not None
     ]
     if qc_clauses:
-        sentence += f" FastQC quality control was performed at each stage ({', '.join(qc_clauses)})."
+        fastqc_version = (
+            _version_clause(report_data, "qc/raw", "fastqc")
+            or _version_clause(report_data, "qc/trimmed", "fastqc")
+        )
+        sentence += f" FastQC{fastqc_version} quality control was performed at each stage ({', '.join(qc_clauses)})."
 
     return sentence
 
@@ -74,10 +98,20 @@ def _assembly_sentence(report_data: SampleReportData) -> str:
     else:
         seed_clause = "run unseeded, against GetOrganelle's own default reference database"
 
+    primary_version = _version_clause(report_data, "04d-assembly", "getorganelle")
     sentence = (
-        f"Mitochondrial genome assembly was performed with GetOrganelle "
+        f"Mitochondrial genome assembly was performed with GetOrganelle{primary_version} "
         f"(organelle type `{config.organelle_type}`), {seed_clause}."
     )
+
+    # Rescue mapping/reassembly genuinely runs as its own invocation
+    # under 07-assembly_rescue -- cited separately from the primary
+    # attempt's own 04d-assembly invocation above, since the two can
+    # in principle resolve to different installed versions even
+    # though they're almost always identical in practice.
+    minimap2_version = _version_clause(report_data, "07-assembly_rescue", "minimap2")
+    samtools_version = _version_clause(report_data, "07-assembly_rescue", "samtools")
+    rescue_getorganelle_version = _version_clause(report_data, "07-assembly_rescue", "getorganelle")
 
     attempts = report_data.rescue_attempts
     if attempts and any(a.attempted for a in attempts):
@@ -91,7 +125,8 @@ def _assembly_sentence(report_data: SampleReportData) -> str:
                 descriptions.append(f"attempt {a.attempt} was not run ({a.reason})")
         sentence += (
             " The primary attempt did not yield a usable circular or fragmented genome, triggering rescue "
-            "reassembly (mapping recruited reads with minimap2/samtools before re-running GetOrganelle): "
+            f"reassembly (mapping recruited reads with minimap2{minimap2_version}/samtools{samtools_version} "
+            f"before re-running GetOrganelle{rescue_getorganelle_version}): "
             f"{'; '.join(descriptions)}."
         )
         if assembly is not None and assembly.source_attempt > 0:
@@ -101,8 +136,9 @@ def _assembly_sentence(report_data: SampleReportData) -> str:
     elif assembly is not None and assembly.source_attempt > 0:
         sentence += (
             f" The primary assembly attempt did not yield a usable genome; a rescue reassembly "
-            f"(attempt {assembly.source_attempt}, mapping recruited reads with minimap2/samtools before "
-            f"re-running GetOrganelle) succeeded and was selected."
+            f"(attempt {assembly.source_attempt}, mapping recruited reads with minimap2{minimap2_version}/"
+            f"samtools{samtools_version} before re-running GetOrganelle{rescue_getorganelle_version}) "
+            f"succeeded and was selected."
         )
     elif assembly is not None:
         sentence += " The primary assembly attempt succeeded and was selected without requiring rescue."
@@ -128,7 +164,8 @@ def _identification_sentence(report_data: SampleReportData) -> str:
             return "Taxonomic identification via BLAST was skipped: this sample had no selected assembly to identify."
         return "Taxonomic identification via BLAST was not configured for this run."
 
-    sentence = f"Taxonomic identification was performed with BLAST (`{config.mode}` against {basename_code(config.database)})."
+    blast_version = _version_clause(report_data, "05b-blast", "blast")
+    sentence = f"Taxonomic identification was performed with BLAST{blast_version} (`{config.mode}` against {basename_code(config.database)})."
     if blast is not None:
         name = blast.top_scientific_name
         if name and name.strip().upper() != "N/A":
@@ -158,8 +195,9 @@ def _annotation_sentence(report_data: SampleReportData) -> str:
     if assembly_config is not None and assembly_config.seed_gene and assembly_config.seed_source == "mitofish":
         biomarker_clause = f", MitoFish biomarker {assembly_config.seed_gene}"
 
+    mitos2_version = _version_clause(report_data, "08b-annotation", "mitos2")
     sentence = (
-        f"Gene annotation was performed with MITOS2 "
+        f"Gene annotation was performed with MITOS2{mitos2_version} "
         f"(genetic code {config.genetic_code}{biomarker_clause}, reference set `{config.refseqver}`)."
     )
     if annotation is not None:
@@ -185,9 +223,12 @@ def _phylogeny_sentence(report_data: SampleReportData) -> str:
         return f" Phylogenetic placement was not completed: {phylogeny.reason}"
     model_clause = f" under the `{phylogeny.model}` substitution model" if phylogeny.model else ""
     tip_clause = f" ({phylogeny.tip_count} total tips)" if phylogeny.tip_count is not None else ""
+    mafft_version = _version_clause(report_data, "11-phylogeny", "mafft")
+    iqtree_version = _version_clause(report_data, "11-phylogeny", "iqtree")
     return (
-        f" A maximum-likelihood phylogeny was inferred with IQ-TREE{model_clause}, placing the assembled "
-        f"genome among its own top BLAST reference matches{tip_clause}."
+        f" Sequences were aligned with MAFFT{mafft_version}, and a maximum-likelihood phylogeny was inferred "
+        f"with IQ-TREE{iqtree_version}{model_clause}, placing the assembled genome among its own top BLAST "
+        f"reference matches{tip_clause}."
     )
 
 def _validation_sentence(report_data: SampleReportData) -> str:

@@ -89,6 +89,10 @@ class MafftRunner(BaseTool):
             self.logger.error(f"{context} Number of threads is greater than number of cores. Please reduce the number of threads to {os.cpu_count()}.")
             sys.exit(1)
 
+    def version_command(self) -> list[str] | None:
+        """Real, confirmed flag: `mafft --version` prints e.g. "v7.526 (2024/Apr/26)" (to stderr)."""
+        return ["mafft", "--version"]
+
     def build_command(self) -> list[str]:
         """
         Constructs the command to run MAFFT. MAFFT itself writes its

@@ -35,6 +35,16 @@ class _EchoTool(BaseTool):
     def postprocess_outputs(self) -> None:
         self.postprocessed = True
 
+class _VersionedEchoTool(_EchoTool):
+    """An _EchoTool that reports a real, harmless version_command() (echo itself has no real --version flag worth relying on across platforms, so this fakes one via a second echo invocation)."""
+    def version_command(self) -> list[str] | None:
+        return ["echo", "FakeTool version 9.9.9"]
+
+class _BrokenVersionTool(_EchoTool):
+    """An _EchoTool whose version_command() points at a binary that doesn't exist, to confirm a failed version check never breaks the real run."""
+    def version_command(self) -> list[str] | None:
+        return ["this-binary-does-not-exist-anywhere", "--version"]
+
 class _FailingValidateTool(_EchoTool):
     """
     An _EchoTool whose validate_outputs always raises, used to confirm
@@ -195,3 +205,30 @@ def test_run_includes_sample_id_in_metrics_filename(tmp_path: Path) -> None:
     written = list(metrics_dir.glob("*.metrics.json"))
     assert len(written) == 1
     assert "SAMPLE_07" in written[0].name
+
+def test_run_captures_the_real_tool_version_when_version_command_is_set(tmp_path: Path) -> None:
+    tool = _VersionedEchoTool(working_dir = tmp_path, logger = logging.getLogger("test"))
+    result = tool.run()
+    assert result.tool_version == "FakeTool version 9.9.9"
+
+def test_run_tool_version_is_none_when_version_command_not_overridden(tmp_path: Path) -> None:
+    tool = _EchoTool(working_dir = tmp_path, logger = logging.getLogger("test"))
+    result = tool.run()
+    assert result.tool_version is None
+
+def test_run_tool_version_is_none_when_the_real_check_fails(tmp_path: Path) -> None:
+    """A version check against a nonexistent binary must never raise or block the real pipeline command it rides alongside."""
+    tool = _BrokenVersionTool(working_dir = tmp_path, logger = logging.getLogger("test"))
+    result = tool.run()
+    assert result.success is True
+    assert result.tool_version is None
+
+def test_run_persists_tool_version_in_the_metrics_json(tmp_path: Path) -> None:
+    metrics_dir = tmp_path / "metrics"
+    tool = _VersionedEchoTool(working_dir = tmp_path, logger = logging.getLogger("test"))
+    tool.metrics_dir = metrics_dir
+    tool.run()
+
+    written = list(metrics_dir.glob("*.metrics.json"))
+    data = json.loads(written[0].read_text())
+    assert data["tool_version"] == "FakeTool version 9.9.9"

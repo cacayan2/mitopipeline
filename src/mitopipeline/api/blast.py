@@ -80,7 +80,8 @@ class BlastRunner(BaseTool):
                  query_coverage: float | None = None,
                  word_size: int | None = None,
                  logger: Logger | None = None,
-                 tool_name: str = "blast") -> None:
+                 tool_name: str = "blast",
+                 metrics_dir: Path | None = None) -> None:
         """
         Instantiation method for the creation of the BlastRunner class.
         Calls the BaseTool instantiation method and sets a few other
@@ -104,12 +105,13 @@ class BlastRunner(BaseTool):
             word_size (int | None): The BLAST word size.
             logger (Logger): The logger to use for this step of the pipeline.
             tool_name (str): The name of the tool (by default will be blast).
+            metrics_dir (Path | None): Where to persist this run's compute metrics as JSON. None skips persistence. See BaseTool.
 
         Returns:
             None
         """
         # Using the parent class constructor and setting the other object variables.
-        super().__init__(tool_name = tool_name, working_dir = working_dir, logger = logger)
+        super().__init__(tool_name = tool_name, working_dir = working_dir, logger = logger, metrics_dir = metrics_dir)
         self.query_fasta = Path(query_fasta)
         self.database = database
         self.output_file = Path(output_file)
@@ -170,6 +172,10 @@ class BlastRunner(BaseTool):
         if os.cpu_count() and self.threads > os.cpu_count():
             self.logger.error(f"{context} Number of threads is greater than number of cores. Please reduce the number of threads to {os.cpu_count()}.")
             sys.exit(1)
+
+    def version_command(self) -> list[str] | None:
+        """Real, confirmed flag: blastn uses a single-dash `-version` (not `--version`), printing e.g. "blastn: 2.16.0+"."""
+        return ["blastn", "-version"]
 
     def build_command(self) -> list[str]:
         """

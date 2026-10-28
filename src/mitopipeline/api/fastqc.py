@@ -103,6 +103,10 @@ class FastQCRunner(BaseTool):
             self.logger.error(f"{context} Number of threads is greater than number of cores. Please reduce the number of threads to {os.cpu_count()}.")
             sys.exit(1)
 
+    def version_command(self) -> list[str] | None:
+        """Real, confirmed flag: `fastqc --version` prints e.g. "FastQC v0.13.0"."""
+        return ["fastqc", "--version"]
+
     def build_command(self) -> list[str]:
         """
         Constructs the command to be executed.

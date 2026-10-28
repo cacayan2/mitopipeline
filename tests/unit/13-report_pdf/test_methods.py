@@ -8,11 +8,13 @@ rescue history reflected only when it actually happened.
 
 # Imports
 from mitopipeline.utils.reporting.methods import render_methods_text
-from mitopipeline.utils.reporting.compute_metrics import MachineInfo
+from mitopipeline.utils.reporting.compute_metrics import MachineInfo, StageComputeSummary
 from mitopipeline.utils.reporting.models import (
     AnnotationConfigSummary,
     AssemblyConfigSummary,
     BlastConfigSummary,
+    PhylogenySummary,
+    RescueAttemptSummary,
     SampleReportData,
 )
 from mitopipeline.utils.statistics.models import AnnotationStatistics, AssemblyStatistics, BlastStatistics
@@ -198,3 +200,137 @@ def test_methods_text_omits_gpu_clause_when_no_gpu_detected() -> None:
 def test_methods_text_omits_environment_sentence_when_machine_info_unavailable() -> None:
     text = render_methods_text(_sample())
     assert "Computation was performed on" not in text
+
+def test_methods_text_cites_real_fastp_and_fastqc_versions() -> None:
+    sample = _sample(
+        fastp_stats = {"reads_in": 1000, "reads_out": 900, "read_retention_rate": 0.9},
+        compute_summary = (
+            StageComputeSummary(stage = "trimming", tools = "fastp", invocation_count = 1,
+                                total_runtime_seconds = 1.0, total_cpu_seconds = 1.0, peak_memory_mb = 10.0,
+                                tool_versions = {"fastp": "fastp 1.4.0"}),
+        ),
+    )
+    text = render_methods_text(sample)
+    assert "fastp 1.4.0" in text
+
+def test_methods_text_cites_real_getorganelle_version_for_the_primary_attempt() -> None:
+    sample = _sample(
+        assembly = AssemblyStatistics(sample_id = "s", status = "circular", source_attempt = 0,
+                                      length_bp = 16596, contig_count = 1, gc_content_percent = 45.0),
+        assembly_config = AssemblyConfigSummary(organelle_type = "animal_mt", seeded = False, seed_file = None),
+        compute_summary = (
+            StageComputeSummary(stage = "04d-assembly", tools = "getorganelle", invocation_count = 1,
+                                total_runtime_seconds = 1.0, total_cpu_seconds = 1.0, peak_memory_mb = 10.0,
+                                tool_versions = {"getorganelle": "GetOrganelle v1.7.7.1"}),
+        ),
+    )
+    text = render_methods_text(sample)
+    assert "GetOrganelle 1.7.7.1" in text
+
+def test_methods_text_cites_distinct_real_versions_for_rescue_tools() -> None:
+    """The nuanced case: rescue invokes minimap2, samtools, and a
+    second GetOrganelle re-invocation -- each cited with its own real
+    version from its own real 07-assembly_rescue metrics, separate
+    from the primary attempt's own 04d-assembly GetOrganelle version."""
+    sample = _sample(
+        assembly = AssemblyStatistics(sample_id = "s", status = "fragmented", source_attempt = 1,
+                                      length_bp = 16000, contig_count = 1, gc_content_percent = 44.0),
+        assembly_config = AssemblyConfigSummary(organelle_type = "animal_mt", seeded = False, seed_file = None),
+        rescue_attempts = (RescueAttemptSummary(attempt = 1, attempted = True, reason = "triggered",
+                                                profile_name = "reduced_coverage", status = "fragmented"),),
+        compute_summary = (
+            StageComputeSummary(stage = "04d-assembly", tools = "getorganelle", invocation_count = 1,
+                                total_runtime_seconds = 1.0, total_cpu_seconds = 1.0, peak_memory_mb = 10.0,
+                                tool_versions = {"getorganelle": "GetOrganelle v1.7.7.0"}),
+            StageComputeSummary(stage = "07-assembly_rescue", tools = "minimap2, samtools, getorganelle",
+                                invocation_count = 3, total_runtime_seconds = 3.0, total_cpu_seconds = 3.0,
+                                peak_memory_mb = 30.0, tool_versions = {
+                                    "minimap2": "2.31-r1302", "samtools": "samtools 1.24",
+                                    "getorganelle": "GetOrganelle v1.7.7.1",
+                                }),
+        ),
+    )
+    text = render_methods_text(sample)
+    assert "GetOrganelle 1.7.7.0 (" in text  # the primary attempt's own version
+    assert "minimap2 2.31-r1302" in text
+    assert "samtools 1.24" in text
+    assert "GetOrganelle 1.7.7.1):" in text  # the rescue re-invocation's own (different) version
+
+def test_methods_text_cites_distinct_rescue_tool_versions_in_the_fallback_branch() -> None:
+    """Same nuance, the other real code path: rescue_attempts is empty
+    but source_attempt > 0 (the older/simpler fallback description)."""
+    sample = _sample(
+        assembly = AssemblyStatistics(sample_id = "s", status = "circular", source_attempt = 1,
+                                      length_bp = 16596, contig_count = 1, gc_content_percent = 45.0),
+        assembly_config = AssemblyConfigSummary(organelle_type = "animal_mt", seeded = False, seed_file = None),
+        compute_summary = (
+            StageComputeSummary(stage = "07-assembly_rescue", tools = "minimap2, samtools, getorganelle",
+                                invocation_count = 3, total_runtime_seconds = 3.0, total_cpu_seconds = 3.0,
+                                peak_memory_mb = 30.0, tool_versions = {
+                                    "minimap2": "2.31-r1302", "samtools": "samtools 1.24",
+                                    "getorganelle": "GetOrganelle v1.7.7.1",
+                                }),
+        ),
+    )
+    text = render_methods_text(sample)
+    assert "minimap2 2.31-r1302" in text
+    assert "samtools 1.24" in text
+    assert "GetOrganelle 1.7.7.1)" in text
+
+def test_methods_text_cites_real_blast_version() -> None:
+    """Regression: BlastRunner's own real tool_name is "blast" (its
+    generic BaseTool log-context label), not "blastn" (only the real
+    build_command()'s own argv[0], the actual binary) -- the lookup
+    key must match the real recorded tool_name, not the binary name."""
+    sample = _sample(
+        blast_config = BlastConfigSummary(database = "actinopterygii_mt_refs", mode = "blastn"),
+        compute_summary = (
+            StageComputeSummary(stage = "05b-blast", tools = "blast", invocation_count = 1,
+                                total_runtime_seconds = 1.0, total_cpu_seconds = 1.0, peak_memory_mb = 10.0,
+                                tool_versions = {"blast": "blastn: 2.16.0+"}),
+        ),
+    )
+    text = render_methods_text(sample)
+    assert "BLAST 2.16.0+ (" in text
+
+def test_methods_text_cites_real_mitos2_version() -> None:
+    sample = _sample(
+        annotation_config = AnnotationConfigSummary(genetic_code = 2, refseqver = "refseq89m"),
+        compute_summary = (
+            StageComputeSummary(stage = "08b-annotation", tools = "mitos2", invocation_count = 1,
+                                total_runtime_seconds = 1.0, total_cpu_seconds = 1.0, peak_memory_mb = 10.0,
+                                tool_versions = {"mitos2": "runmitos.py 2.1.9"}),
+        ),
+    )
+    text = render_methods_text(sample)
+    assert "MITOS2 2.1.9 (" in text
+
+def test_methods_text_mentions_mafft_and_cites_real_mafft_and_iqtree_versions() -> None:
+    sample = _sample(
+        phylogeny = PhylogenySummary(success = True, tip_count = 7, newick_path = None, reason = "ok", model = "MFP"),
+        compute_summary = (
+            StageComputeSummary(stage = "11-phylogeny", tools = "mafft, iqtree", invocation_count = 2,
+                                total_runtime_seconds = 2.0, total_cpu_seconds = 2.0, peak_memory_mb = 20.0,
+                                tool_versions = {"mafft": "v7.526 (2024/Apr/26)", "iqtree": "IQ-TREE version 3.1.2 for Linux"}),
+        ),
+    )
+    text = render_methods_text(sample)
+    assert "Sequences were aligned with MAFFT 7.526" in text
+    assert "IQ-TREE 3.1.2" in text
+
+def test_methods_text_omits_version_clauses_when_no_compute_summary_available() -> None:
+    """A sample with no real compute_summary (e.g. metrics weren't
+    passed through) must still render clean, valid prose -- no bare
+    double-space or empty-parens artifact from a missing version."""
+    sample = _sample(
+        fastp_stats = {
+            "reads_in": 1000, "reads_out": 900, "read_retention_rate": 0.9,
+            "qualified_quality_phred": 20,
+        },
+        blast_config = BlastConfigSummary(database = "actinopterygii_mt_refs", mode = "blastn"),
+    )
+    text = render_methods_text(sample)
+    assert "fastp (minimum base quality" in text
+    assert "fastp  (" not in text
+    assert "BLAST (`blastn`" in text
+    assert "BLAST  (" not in text
