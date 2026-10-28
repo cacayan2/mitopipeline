@@ -2,13 +2,15 @@
 test_run_report.py
 
 Unit tests for the run-level Markdown report (#360/#441): PASS/
-REVIEW/FAIL totals, per-sample status, and the batch-level phylogeny
-summary -- including mixed outcomes and a fully missing phylogeny run.
+REVIEW/FAIL totals and per-sample status, including mixed outcomes.
+Each sample's own real phylogenetic tree (restoring v0.1.0's
+per-sample design) is tested in test_markdown_report.py instead --
+there is no batch-level phylogeny artifact anymore.
 """
 
 # Imports
 from pathlib import Path
-from mitopipeline.utils.reporting.models import PhylogenySummary, RunReportData, SampleReportData
+from mitopipeline.utils.reporting.models import RunReportData, SampleReportData
 from mitopipeline.utils.reporting.run_report import render_run_report
 
 def _sample(sample_id: str, verdict: str | None) -> SampleReportData:
@@ -43,33 +45,8 @@ def test_sample_status_section_links_the_real_nested_pdf_path(tmp_path: Path) ->
     pdf_path.write_bytes(b"%PDF-1.7")
     run_data = RunReportData(job_id = "job1", generated_at = "now", samples = (_sample("s1", "PASS"),))
     text = render_run_report(run_data, report_path)
-    assert "Not available" not in text.split("## Sample Status")[1].split("## Phylogenetic")[0]
+    assert "Not available" not in text.split("## Sample Status")[1].split("## NCBI Archival")[0]
     assert "s1.report.pdf" in text
-
-def test_phylogeny_section_shows_real_outcome(tmp_path: Path) -> None:
-    phylogeny = PhylogenySummary(success = True, tip_count = 5, newick_path = None, reason = "completed", model = "GTR+G")
-    run_data = RunReportData(job_id = "job1", generated_at = "now", samples = (), phylogeny = phylogeny)
-    text = render_run_report(run_data, tmp_path / "run.report.md")
-    assert "GTR+G" in text
-    assert "| Tree tips | 5 |" in text
-
-def test_phylogeny_section_handles_missing_phylogeny(tmp_path: Path) -> None:
-    run_data = RunReportData(job_id = "job1", generated_at = "now", samples = ())
-    text = render_run_report(run_data, tmp_path / "run.report.md")
-    assert "_Phylogenetic validation was not available for this run._" in text
-
-def test_phylogeny_section_shows_a_readable_reason_not_a_raw_exit_code(tmp_path: Path) -> None:
-    """Regression: a raw "iqtree exited 2" must never reach the
-    report -- run_iqtree.py itself now writes a readable reason
-    before ever invoking the tool when there are too few sequences."""
-    phylogeny = PhylogenySummary(
-        success = False, tip_count = 2, newick_path = None,
-        reason = "Skipped: at least 3 assemblies are required to build a tree, but only 2 passed validation.",
-    )
-    run_data = RunReportData(job_id = "job1", generated_at = "now", samples = (), phylogeny = phylogeny)
-    text = render_run_report(run_data, tmp_path / "run.report.md")
-    assert "at least 3 assemblies are required" in text
-    assert "iqtree exited" not in text
 
 def test_run_report_includes_real_typst_preamble(tmp_path: Path) -> None:
     run_data = RunReportData(job_id = "job1", generated_at = "now", samples = ())

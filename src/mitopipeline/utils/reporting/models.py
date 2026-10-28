@@ -89,6 +89,7 @@ class SampleReportData:
         blast_config (BlastConfigSummary | None): The real BLAST settings used, or None.
         annotation_config (AnnotationConfigSummary | None): The real MITOS2 settings used, or None.
         archival (ArchivalSummary | None): This sample's real NCBI archival preparation status, or None when the archival stages didn't run.
+        phylogeny (PhylogenySummary | None): This sample's own real phylogenetic outcome (its assembled genome plus its own live-fetched BLAST references, restoring v0.1.0's per-sample design), or None when phylogeny didn't run for this sample.
         rescued (bool): Whether the selected attempt came from a rescue retry (source_attempt > 0), not the primary assembly.
     """
     sample_id: str
@@ -104,6 +105,7 @@ class SampleReportData:
     blast_config: BlastConfigSummary | None = None
     annotation_config: AnnotationConfigSummary | None = None
     archival: ArchivalSummary | None = None
+    phylogeny: "PhylogenySummary | None" = None
 
     @property
     def rescued(self) -> bool:
@@ -112,8 +114,11 @@ class SampleReportData:
 @dataclass(frozen = True, slots = True)
 class PhylogenySummary:
     """
-    The batch-level phylogeny outcome (#344-348's own, job-level
-    design -- not per-sample).
+    One sample's own real phylogenetic outcome: its assembled genome
+    plus its own live-fetched BLAST reference sequences, aligned and
+    run through IQ-TREE (restoring v0.1.0's per-sample design -- a
+    sample's own tree never depends on how many other samples are in
+    the same run).
 
     Attributes:
         success (bool): Whether IQ-TREE produced a usable tree.
@@ -134,18 +139,18 @@ class PhylogenySummary:
 class RunReportData:
     """
     Everything #360's run-level report needs -- every sample's own
-    report data plus the batch-level phylogeny outcome.
+    report data (each one carrying its own real phylogenetic outcome,
+    restoring v0.1.0's per-sample design; there is no batch-level
+    phylogeny artifact anymore).
 
     Attributes:
         job_id (str): The pipeline job id.
         generated_at (str): An ISO-8601 UTC timestamp for when this report was generated.
         samples (tuple[SampleReportData, ...]): Every sample's own report data, in manifest order.
-        phylogeny (PhylogenySummary | None): The batch-level phylogeny outcome, or None if phylogeny didn't run.
     """
     job_id: str
     generated_at: str
     samples: tuple[SampleReportData, ...]
-    phylogeny: PhylogenySummary | None = None
 
     @property
     def verdict_counts(self) -> dict[str, int]:

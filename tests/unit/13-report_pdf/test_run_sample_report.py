@@ -34,6 +34,9 @@ def _argv(tmp_path: Path, sample_id: str, manifest: Path, output_dir: Path, **op
     flag_names = {
         "statistics_json": "--statistics-json",
         "biological_validation_json": "--biological-validation-json",
+        "iqtree_result_json": "--iqtree-result-json",
+        "phylogeny_model": "--phylogeny-model",
+        "tree_figure_png": "--tree-figure-png",
     }
     for key, value in optional.items():
         argv.extend([flag_names[key], str(value)])
@@ -75,6 +78,31 @@ def test_missing_optional_inputs_still_renders_markdown(tmp_path: Path, monkeypa
     assert result["success"] is True
     markdown_text = Path(result["markdown_path"]).read_text()
     assert "No assembly: contig selection did not find a usable circular or fragmented sequence" in markdown_text
+
+def test_report_includes_the_sample_own_phylogeny(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Regression: phylogeny is now per-sample (restoring v0.1.0's own
+    design) -- a sample's own real iqtree_result.json/model/tree
+    figure, passed as this exec script's own CLI args, must appear
+    in that sample's own report, not a separate batch-level report."""
+    sample_id = "sample1"
+    manifest = tmp_path / "manifest.tsv"
+    manifest.write_text("sample_id\tr1\tr2\nsample1\ta\tb\n")
+    iqtree_result_json = _write_json(tmp_path / "iqtree_result.json", {
+        "success": True, "tip_count": 7, "newick_path": None, "reason": "completed",
+    })
+    output_dir = tmp_path / "output"
+
+    monkeypatch.setattr(sys, "argv", _argv(
+        tmp_path, sample_id, manifest, output_dir,
+        iqtree_result_json = iqtree_result_json, phylogeny_model = "GTR+G",
+    ))
+
+    assert run_sample_report.main() == 0
+    result = json.loads((output_dir / f"{sample_id}.report_result.json").read_text())
+    markdown_text = Path(result["markdown_path"]).read_text()
+    assert "## Phylogenetic Context" in markdown_text
+    assert "GTR+G" in markdown_text
+    assert "| Tree tips | 7 |" in markdown_text
 
 def test_pdf_export_skip_does_not_fail_the_step(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     sample_id = "sample1"

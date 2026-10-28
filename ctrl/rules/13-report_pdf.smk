@@ -1,9 +1,10 @@
 """
 13-report_pdf.smk
 
-Renders each sample's own Markdown + PDF report (#358/#359/#361),
-then the run-level Markdown + PDF report (#360/#441/#443) aggregating
-every sample plus the batch-level phylogeny outcome.
+Renders each sample's own Markdown + PDF report (#358/#359/#361,
+including that sample's own real phylogenetic tree, restored to
+v0.1.0's per-sample design), then the run-level Markdown + PDF report
+(#360/#441/#443) aggregating every sample.
 """
 
 def _sample_report_inputs(wildcards):
@@ -12,10 +13,11 @@ def _sample_report_inputs(wildcards):
         "validation_done": str(JOB_DIR / "06-contig_selection" / wildcards.sample / f"{wildcards.sample}.biological_validation.done"),
         "visualization_done": str(JOB_DIR / "09-visualization" / wildcards.sample / f"{wildcards.sample}.visualization.done"),
     }
-    # Archival dependencies are only real dependency edges when those
-    # stages are actually enabled -- otherwise their own .done markers
-    # are never produced by anything else in the DAG (see run_report's
-    # own identical reasoning for phylogeny, below).
+    # Phylogeny/archival dependencies are only real dependency edges
+    # when those stages are actually enabled -- otherwise their own
+    # .done markers are never produced by anything else in the DAG.
+    if stage_enabled("11-phylogeny"):
+        inputs["tree_figure_done"] = str(JOB_DIR / "11-phylogeny" / wildcards.sample / f"{wildcards.sample}.tree_figure.done")
     if stage_enabled("14a-sra_archival"):
         inputs["sra_archival_done"] = str(JOB_DIR / "14a-sra_archival" / "sra_archival.done")
     if stage_enabled("14b-biosample_archival"):
@@ -47,6 +49,9 @@ rule sample_report:
         sra_metadata_tsv = str(JOB_DIR / "14a-sra_archival" / "sra_metadata.tsv"),
         biosample_metadata_tsv = str(JOB_DIR / "14b-biosample_archival" / "biosample_metadata.tsv"),
         genbank_record_json = str(JOB_DIR / "14c-mitogenome_archival" / "{sample}.genbank_record.json"),
+        iqtree_result_json = str(JOB_DIR / "11-phylogeny" / "{sample}" / "iqtree_result.json"),
+        phylogeny_model = config["stage_options"]["phylogeny"]["iqtree"].get("model", "") if stage_enabled("11-phylogeny") else "",
+        tree_figure_png = str(JOB_DIR / "11-phylogeny" / "{sample}" / "tree_figure.png"),
         pandoc_bin = config["stage_options"]["report_export"]["pandoc"]["bin"],
         pdf_engine = config["stage_options"]["report_export"]["pandoc"]["engine"],
         output_dir = str(JOB_DIR / "13-report_pdf" / "{sample}"),
@@ -57,6 +62,10 @@ rule sample_report:
         "../../envs/13-reporting.yaml"
     shell:
         """
+        MODEL_ARGS=""
+        if [ -n "{params.phylogeny_model}" ]; then
+            MODEL_ARGS="--phylogeny-model {params.phylogeny_model:q}"
+        fi
         {PYTHON_BIN:q} {params.exec_script:q} \
             --sample-id {wildcards.sample} \
             --runtime-manifest {params.runtime_manifest:q} \
@@ -70,6 +79,9 @@ rule sample_report:
             --sra-metadata-tsv {params.sra_metadata_tsv:q} \
             --biosample-metadata-tsv {params.biosample_metadata_tsv:q} \
             --genbank-record-json {params.genbank_record_json:q} \
+            --iqtree-result-json {params.iqtree_result_json:q} \
+            $MODEL_ARGS \
+            --tree-figure-png {params.tree_figure_png:q} \
             --pandoc-bin {params.pandoc_bin:q} \
             --pdf-engine {params.pdf_engine:q} \
             --output-dir {params.output_dir:q} \
@@ -82,17 +94,13 @@ rule sample_report:
 
 def _run_report_inputs(wildcards):
     inputs = {
+        # Every sample's own report already depends on its own real
+        # phylogeny outcome (above) -- phylogeny is a transitive
+        # dependency here now, not a separate batch-level edge.
         "sample_reports": expand(
             str(JOB_DIR / "13-report_pdf" / "{sample}" / "{sample}.report_pdf.done"), sample = SAMPLES
         )
     }
-    # Phylogeny is only a real dependency edge when the stage is
-    # actually enabled -- otherwise phylogeny.done is never produced
-    # by anything else in the DAG, and requiring it here would force
-    # phylogeny to run even when a user explicitly disabled it.
-    if stage_enabled("11-phylogeny"):
-        inputs["phylogeny_done"] = str(JOB_DIR / "11-phylogeny" / "phylogeny.done")
-        inputs["tree_figure_done"] = str(JOB_DIR / "11-phylogeny" / "tree_figure.done")
     if stage_enabled("14a-sra_archival"):
         inputs["sra_archival_done"] = str(JOB_DIR / "14a-sra_archival" / "sra_archival.done")
     if stage_enabled("14b-biosample_archival"):
@@ -111,9 +119,7 @@ rule run_report:
         sample_id_flags = " ".join(f"--sample-id {s}" for s in SAMPLES),
         runtime_manifest = str(RUNTIME_MANIFEST_PATH),
         job_dir = str(JOB_DIR),
-        iqtree_result_json = str(JOB_DIR / "11-phylogeny" / "iqtree_result.json"),
         phylogeny_model = config["stage_options"]["phylogeny"]["iqtree"].get("model", "") if stage_enabled("11-phylogeny") else "",
-        tree_figure_png = str(JOB_DIR / "11-phylogeny" / "tree_figure.png"),
         pandoc_bin = config["stage_options"]["report_export"]["pandoc"]["bin"],
         pdf_engine = config["stage_options"]["report_export"]["pandoc"]["engine"],
         output_dir = str(JOB_DIR / "13-report_pdf"),
@@ -125,7 +131,7 @@ rule run_report:
     shell:
         """
         MODEL_ARGS=""
-        if [ -n {params.phylogeny_model:q} ]; then
+        if [ -n "{params.phylogeny_model}" ]; then
             MODEL_ARGS="--phylogeny-model {params.phylogeny_model:q}"
         fi
         {PYTHON_BIN:q} {params.exec_script:q} \
@@ -133,9 +139,7 @@ rule run_report:
             {params.sample_id_flags} \
             --runtime-manifest {params.runtime_manifest:q} \
             --job-dir {params.job_dir:q} \
-            --iqtree-result-json {params.iqtree_result_json:q} \
             $MODEL_ARGS \
-            --tree-figure-png {params.tree_figure_png:q} \
             --pandoc-bin {params.pandoc_bin:q} \
             --pdf-engine {params.pdf_engine:q} \
             --output-dir {params.output_dir:q} \

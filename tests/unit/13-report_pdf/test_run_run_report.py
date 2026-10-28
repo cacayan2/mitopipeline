@@ -70,25 +70,25 @@ def test_sample_with_no_results_shows_not_assessed(tmp_path: Path, monkeypatch: 
     text = (output_dir / "job1.run_report.md").read_text()
     assert "Not assessed" in text
 
-def test_phylogeny_included_when_result_exists(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_phylogeny_model_flag_is_accepted_and_does_not_crash(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Phylogeny is now per-sample (restoring v0.1.0's own design) --
+    each sample's own tree lives in that sample's own report, not
+    here. This exec script only needs to thread --phylogeny-model
+    through without crashing; test_run_sample_report.py covers the
+    actual tree content."""
     manifest = tmp_path / "manifest.tsv"
     manifest.write_text("sample_id\tr1\tr2\nsample1\ta\tb\n")
     job_dir = tmp_path / "job"
     output_dir = tmp_path / "output"
-    iqtree_result = _write_json(tmp_path / "iqtree_result.json", {
-        "success": True, "tip_count": 5, "newick_path": None, "reason": "completed",
-    })
 
     monkeypatch.setattr(sys, "argv", [
         "run_run_report.py", "--job-id", "job1", "--sample-id", "sample1",
         "--runtime-manifest", str(manifest), "--job-dir", str(job_dir),
-        "--iqtree-result-json", str(iqtree_result), "--phylogeny-model", "GTR+G",
+        "--phylogeny-model", "GTR+G",
         "--output-dir", str(output_dir),
         "--log-file", str(tmp_path / "logs" / "run_report.log"),
         "--global-log-file", str(tmp_path / "logs" / "global.log"),
     ])
 
     assert run_run_report.main() == 0
-    text = (output_dir / "job1.run_report.md").read_text()
-    assert "GTR+G" in text
-    assert "| Tree tips | 5 |" in text
+    assert (output_dir / "job1.run_report.md").is_file()

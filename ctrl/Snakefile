@@ -196,14 +196,16 @@ def enabled_targets() -> list[str]:
         targets.extend(sample_target("08b-annotation", "{sample}.annotation.done"))
     if stage_enabled("09-visualization"):
         targets.extend(sample_target("09-visualization", "{sample}.visualization.done"))
-    # #344/#345's combined FASTA and #346-348's alignment/tree are
-    # genuinely batch-level artifacts (one dataset/tree per run, built
-    # across every accepted sample), never per-sample -- a single
-    # job-level target, not sample_target()'s per-sample expansion.
+    # Restored to v0.1.0's own per-sample design: each sample's own
+    # phylogenetic dataset/alignment/tree is built from its own
+    # assembled genome plus its own live-fetched BLAST references --
+    # never a single batch-level artifact, so a sample's tree never
+    # depends on how many other samples are in the same run.
     if stage_enabled("10-alignment_dataset"):
-        targets.append(str(JOB_DIR / "10-alignment_dataset" / "alignment_dataset.done"))
+        targets.extend(sample_target("10-alignment_dataset", "{sample}.phylogeny_dataset.done"))
     if stage_enabled("11-phylogeny"):
-        targets.append(str(JOB_DIR / "11-phylogeny" / "phylogeny.done"))
+        targets.extend(sample_target("11-phylogeny", "{sample}.phylogeny.done"))
+        targets.extend(sample_target("11-phylogeny", "{sample}.tree_figure.done"))
     if stage_enabled("12-stats_aggregation"):
         targets.extend(sample_target("12-stats_aggregation", "{sample}.stats_aggregation.done"))
     if stage_enabled("13-report_pdf"):

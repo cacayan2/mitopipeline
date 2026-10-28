@@ -450,10 +450,48 @@ def render_sample_report(report_data: SampleReportData, report_path: str | Path)
         *render_blast_section(report_data),
         *render_validation_section(report_data),
         *render_visualization_section(report_data, report_path),
+        *render_phylogeny_section(report_data, report_path),
         *render_archival_section(report_data),
         *render_methods_section(report_data),
     ]
     return "\n".join(lines)
+
+def render_phylogeny_section(report_data: SampleReportData, report_path: Path) -> list[str]:
+    """
+    Renders this sample's own real phylogenetic tree -- its
+    assembled genome placed among its own top-ranked BLAST reference
+    matches (restoring v0.1.0's per-sample design: a sample's own
+    tree never depends on how many other samples are in the same
+    run).
+    """
+    lines = ["## Phylogenetic Context", ""]
+    phylogeny = report_data.phylogeny
+    if phylogeny is None:
+        return [*lines, "_Phylogenetic placement was not available._", ""]
+    if not phylogeny.success:
+        return [*lines, render_callout(phylogeny.reason or "Phylogenetic placement could not be built for this sample."), ""]
+
+    rows = []
+    if phylogeny.model:
+        rows.append(["Model", f"`{phylogeny.model}`"])
+    if phylogeny.tip_count is not None:
+        rows.append(["Tree tips", format_integer(phylogeny.tip_count)])
+    if rows:
+        lines += [markdown_table(["Metric", "Value"], rows), ""]
+
+    if phylogeny.tree_figure_png is not None and Path(phylogeny.tree_figure_png).exists():
+        image_path = str(Path(phylogeny.tree_figure_png).resolve())
+        caption = (
+            f"Maximum-likelihood mitochondrial phylogeny for {report_data.sample_id}, "
+            "placed among its top BLAST reference matches."
+        )
+        lines += [render_figure(image_path, caption), ""]
+
+    newick_link = file_link("Newick tree", phylogeny.newick_path, report_path)
+    if newick_link is not None:
+        lines += [f"**Download:** {newick_link}", ""]
+
+    return lines
 
 def render_methods_section(report_data: SampleReportData) -> list[str]:
     """

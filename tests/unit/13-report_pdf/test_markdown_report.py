@@ -21,11 +21,12 @@ from mitopipeline.utils.reporting.markdown_report import (
     humanize_list,
     markdown_table,
     pluralize,
+    render_phylogeny_section,
     render_sample_report,
     status_badge,
     wrap_cell_text,
 )
-from mitopipeline.utils.reporting.models import SampleReportData
+from mitopipeline.utils.reporting.models import PhylogenySummary, SampleReportData
 from mitopipeline.utils.statistics.models import AnnotationStatistics, AssemblyStatistics, BlastStatistics
 
 def _empty_sample(sample_id: str = "sample1") -> SampleReportData:
@@ -139,7 +140,8 @@ def test_render_sample_report_includes_real_typst_preamble(tmp_path: Path) -> No
     assert '#set page(' in text
     assert 'margin: (x: 0.5in, y: 0.5in)' in text
     assert 'New Computer Modern' in text
-    assert '#set par(justify: true)' in text
+    assert '#set par(justify: true' in text
+    assert '#set table(' in text
 
 def test_render_sample_report_renders_real_assembly_stats(tmp_path: Path) -> None:
     sample = SampleReportData(
@@ -163,6 +165,43 @@ def test_render_sample_report_never_uses_the_word_candidate(tmp_path: Path) -> N
     this check does not touch."""
     text = render_sample_report(_empty_sample(), tmp_path / "sample1.report.md")
     assert "candidate" not in text.lower()
+
+def test_render_phylogeny_section_shows_not_available_when_missing(tmp_path: Path) -> None:
+    lines = render_phylogeny_section(_empty_sample(), tmp_path / "sample1.report.md")
+    assert "_Phylogenetic placement was not available._" in lines
+
+def test_render_phylogeny_section_shows_a_readable_reason_not_a_raw_exit_code(tmp_path: Path) -> None:
+    """Regression: a raw "iqtree exited 2" must never reach the
+    report -- run_iqtree.py itself writes a readable reason before
+    ever invoking the tool when there are too few sequences (now
+    rare per-sample, since a sample's own dataset is its genome plus
+    up to 6 live-fetched references, but still a real, possible
+    outcome when a sample has very few BLAST hits)."""
+    sample = SampleReportData(
+        sample_id = "sample1", metadata = {}, fastp_stats = None,
+        assembly = None, blast = None, annotation = None, overall_verdict = None,
+        phylogeny = PhylogenySummary(
+            success = False, tip_count = 2, newick_path = None,
+            reason = "Skipped: at least 3 assemblies are required to build a tree, but only 2 passed validation.",
+        ),
+    )
+    text = "\n".join(render_phylogeny_section(sample, tmp_path / "sample1.report.md"))
+    assert "at least 3 assemblies are required" in text
+    assert "iqtree exited" not in text
+
+def test_render_phylogeny_section_shows_the_real_tip_count_and_model(tmp_path: Path) -> None:
+    sample = SampleReportData(
+        sample_id = "sample1", metadata = {}, fastp_stats = None,
+        assembly = None, blast = None, annotation = None, overall_verdict = None,
+        phylogeny = PhylogenySummary(success = True, tip_count = 7, newick_path = None, reason = "completed", model = "GTR+G"),
+    )
+    text = "\n".join(render_phylogeny_section(sample, tmp_path / "sample1.report.md"))
+    assert "GTR+G" in text
+    assert "| Tree tips | 7 |" in text
+
+def test_render_sample_report_includes_a_phylogeny_section(tmp_path: Path) -> None:
+    text = render_sample_report(_empty_sample(), tmp_path / "sample1.report.md")
+    assert "## Phylogenetic Context" in text
 
 def test_render_sample_report_includes_methods_section_exactly_once(tmp_path: Path) -> None:
     text = render_sample_report(_empty_sample(), tmp_path / "sample1.report.md")

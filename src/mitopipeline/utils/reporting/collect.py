@@ -155,6 +155,9 @@ def collect_sample_report_data(sample_id: str, runtime_manifest_path: str | Path
                                 sra_metadata_tsv: str | Path | None = None,
                                 biosample_metadata_tsv: str | Path | None = None,
                                 genbank_record_json: str | Path | None = None,
+                                iqtree_result_json: str | Path | None = None,
+                                phylogeny_model: str | None = None,
+                                tree_figure_png: str | Path | None = None,
                                 logger: Logger | None = None) -> SampleReportData:
     """
     Assembles one sample's report data from its real result JSON.
@@ -172,6 +175,9 @@ def collect_sample_report_data(sample_id: str, runtime_manifest_path: str | Path
         sra_metadata_tsv (str | Path | None): The SRA metadata table written by run_sra_metadata.py.
         biosample_metadata_tsv (str | Path | None): The BioSample metadata table written by run_biosample_metadata.py.
         genbank_record_json (str | Path | None): This sample's own GenBank record JSON written by run_mitogenome_metadata.py.
+        iqtree_result_json (str | Path | None): This sample's own result JSON written by run_iqtree.py.
+        phylogeny_model (str | None): The substitution model IQ-TREE was run with, when known.
+        tree_figure_png (str | Path | None): This sample's own rendered tree figure PNG, if run_tree_figure.py produced one.
         logger (Logger | None): Logger to use. Defaults to None.
 
     Returns:
@@ -224,6 +230,7 @@ def collect_sample_report_data(sample_id: str, runtime_manifest_path: str | Path
         )
 
     archival = collect_archival_summary(sample_id, sra_metadata_tsv, biosample_metadata_tsv, genbank_record_json)
+    phylogeny = collect_phylogeny_summary(iqtree_result_json, model = phylogeny_model, tree_figure_png = tree_figure_png)
 
     return SampleReportData(
         sample_id = sample_id, metadata = metadata, fastp_stats = parse_fastp_stats(fastp_json),
@@ -231,15 +238,16 @@ def collect_sample_report_data(sample_id: str, runtime_manifest_path: str | Path
         overall_verdict = overall_verdict, validation_checks = validation_checks,
         visualization_png = visualization_png, assembly_config = assembly_config,
         blast_config = blast_config, annotation_config = annotation_config, archival = archival,
+        phylogeny = phylogeny,
     )
 
 def collect_phylogeny_summary(iqtree_result_json: str | Path | None, model: str | None = None,
                                tree_figure_png: str | Path | None = None) -> PhylogenySummary | None:
     """
-    Reads the batch-level phylogeny outcome.
+    Reads one sample's own real phylogeny outcome.
 
     Args:
-        iqtree_result_json (str | Path | None): The result JSON written by run_iqtree.py.
+        iqtree_result_json (str | Path | None): This sample's own result JSON written by run_iqtree.py.
         model (str | None): The substitution model IQ-TREE was run with, when known.
         tree_figure_png (str | Path | None): The rendered tree figure PNG, when run_tree_figure.py produced one.
 
@@ -257,19 +265,18 @@ def collect_phylogeny_summary(iqtree_result_json: str | Path | None, model: str 
         tree_figure_png = figure_path if (figure_path and figure_path.is_file()) else None,
     )
 
-def collect_run_report_data(job_id: str, generated_at: str, samples: list[SampleReportData],
-                             phylogeny: PhylogenySummary | None = None) -> RunReportData:
+def collect_run_report_data(job_id: str, generated_at: str, samples: list[SampleReportData]) -> RunReportData:
     """
     Assembles the run-level report data from every sample's own
-    already-collected report data.
+    already-collected report data (each one carrying its own real
+    phylogeny outcome).
 
     Args:
         job_id (str): The pipeline job id.
         generated_at (str): An ISO-8601 UTC timestamp.
         samples (list[SampleReportData]): Every sample's report data, in manifest order.
-        phylogeny (PhylogenySummary | None): The batch-level phylogeny outcome, if available.
 
     Returns:
         RunReportData: The assembled run-level report data.
     """
-    return RunReportData(job_id = job_id, generated_at = generated_at, samples = tuple(samples), phylogeny = phylogeny)
+    return RunReportData(job_id = job_id, generated_at = generated_at, samples = tuple(samples))

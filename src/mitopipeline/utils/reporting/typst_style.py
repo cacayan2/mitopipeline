@@ -62,15 +62,32 @@ def render_typst_preamble(sample_id: str | None = None) -> str:
         '  font: "New Computer Modern",\n'
         "  size: 11pt\n"
         ")\n"
-        "#set par(justify: true)\n"
+        "#set par(justify: true, leading: 0.6em)\n"
         "#show link: set text(fill: blue)\n"
         "#set figure.caption(separator: [. ])\n"
-        "#show figure: set block(breakable: false)\n"
+        "#show figure: set block(breakable: false, above: 0.8em, below: 0.8em)\n"
         "#show heading.where(level: 1): set text(size: 20pt)\n"
         "#show heading.where(level: 2): set text(size: 14pt)\n"
-        "#show heading.where(level: 2): set block(above: 1.4em, below: 0.8em)\n"
+        "#show heading.where(level: 2): set block(above: 0.9em, below: 0.5em)\n"
         "#show heading.where(level: 2): it => block(breakable: false, sticky: true, it)\n"
         "#show heading.where(level: 3): set text(size: 12pt)\n"
+        # A genuine ruled/shaded table, not pandoc's own bare,
+        # borderless default -- a light full grid, a shaded header
+        # row, and subtle zebra striping on the body rows, applied
+        # once here as table-wide defaults so every pandoc-generated
+        # #table(...) call picks it up without needing its own
+        # per-call styling (a #set rule only changes default
+        # constructor arguments -- unlike the #show table: it => ...
+        # rebuild this project already tried and abandoned earlier
+        # this session for recursing/blanking the page, this never
+        # touches table's own content, only its defaults).
+        "#set table(\n"
+        '  stroke: 0.5pt + rgb("#bbbbbb"),\n'
+        "  inset: 6pt,\n"
+        "  fill: (x, y) => if y == 0 { "
+        'rgb("#e8e8e8") } else if calc.odd(y) { rgb("#f6f6f6") } else { white },\n'
+        ")\n"
+        "#show table.cell.where(y: 0): set text(weight: \"bold\")\n"
         "```\n"
     )
 
@@ -94,21 +111,21 @@ def render_title_block(title: str, species: str, sample_id: str, generated_at: s
     return (
         "```{=typst}\n"
         "#align(center)[\n\n"
-        "#v(2.2cm)\n\n"
+        "#v(1.0cm)\n\n"
         '#text(size: 26pt, weight: "bold")[\n'
         f"{title}\n"
         "]\n\n"
-        "#v(0.2cm)\n\n"
+        "#v(0.15cm)\n\n"
         f"#text(size: 16pt)[#emph[{species}]]\n\n"
-        "#v(0.4cm)\n\n"
+        "#v(0.3cm)\n\n"
         "#text(size: 12pt, fill: gray)[\n"
         f"Sample ID: {sample_id}\n"
         "]\n\n"
-        "#v(0.2cm)\n\n"
+        "#v(0.15cm)\n\n"
         "#text(size: 11pt, fill: gray)[\n"
         f"Generated {generated_at}\n"
         "]\n\n"
-        "#v(1.8cm)\n\n"
+        "#v(0.8cm)\n\n"
         "]\n"
         "```\n"
     )
@@ -118,21 +135,21 @@ def render_run_title_block(title: str, job_id: str, sample_count_label: str, gen
     return (
         "```{=typst}\n"
         "#align(center)[\n\n"
-        "#v(2.2cm)\n\n"
+        "#v(1.0cm)\n\n"
         '#text(size: 26pt, weight: "bold")[\n'
         f"{title}\n"
         "]\n\n"
-        "#v(0.3cm)\n\n"
+        "#v(0.2cm)\n\n"
         f"#text(size: 16pt)[{sample_count_label}]\n\n"
-        "#v(0.4cm)\n\n"
+        "#v(0.3cm)\n\n"
         "#text(size: 12pt, fill: gray)[\n"
         f"Job ID: {job_id}\n"
         "]\n\n"
-        "#v(0.2cm)\n\n"
+        "#v(0.15cm)\n\n"
         "#text(size: 11pt, fill: gray)[\n"
         f"Generated {generated_at}\n"
         "]\n\n"
-        "#v(1.8cm)\n\n"
+        "#v(0.8cm)\n\n"
         "]\n"
         "```\n"
     )

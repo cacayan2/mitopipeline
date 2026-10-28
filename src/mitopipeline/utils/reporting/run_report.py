@@ -4,8 +4,8 @@ run_report.py
 Renders the run-level Markdown report (#360/#441): aggregates every
 sample's own biological validation verdict (PASS/REVIEW/FAIL, #414's
 own typed outcome -- not a generic tool-exit-code "success/failure"
-binary), plus the batch-level phylogeny outcome (#344-348's own
-job-level design).
+binary). Each sample's own real phylogenetic tree (restoring v0.1.0's
+per-sample design) lives in that sample's own report, not here.
 """
 
 # Imports
@@ -19,7 +19,6 @@ from mitopipeline.utils.reporting.markdown_report import (
     humanize_enum,
     markdown_table,
     pluralize,
-    relative_path,
     status_badge,
     wrap_cell_text,
 )
@@ -109,26 +108,6 @@ def render_archival_summary_section(run_data: RunReportData) -> list[str]:
         "This pipeline prepares submission-ready files only; it never submits to NCBI directly.", "",
     ]
 
-def render_phylogeny_section(run_data: RunReportData, report_path: Path) -> list[str]:
-    """Renders the batch-level phylogeny outcome."""
-    lines = ["## Phylogenetic Validation", ""]
-    phylogeny = run_data.phylogeny
-    if phylogeny is None:
-        return [*lines, "_Phylogenetic validation was not available for this run._", ""]
-    if not phylogeny.success:
-        return [*lines, f"_{phylogeny.reason}_", ""]
-    rows = [["Tree tips", format_integer(phylogeny.tip_count)]]
-    if phylogeny.model is not None:
-        rows.append(["Substitution model", f"`{phylogeny.model}`"])
-    lines += [markdown_table(["Metric", "Value"], rows), ""]
-
-    link = file_link("PNG tree figure", phylogeny.tree_figure_png, report_path)
-    if link is not None:
-        image_path = relative_path(phylogeny.tree_figure_png, report_path)
-        from mitopipeline.utils.reporting.typst_style import render_figure
-        lines += [render_figure(image_path, "Maximum-likelihood phylogeny across validated samples."), ""]
-    return lines
-
 def render_run_report(run_data: RunReportData, report_path: str | Path) -> str:
     """
     Renders the complete run-level Markdown report.
@@ -150,7 +129,6 @@ def render_run_report(run_data: RunReportData, report_path: str | Path) -> str:
         *render_run_overview_section(run_data),
         *render_sample_results_table_section(run_data),
         *render_sample_status_section(run_data, report_path),
-        *render_phylogeny_section(run_data, report_path),
         *render_archival_summary_section(run_data),
     ]
     return "\n".join(lines)

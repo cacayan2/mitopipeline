@@ -38,6 +38,9 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--sra-metadata-tsv", type = Path, default = None, help = "The SRA metadata table written by run_sra_metadata.py.")
     parser.add_argument("--biosample-metadata-tsv", type = Path, default = None, help = "The BioSample metadata table written by run_biosample_metadata.py.")
     parser.add_argument("--genbank-record-json", type = Path, default = None, help = "This sample's own GenBank record JSON written by run_mitogenome_metadata.py.")
+    parser.add_argument("--iqtree-result-json", type = Path, default = None, help = "This sample's own result JSON written by run_iqtree.py.")
+    parser.add_argument("--phylogeny-model", type = str, default = None, help = "The substitution model IQ-TREE was run with, if known.")
+    parser.add_argument("--tree-figure-png", type = Path, default = None, help = "This sample's own rendered tree figure PNG, if run_tree_figure.py produced one.")
     parser.add_argument("--pandoc-bin", type = str, default = "pandoc", help = "The pandoc executable name. Defaults to 'pandoc'.")
     parser.add_argument("--pdf-engine", type = str, default = "typst", help = "The PDF engine pandoc should use. Defaults to 'typst'.")
     parser.add_argument("--output-dir", type = Path, required = True, help = "The directory to write this sample's report to.")
@@ -82,6 +85,8 @@ def main() -> int:
         getorganelle_config_json = args.getorganelle_config_json, blast_config_json = args.blast_config_json,
         mitos2_config_json = args.mitos2_config_json, sra_metadata_tsv = args.sra_metadata_tsv,
         biosample_metadata_tsv = args.biosample_metadata_tsv, genbank_record_json = args.genbank_record_json,
+        iqtree_result_json = args.iqtree_result_json, phylogeny_model = args.phylogeny_model,
+        tree_figure_png = args.tree_figure_png,
         logger = logger,
     )
 
