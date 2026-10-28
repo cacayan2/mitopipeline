@@ -13,7 +13,7 @@ import json
 from logging import Logger
 from pathlib import Path
 from Bio import SeqIO
-from mitopipeline.utils.blast.blast_hits import read_top_blast_hits
+from mitopipeline.utils.blast.blast_hits import read_top_blast_hits, resolve_scientific_name_from_fasta
 from mitopipeline.utils.statistics.models import (
     AnnotationStatistics,
     AssemblyStatistics,
@@ -77,6 +77,7 @@ def extract_assembly_statistics(sample_id: str, contig_selection_json: str | Pat
 def extract_blast_statistics(sample_id: str, top_hits_tsv: str | Path,
                               biological_validation_json: str | Path | None = None,
                               circular_coverage_json: str | Path | None = None,
+                              reference_fasta: str | Path | None = None,
                               logger: Logger | None = None) -> BlastStatistics | None:
     """
     Extracts BLAST statistics from the ranked top-hit TSV's own
@@ -88,6 +89,7 @@ def extract_blast_statistics(sample_id: str, top_hits_tsv: str | Path,
         top_hits_tsv (str | Path): The ranked top-hit TSV written by run_blast_hit_selection.py.
         biological_validation_json (str | Path | None): The validation result JSON written by run_biological_validation.py, if available.
         circular_coverage_json (str | Path | None): The result JSON written by run_circular_coverage.py, for a circular selected attempt only -- when present and successful, this replaces the raw top-hit query coverage in the reported statistics too, so the report never shows the same misleading number the validation gate itself no longer uses.
+        reference_fasta (str | Path | None): The local BLAST reference FASTA, used to resolve a scientific name from the hit's own real header description when BLAST's own sscinames column came back empty/unresolved.
         logger (Logger | None): Logger to use. Defaults to None.
 
     Returns:
@@ -121,8 +123,15 @@ def extract_blast_statistics(sample_id: str, top_hits_tsv: str | Path,
     if circular_coverage is not None and circular_coverage.get("success") and circular_coverage.get("corrected_query_coverage") is not None:
         top_query_coverage_percent = circular_coverage["corrected_query_coverage"]
 
+    scientific_name = top_hit.sscinames
+    if (not scientific_name or scientific_name.strip().upper() in {"N/A", ""}) and reference_fasta is not None:
+        resolved = resolve_scientific_name_from_fasta(reference_fasta, top_hit.sseqid, logger = logger)
+        if resolved:
+            scientific_name = resolved
+            if logger is not None: logger.info(f"{{{sample_id}}} Resolved BLAST scientific name from the local reference FASTA: {resolved}.")
+
     return BlastStatistics(
-        sample_id = sample_id, top_accession = top_hit.sseqid, top_scientific_name = top_hit.sscinames,
+        sample_id = sample_id, top_accession = top_hit.sseqid, top_scientific_name = scientific_name,
         top_identity_percent = top_hit.pident, top_query_coverage_percent = top_query_coverage_percent,
         top_evalue = top_hit.evalue, decision_status = decision_status,
     )
@@ -154,6 +163,7 @@ def extract_annotation_statistics(sample_id: str, annotation_result_json: str | 
     return AnnotationStatistics(
         sample_id = sample_id, gene_count = result.get("feature_count") or 0,
         core_gene_count = len(found_core), missing_core_genes = missing_core,
+        trna_count = result.get("trna_count"), rrna_count = result.get("rrna_count"),
     )
 
 def merge_sample_statistics(sample_id: str, assembly: AssemblyStatistics | None,

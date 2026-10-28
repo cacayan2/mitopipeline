@@ -5,6 +5,8 @@ Aggregates one sample's assembly/BLAST/annotation statistics from
 the real result JSON #06/#05c/#08b each already wrote.
 """
 
+BLAST_CONFIG = config["stage_options"]["phylogeny"]["blast"]
+
 rule stats_aggregation:
     input:
         validation_done = str(JOB_DIR / "06-contig_selection" / "{sample}" / "{sample}.biological_validation.done"),
@@ -23,6 +25,7 @@ rule stats_aggregation:
         biological_validation_json = str(JOB_DIR / "06-contig_selection" / "{sample}" / "{sample}.biological_validation.json"),
         circular_coverage_json = str(JOB_DIR / "05c-blast_hits" / "{sample}" / "{sample}.circular_coverage_result.json"),
         annotation_result_json = str(JOB_DIR / "08b-annotation" / "{sample}" / "{sample}.mitos2_annotation_result.json"),
+        reference_fasta = str((PROJECT_ROOT / BLAST_CONFIG["reference_fasta"]).resolve()),
         output_dir = str(JOB_DIR / "12-stats_aggregation" / "{sample}"),
         log_file = str(JOB_DIR / "logs" / "12-stats_aggregation" / "{sample}.log"),
         global_log_file = str(GLOBAL_LOG_FILE),
@@ -37,6 +40,7 @@ rule stats_aggregation:
             if [ -s {params.circular_coverage_json:q} ]; then
                 TOP_HITS_ARGS="$TOP_HITS_ARGS --circular-coverage-json {params.circular_coverage_json:q}"
             fi
+            TOP_HITS_ARGS="$TOP_HITS_ARGS --reference-fasta {params.reference_fasta:q}"
         fi
         ANNOTATION_ARGS=""
         if [ -s {params.annotation_result_json:q} ]; then

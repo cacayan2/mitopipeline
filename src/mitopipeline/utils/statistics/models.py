@@ -68,14 +68,18 @@ class AnnotationStatistics:
 
     Attributes:
         sample_id (str): The sample id.
-        gene_count (int): The total number of gene features MITOS2 found.
+        gene_count (int): The total number of protein-coding gene features MITOS2 found (GFF type "gene" -- never includes tRNA/rRNA, which MITOS2 records under their own separate GFF types).
         core_gene_count (int): How many of the 13 core animal mitochondrial protein-coding genes were found.
         missing_core_genes (tuple[str, ...]): Which core genes were NOT found, sorted.
+        trna_count (int | None): How many tRNA genes MITOS2 found (GFF type "tRNA"), or None when not recorded.
+        rrna_count (int | None): How many rRNA genes MITOS2 found (GFF type "rRNA"), or None when not recorded.
     """
     sample_id: str
     gene_count: int
     core_gene_count: int
     missing_core_genes: tuple[str, ...] = field(default_factory = tuple)
+    trna_count: int | None = None
+    rrna_count: int | None = None
 
     def to_dict(self) -> dict:
         return {**asdict(self), "missing_core_genes": list(self.missing_core_genes)}

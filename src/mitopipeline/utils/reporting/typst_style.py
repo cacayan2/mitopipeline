@@ -7,28 +7,56 @@ developer-manual.md use (pandoc passes a ```{=typst} fence straight
 through to its own --pdf-engine typst, untouched) -- reproducing
 their real page/font/paragraph preamble, title-page layout, and gray
 callout box styling, confirmed directly against both documents'
-source rather than guessed.
+source rather than guessed, extended with table/figure/badge/footer
+styling for the report pipeline.
 """
 
 # Imports
-from datetime import datetime, timezone
 
-def render_typst_preamble() -> str:
+# A fixed, colorblind-safe status palette (Okabe-Ito-adjacent hues,
+# each tier also distinct in LIGHTNESS so grayscale printing keeps
+# them apart -- the badge's own text label always carries the actual
+# meaning, color is a supplementary signal, never the only one).
+# (fill, text) as hex strings, keyed by the raw status value.
+STATUS_BADGE_STYLES: dict[str, tuple[str, str]] = {
+    "PASS": ("#d4edda", "#155724"),
+    "READY": ("#d4edda", "#155724"),
+    "REVIEW": ("#fff3cd", "#856404"),
+    "MANUAL_REVIEW_REQUIRED": ("#fff3cd", "#856404"),
+    "FAIL": ("#f8d7da", "#721c24"),
+    "NOT ASSESSED": ("#e2e3e5", "#383d41"),
+}
+
+def render_typst_preamble(sample_id: str | None = None) -> str:
     """
-    The page/font/paragraph/link preamble, matching
-    developer-manual.md's own real settings exactly (0.5in margins,
-    us-letter, New Computer Modern 11pt, justified paragraphs, blue
-    links) -- the fuller of the two real preambles this project's
-    documents use.
+    The page/font/paragraph/link/table preamble, matching
+    developer-manual.md's own real settings (0.5in margins,
+    us-letter, New Computer Modern 11pt, justified body paragraphs,
+    blue links), extended with: a page footer, consistent heading
+    sizing, and table cells that never overflow the page (pandoc's
+    own Typst tables use bare auto-sized columns with no wrapping,
+    confirmed directly to overlap when a cell's content is long --
+    real wrapping is applied at the Python layer via wrap_cell_text,
+    this just keeps header rows non-orphaned and cell text readable).
+
+    Args:
+        sample_id (str | None): The sample id to show in the page footer, or None for a run-level report (job id is passed by the caller as part of the footer text instead).
 
     Returns:
         str: The raw Typst preamble block, ready to prepend to a report's Markdown source.
     """
+    footer_prefix = f"{sample_id} · " if sample_id else ""
     return (
         "```{=typst}\n"
         "#set page(\n"
         '  paper: "us-letter",\n'
-        "  margin: (x: 0.5in, y: 0.5in)\n"
+        "  margin: (x: 0.5in, y: 0.5in),\n"
+        "  footer: context {\n"
+        '    set text(size: 8.5pt, fill: rgb("#888888"))\n'
+        "    line(length: 100%, stroke: 0.4pt + rgb(\"#cccccc\"))\n"
+        "    v(4pt)\n"
+        f"    [{footer_prefix}page #counter(page).display() of #counter(page).final().first()]\n"
+        "  }\n"
         ")\n"
         "#set text(\n"
         '  font: "New Computer Modern",\n'
@@ -36,64 +64,90 @@ def render_typst_preamble() -> str:
         ")\n"
         "#set par(justify: true)\n"
         "#show link: set text(fill: blue)\n"
+        "#set figure.caption(separator: [. ])\n"
+        "#show figure: set block(breakable: false)\n"
+        "#show heading.where(level: 1): set text(size: 20pt)\n"
+        "#show heading.where(level: 2): set text(size: 14pt)\n"
+        "#show heading.where(level: 2): set block(above: 1.4em, below: 0.8em)\n"
+        "#show heading.where(level: 2): it => block(breakable: false, sticky: true, it)\n"
+        "#show heading.where(level: 3): set text(size: 12pt)\n"
         "```\n"
     )
 
-def render_title_block(title: str, subtitle: str, prepared_for: str = "") -> str:
+def render_title_block(title: str, species: str, sample_id: str, generated_at: str) -> str:
     """
     A centered title page, matching developer-manual.md's own real
-    stacked #text/#v spacing layout.
+    stacked #text/#v spacing layout -- each of title/species/sample
+    id/timestamp shown exactly once (previously duplicated by a
+    second, separately-written set of bold lines immediately
+    following this block).
 
     Args:
-        title (str): The report's main title (e.g. "Mitochondrial Genome Report: SAMPLE_01").
-        subtitle (str): A subtitle line underneath the title.
-        prepared_for (str): An optional "prepared for" line (e.g. a job id), omitted when blank.
+        title (str): The report's main title (e.g. "Mitochondrial Genome Report").
+        species (str): The sample's scientific name, rendered in italics.
+        sample_id (str): The sample id.
+        generated_at (str): A pre-formatted "DD Mon YYYY, HH:MM UTC" timestamp -- computed in Python, not Typst's own compile-time date, since the report's real generation time (not just date) matters.
 
     Returns:
         str: The raw Typst title block.
     """
-    prepared_for_block = ""
-    if prepared_for:
-        prepared_for_block = (
-            "#v(0.5cm)\n"
-            "#text(size: 12pt, fill: gray)[\n"
-            f"{prepared_for}\n"
-            "]\n"
-        )
     return (
         "```{=typst}\n"
         "#align(center)[\n\n"
-        "#v(2.5cm)\n\n"
-        '#text(size: 28pt, weight: "bold")[\n'
+        "#v(2.2cm)\n\n"
+        '#text(size: 26pt, weight: "bold")[\n'
         f"{title}\n"
         "]\n\n"
-        "#v(0.3cm)\n\n"
-        "#text(size: 16pt)[\n"
-        f"{subtitle}\n"
+        "#v(0.2cm)\n\n"
+        f"#text(size: 16pt)[#emph[{species}]]\n\n"
+        "#v(0.4cm)\n\n"
+        "#text(size: 12pt, fill: gray)[\n"
+        f"Sample ID: {sample_id}\n"
         "]\n\n"
-        f"{prepared_for_block}"
-        "#v(1.5cm)\n\n"
+        "#v(0.2cm)\n\n"
         "#text(size: 11pt, fill: gray)[\n"
-        'Generated #datetime.today().display("[month repr:long] [day], [year]")\n'
+        f"Generated {generated_at}\n"
         "]\n\n"
-        "#v(2cm)\n\n"
+        "#v(1.8cm)\n\n"
         "]\n"
         "```\n"
     )
 
-def render_callout_box_open(heading: str) -> str:
+def render_run_title_block(title: str, job_id: str, sample_count_label: str, generated_at: str) -> str:
+    """The run-level report's own title page, mirroring render_title_block()'s single-instance-per-field layout."""
+    return (
+        "```{=typst}\n"
+        "#align(center)[\n\n"
+        "#v(2.2cm)\n\n"
+        '#text(size: 26pt, weight: "bold")[\n'
+        f"{title}\n"
+        "]\n\n"
+        "#v(0.3cm)\n\n"
+        f"#text(size: 16pt)[{sample_count_label}]\n\n"
+        "#v(0.4cm)\n\n"
+        "#text(size: 12pt, fill: gray)[\n"
+        f"Job ID: {job_id}\n"
+        "]\n\n"
+        "#v(0.2cm)\n\n"
+        "#text(size: 11pt, fill: gray)[\n"
+        f"Generated {generated_at}\n"
+        "]\n\n"
+        "#v(1.8cm)\n\n"
+        "]\n"
+        "```\n"
+    )
+
+def render_callout_box_open() -> str:
     """
     Opens a gray bordered callout box, matching
     developer-manual.md's own real "Key Takeaways"/"Purpose" box
     style -- rgb("#f2f2f2") fill, rgb("#cccccc") stroke, 4pt radius,
     centered. The box's own body is plain Markdown written between
     this and render_callout_box_close(), the same split-fence
-    mechanism the real documents use (pandoc compiles the Markdown
-    body to Typst markup in between, and the two raw fences supply
-    only the surrounding #box(...)[ ... ] call).
-
-    Args:
-        heading (str): The box's own bold heading line.
+    mechanism the real documents use. Deliberately does not print its
+    own heading -- the enclosing Markdown section's own "##" heading
+    is the only heading shown, previously duplicated by this box
+    printing a second, bold one inside itself.
 
     Returns:
         str: The raw Typst block that opens the box.
@@ -106,11 +160,38 @@ def render_callout_box_open(heading: str) -> str:
         "  radius: 4pt,\n"
         '  fill: rgb("#f2f2f2"),\n'
         '  stroke: rgb("#cccccc"),\n'
+        "  width: 100%,\n"
         "[\n"
-        f"#strong[{heading}]\n\n"
         "```\n"
     )
 
 def render_callout_box_close() -> str:
     """Closes a callout box opened by render_callout_box_open()."""
     return "```{=typst}\n])\n]\n```\n"
+
+def render_figure(image_path: str, caption: str) -> str:
+    """
+    Wraps an image in a proper numbered Typst figure (never altering
+    the image itself): scaled to the available text width, kept on
+    the same page as whatever heading precedes it. Pandoc's own plain
+    Markdown image syntax produces a bare, uncaptioned, unscaled
+    image that Typst is free to push onto its own page, leaving the
+    heading on the page before it mostly blank -- confirmed directly.
+
+    Args:
+        image_path (str): The image path, relative to the report's own directory (matching markdown_report.py's existing relative_path()).
+        caption (str): The figure's full caption text, already composed (numbering, dimensions, any circularity caveat).
+
+    Returns:
+        str: The raw Typst figure block.
+    """
+    escaped_caption = caption.replace('"', '\\"')
+    return (
+        "```{=typst}\n"
+        "#figure(\n"
+        f'  image("{image_path}", width: 100%),\n'
+        f'  caption: [{escaped_caption}],\n'
+        "  placement: none,\n"
+        ")\n"
+        "```\n"
+    )

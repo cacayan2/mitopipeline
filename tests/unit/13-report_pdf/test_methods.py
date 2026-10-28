@@ -14,7 +14,7 @@ from mitopipeline.utils.reporting.models import (
     BlastConfigSummary,
     SampleReportData,
 )
-from mitopipeline.utils.statistics.models import AssemblyStatistics, BlastStatistics
+from mitopipeline.utils.statistics.models import AnnotationStatistics, AssemblyStatistics, BlastStatistics
 
 def _sample(**overrides) -> SampleReportData:
     defaults = dict(
@@ -63,18 +63,71 @@ def test_methods_text_describes_blast_identification() -> None:
     assert "99.00% identity" in text
 
 def test_methods_text_describes_annotation() -> None:
-    sample = _sample(annotation_config = AnnotationConfigSummary(genetic_code = 2, refseqver = "refseq89m"))
+    sample = _sample(
+        annotation_config = AnnotationConfigSummary(genetic_code = 2, refseqver = "refseq89m"),
+        annotation = AnnotationStatistics(sample_id = "s", gene_count = 13, core_gene_count = 13,
+                                          trna_count = 22, rrna_count = 2),
+    )
     text = render_methods_text(sample)
     assert "MITOS2" in text
     assert "genetic code 2" in text
     assert "refseq89m" in text
+    assert "22 tRNA(s)" in text
+    assert "2 rRNA(s)" in text
 
 def test_methods_text_includes_validation_verdict_when_available() -> None:
     sample = _sample(overall_verdict = "PASS")
     text = render_methods_text(sample)
-    assert "overall verdict of PASS" in text
+    assert "plausibility verdict of Pass" in text
 
 def test_methods_text_handles_fully_missing_configuration() -> None:
     text = render_methods_text(_sample())
     assert "GetOrganelle" in text
     assert "not configured" in text
+
+def test_methods_text_distinguishes_skipped_from_not_configured() -> None:
+    """Regression: a sample whose assembly genuinely ran (config was
+    resolved) but produced nothing selected must read "skipped", not
+    the misleading "not configured" (which implies the stage itself
+    was turned off)."""
+    sample = _sample(assembly_config = AssemblyConfigSummary(organelle_type = "animal_mt", seeded = False, seed_file = None))
+    text = render_methods_text(sample)
+    assert "was skipped: this sample had no selected assembly" in text
+    assert "was not configured for this run" not in text
+
+def test_methods_text_blast_rephrases_unresolved_taxon_instead_of_na() -> None:
+    sample = _sample(
+        blast_config = BlastConfigSummary(database = "actinopterygii_mt_refs", mode = "blastn"),
+        blast = BlastStatistics(sample_id = "s", top_accession = "NC_1", top_scientific_name = "N/A",
+                                top_identity_percent = 100.0, top_query_coverage_percent = 100.0, top_evalue = 0.0),
+    )
+    text = render_methods_text(sample)
+    assert "The top match was N/A" not in text
+    assert "`NC_1` (taxon unresolved)" in text
+
+def test_methods_text_renders_blast_database_as_basename_not_full_path() -> None:
+    """Regression: a real run's resolved BLAST database path is an
+    absolute path under the execution host's own home directory
+    (e.g. /home/eacac/.../resources/blast/actinopterygii_mt_refs) --
+    confirmed via a real compiled report leaking it into the Methods
+    prose. Only the basename should ever appear."""
+    sample = _sample(
+        blast_config = BlastConfigSummary(
+            database = "/home/eacac/mitogenome-batch-processor/v0.2.0/resources/blast/actinopterygii_mt_refs",
+            mode = "blastn",
+        ),
+    )
+    text = render_methods_text(sample)
+    assert "`actinopterygii_mt_refs`" in text
+    assert "/home/" not in text
+
+def test_methods_text_renders_seed_file_as_basename_not_full_path() -> None:
+    sample = _sample(
+        assembly_config = AssemblyConfigSummary(
+            organelle_type = "animal_mt", seeded = True,
+            seed_file = "/home/eacac/mitogenome-batch-processor/v0.2.0/resources/seeds/12S_rRNA.fasta",
+        ),
+    )
+    text = render_methods_text(sample)
+    assert "`12S_rRNA.fasta`" in text
+    assert "/home/" not in text

@@ -57,7 +57,7 @@ def test_successful_run_with_valid_tree(tmp_path: Path, monkeypatch: pytest.Monk
 
 def test_malformed_newick_tree_is_rejected(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     alignment = tmp_path / "aligned.fasta"
-    _write_alignment(alignment, ["a", "b"])
+    _write_alignment(alignment, ["a", "b", "c"])
     prefix = tmp_path / "tree" / "run"
 
     def _stub_run(self: IqtreeRunner) -> CommandResult:
@@ -92,7 +92,7 @@ def test_tip_count_mismatch_is_rejected(tmp_path: Path, monkeypatch: pytest.Monk
 
 def test_missing_treefile_is_recorded_not_a_crash(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     alignment = tmp_path / "aligned.fasta"
-    _write_alignment(alignment, ["a", "b"])
+    _write_alignment(alignment, ["a", "b", "c"])
     prefix = tmp_path / "tree" / "run"
 
     def _raise(self):
@@ -104,7 +104,7 @@ def test_missing_treefile_is_recorded_not_a_crash(tmp_path: Path, monkeypatch: p
 
 def test_tool_failure_is_recorded_not_fabricated(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     alignment = tmp_path / "aligned.fasta"
-    _write_alignment(alignment, ["a", "b"])
+    _write_alignment(alignment, ["a", "b", "c"])
     monkeypatch.setattr(IqtreeRunner, "run", lambda self: _fake_result(success = False, return_code = 1))
     monkeypatch.setattr(sys, "argv", _argv(tmp_path, alignment, tmp_path / "tree" / "run", tmp_path / "tree.nwk"))
 
@@ -115,3 +115,22 @@ def test_tool_failure_is_recorded_not_fabricated(tmp_path: Path, monkeypatch: py
 def test_missing_alignment_is_recorded_not_a_crash(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(sys, "argv", _argv(tmp_path, tmp_path / "does_not_exist.fasta", tmp_path / "tree" / "run", tmp_path / "tree.nwk"))
     assert run_iqtree.main() == 1
+
+def test_too_few_sequences_is_skipped_with_a_readable_reason_not_invoked(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Regression: IQ-TREE's own real minimum is 3 sequences; running
+    it with fewer used to surface as a cryptic "iqtree exited 2" in
+    the report. The tool must not even be invoked in this case."""
+    alignment = tmp_path / "aligned.fasta"
+    _write_alignment(alignment, ["a", "b"])
+
+    def _fail_if_called(self):
+        raise AssertionError("IqtreeRunner.run() must not be called when too few sequences are present.")
+    monkeypatch.setattr(IqtreeRunner, "run", _fail_if_called)
+    monkeypatch.setattr(sys, "argv", _argv(tmp_path, alignment, tmp_path / "tree" / "run", tmp_path / "tree.nwk"))
+
+    assert run_iqtree.main() == 0
+    result = json.loads((tmp_path / "out" / "iqtree_result.json").read_text())
+    assert result["success"] is False
+    assert result["tip_count"] == 2
+    assert "at least 3 assemblies are required" in result["reason"]
+    assert "but only 2 passed validation" in result["reason"]

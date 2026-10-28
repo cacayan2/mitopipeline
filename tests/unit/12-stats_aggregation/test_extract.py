@@ -135,6 +135,30 @@ def test_extract_blast_statistics_ignores_a_failed_circular_coverage_correction(
 
     assert stats.top_query_coverage_percent == pytest.approx(53.0)
 
+def test_extract_blast_statistics_resolves_scientific_name_from_reference_fasta_when_na(tmp_path: Path) -> None:
+    """Regression: the local Actinopterygii reference database's own
+    sscinames column can come back empty/"N/A" -- real, confirmed gap.
+    When a reference FASTA is supplied, the real header description
+    resolves the name instead of leaving it as a literal "N/A"."""
+    top_hits_tsv = tmp_path / "top_hits.tsv"
+    write_top_blast_hits([_real_blast_hit(sscinames = "N/A")], top_hits_tsv, sample_id = "sample1")
+    reference_fasta = _write_fasta(tmp_path / "reference.fasta", [
+        ("NC_002333.2 Danio rerio mitochondrion, complete genome", "ACGT"),
+    ])
+
+    stats = extract_blast_statistics("sample1", top_hits_tsv, reference_fasta = reference_fasta)
+
+    assert stats.top_scientific_name == "Danio rerio"
+
+def test_extract_blast_statistics_keeps_na_when_reference_fasta_has_no_match(tmp_path: Path) -> None:
+    top_hits_tsv = tmp_path / "top_hits.tsv"
+    write_top_blast_hits([_real_blast_hit(sscinames = "N/A")], top_hits_tsv, sample_id = "sample1")
+    reference_fasta = _write_fasta(tmp_path / "reference.fasta", [("NC_999999.1 Unrelated species", "ACGT")])
+
+    stats = extract_blast_statistics("sample1", top_hits_tsv, reference_fasta = reference_fasta)
+
+    assert stats.top_scientific_name == "N/A"
+
 # --- Annotation statistics (#355) ---
 
 def test_extract_annotation_statistics_counts_core_genes(tmp_path: Path) -> None:
@@ -149,6 +173,15 @@ def test_extract_annotation_statistics_counts_core_genes(tmp_path: Path) -> None
     assert stats.gene_count == 15
     assert stats.core_gene_count == 12
     assert stats.missing_core_genes == ("nad4l",)
+
+def test_extract_annotation_statistics_carries_trna_and_rrna_counts(tmp_path: Path) -> None:
+    result_json = _write_json(tmp_path / "annotation.json", {
+        "sample_id": "sample1", "success": True, "feature_count": 13,
+        "gene_names": ["cox1", "cox2"], "trna_count": 22, "rrna_count": 2,
+    })
+    stats = extract_annotation_statistics("sample1", result_json)
+    assert stats.trna_count == 22
+    assert stats.rrna_count == 2
 
 def test_extract_annotation_statistics_none_when_run_failed(tmp_path: Path) -> None:
     result_json = _write_json(tmp_path / "annotation.json", {"sample_id": "sample1", "success": False})

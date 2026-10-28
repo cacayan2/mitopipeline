@@ -35,7 +35,8 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 def _write_result(output_dir: Path, sample_id: str, success: bool, feature_count: int | None,
-                   gene_names: list[str] | None, gff_path: Path | None, reason: str) -> None:
+                   gene_names: list[str] | None, gff_path: Path | None, reason: str,
+                   trna_count: int | None = None, rrna_count: int | None = None) -> None:
     """
     Records this sample's annotation outcome for downstream statistics
     and reporting to read, without re-parsing the GFF or re-running
@@ -45,10 +46,12 @@ def _write_result(output_dir: Path, sample_id: str, success: bool, feature_count
         output_dir (Path): Where to write the result record.
         sample_id (str): The sample id.
         success (bool): Whether MITOS2 itself completed successfully.
-        feature_count (int | None): How many gene features were parsed, or None if the run failed outright.
-        gene_names (list[str] | None): The parsed gene names, or None if the run failed outright.
+        feature_count (int | None): How many protein-coding gene features were parsed (GFF type "gene"), or None if the run failed outright.
+        gene_names (list[str] | None): The parsed protein-coding gene names, or None if the run failed outright.
         gff_path (Path | None): The real result.gff path, or None if the run failed outright.
         reason (str): A short, human-readable explanation.
+        trna_count (int | None): How many tRNA features were parsed (GFF type "tRNA"), or None if the run failed outright.
+        rrna_count (int | None): How many rRNA features were parsed (GFF type "rRNA"), or None if the run failed outright.
 
     Returns:
         None
@@ -63,6 +66,8 @@ def _write_result(output_dir: Path, sample_id: str, success: bool, feature_count
             "gene_names": gene_names,
             "gff_path": str(gff_path) if gff_path else None,
             "reason": reason,
+            "trna_count": trna_count,
+            "rrna_count": rrna_count,
         }, handle, indent = 4)
 
 def main() -> int:
@@ -121,6 +126,8 @@ def main() -> int:
 
     try:
         features = parse_mitos_gff(runner.result_gff, logger = logger)
+        trna_features = parse_mitos_gff(runner.result_gff, logger = logger, feature_type = "tRNA")
+        rrna_features = parse_mitos_gff(runner.result_gff, logger = logger, feature_type = "rRNA")
     except ValueError as e:
         logger.error(f"{context} MITOS2 ran successfully but its GFF output could not be parsed: {e}")
         _write_result(output_dir, args.sample_id, success = False, feature_count = None,
@@ -128,9 +135,13 @@ def main() -> int:
         return 1
 
     gene_names = [feature.gene_id for feature in features]
-    logger.info(f"{context} MITOS2 complete after {result.runtime_seconds:.1f}s: {len(features)} gene feature(s) found.")
+    logger.info(
+        f"{context} MITOS2 complete after {result.runtime_seconds:.1f}s: {len(features)} protein-coding "
+        f"gene(s), {len(trna_features)} tRNA(s), {len(rrna_features)} rRNA(s) found."
+    )
     _write_result(output_dir, args.sample_id, success = True, feature_count = len(features),
-                 gene_names = gene_names, gff_path = runner.result_gff, reason = "completed successfully")
+                 gene_names = gene_names, gff_path = runner.result_gff, reason = "completed successfully",
+                 trna_count = len(trna_features), rrna_count = len(rrna_features))
     return 0
 
 if __name__ == "__main__":

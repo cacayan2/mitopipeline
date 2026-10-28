@@ -91,8 +91,22 @@ def export_markdown_to_pdf(markdown_path: str | Path, pdf_path: str | Path | Non
         # ```{=typst} fence (the title page/callout box markup in
         # typst_style.py) would otherwise render as a literal code
         # block instead of being passed through to the PDF engine.
-        "--from", "gfm+raw_attribute", "--to", "pdf", "--pdf-engine", pdf_engine,
+        # smart converts "--" into a real en dash -- confirmed
+        # directly that gfm alone leaves a literal double hyphen in
+        # the compiled PDF's own text layer (visually resembling a
+        # dash via font kerning, but not one), even though gfm itself
+        # already protects intraword underscores from being read as
+        # emphasis without needing this extension.
+        "--from", "gfm+raw_attribute+smart", "--to", "pdf", "--pdf-engine", pdf_engine,
         "--resource-path", str(markdown_path.parent),
+        # Typst compiles through an intermediate file in its own temp
+        # directory (pandoc's "toPdfViaTempFile"), so its default
+        # sandbox root (the temp file's own directory) rejects any
+        # absolute figure path outside it ("would escape the project
+        # root", confirmed via a real compile). Widening the root to
+        # the filesystem root lets Typst resolve real absolute image
+        # paths anywhere on disk.
+        "--pdf-engine-opt=--root=/",
         "--output", str(temporary_pdf_path),
     ]
 

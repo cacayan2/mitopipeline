@@ -13,6 +13,10 @@ dependencies = [
     "pytest",
     "pyyaml",
     "snakemake",
+    # Reads back a real compiled report PDF's own text layer in
+    # tests/unit/13-report_pdf/test_pdf_export.py's escaping
+    # round-trip regression test -- never used at pipeline runtime.
+    "pymupdf",
 ]
 
 [tool.pytest.ini_options]

@@ -73,6 +73,19 @@ def main() -> int:
         _write_result(args.output_dir, success = False, tip_count = None, newick_path = None, reason = f"could not read alignment: {e}")
         return 1
 
+    # IQ-TREE's own real minimum is 3 sequences -- confirmed directly
+    # against its installed error message. Checking this before
+    # invoking the tool turns a cryptic "iqtree exited 2" (the exact
+    # real exit code observed when this check is skipped) into a
+    # readable, specific reason the report can show directly, with
+    # the raw tool-level detail staying in the log where it belongs.
+    MINIMUM_TAXA = 3
+    if expected_tip_count < MINIMUM_TAXA:
+        reason = f"Skipped: at least {MINIMUM_TAXA} assemblies are required to build a tree, but only {expected_tip_count} passed validation."
+        logger.info(reason)
+        _write_result(args.output_dir, success = False, tip_count = expected_tip_count, newick_path = None, reason = reason)
+        return 0
+
     runner = IqtreeRunner(
         working_dir = args.working_dir, alignment_fasta = args.alignment, output_prefix = args.output_prefix,
         sample_id = args.run_id, sequence_type = args.sequence_type, model = args.model,

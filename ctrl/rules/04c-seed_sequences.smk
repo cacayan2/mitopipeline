@@ -46,7 +46,7 @@ rule mitofish_database_setup:
     shell:
         """
         VERSION_ARGS=""
-        if [ -n {params.version:q} ]; then
+        if [ -n "{params.version}" ]; then
             VERSION_ARGS="--version {params.version:q}"
         fi
         {PYTHON_BIN:q} {params.exec_script:q} \

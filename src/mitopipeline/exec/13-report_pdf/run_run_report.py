@@ -77,7 +77,7 @@ def main() -> int:
         for sample_id in args.sample_id
     ]
     phylogeny = collect_phylogeny_summary(args.iqtree_result_json, model = args.phylogeny_model, tree_figure_png = args.tree_figure_png)
-    generated_at = datetime.now(timezone.utc).isoformat(timespec = "seconds")
+    generated_at = datetime.now(timezone.utc).strftime("%d %b %Y, %H:%M UTC")
     run_data = collect_run_report_data(args.job_id, generated_at, samples, phylogeny = phylogeny)
 
     markdown_path = args.output_dir / f"{args.job_id}.run_report.md"

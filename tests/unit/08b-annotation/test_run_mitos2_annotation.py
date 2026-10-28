@@ -80,6 +80,37 @@ def test_successful_annotation_records_feature_count_and_genes(tmp_path: Path, m
     assert result["success"] is True
     assert result["feature_count"] == 2
     assert result["gene_names"] == ["cox2", "nad1"]
+    assert result["trna_count"] == 0
+    assert result["rrna_count"] == 0
+
+def test_successful_annotation_records_trna_and_rrna_counts_separately(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Regression: feature_count only ever counted GFF type "gene"
+    (protein-coding), silently mislabeled as "Total gene features" in
+    the report -- tRNA/rRNA rows need their own real counts."""
+    sample_id = "SAMPLE_03"
+    output_dir = tmp_path / "annotation" / sample_id
+    config_json = _write_config(tmp_path, sample_id, output_dir)
+
+    def _stub_run(self: Mitos2Runner) -> CommandResult:
+        self.result_gff.parent.mkdir(parents = True, exist_ok = True)
+        self.result_gff.write_text(
+            "##gff-version 3\n"
+            "test\tmitos\tgene\t1\t600\t.\t+\t.\tID=gene_cox2;Name=cox2\n"
+            "test\tmitfi\ttRNA\t650\t700\t.\t+\t.\tID=trnF;Name=trnF\n"
+            "test\tmitfi\ttRNA\t710\t760\t.\t+\t.\tID=trnV;Name=trnV\n"
+            "test\tmitfi\trRNA\t800\t1700\t.\t+\t.\tID=rrnS;Name=rrnS\n"
+        )
+        self.result_fas.write_text(">cox2\nACGT\n")
+        return _fake_result()
+
+    monkeypatch.setattr(Mitos2Runner, "run", _stub_run)
+    monkeypatch.setattr(sys, "argv", _argv(tmp_path, sample_id, config_json))
+
+    assert run_mitos2_annotation.main() == 0
+    result = json.loads((output_dir / f"{sample_id}.mitos2_annotation_result.json").read_text())
+    assert result["feature_count"] == 1
+    assert result["trna_count"] == 2
+    assert result["rrna_count"] == 1
 
 def test_zero_features_is_recorded_not_a_crash(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     sample_id = "SAMPLE_02"

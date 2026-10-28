@@ -120,15 +120,28 @@ def collect_archival_summary(sample_id: str, sra_metadata_tsv: str | Path | None
     biosample_row = _read_tsv_row(Path(biosample_metadata_tsv) if biosample_metadata_tsv else None, "sample_name", sample_id)
     genbank_record = _read_json(Path(genbank_record_json) if genbank_record_json else None)
 
+    # missing_files and missing_metadata are each already de-duplicated
+    # within themselves (genbank_metadata.py), but the two lists can
+    # legitimately share a field NAME for two different real reasons
+    # (e.g. "assembly_fasta" missing as a FILE and "assembly_fasta"
+    # missing as a required METADATA field) -- de-duplicating the
+    # UNION here is what keeps the report's own displayed list from
+    # showing the same name twice, without touching either source
+    # list's own real, independently-correct meaning.
+    genbank_missing_parts: dict[str, None] = {}
+    for raw in ((genbank_record or {}).get("missing_files", ""), (genbank_record or {}).get("missing_metadata", "")):
+        for field in raw.split(";"):
+            field = field.strip()
+            if field:
+                genbank_missing_parts.setdefault(field, None)
+
     return ArchivalSummary(
         sra_review_status = sra_row.get("review_status") if sra_row else None,
         sra_missing_fields = sra_row.get("missing_fields", "") if sra_row else "",
         biosample_review_status = biosample_row.get("review_status") if biosample_row else None,
         biosample_missing_fields = biosample_row.get("missing_fields", "") if biosample_row else "",
         genbank_review_status = genbank_record.get("review_status") if genbank_record else None,
-        genbank_missing = ";".join(f for f in [
-            (genbank_record or {}).get("missing_files", ""), (genbank_record or {}).get("missing_metadata", ""),
-        ] if f),
+        genbank_missing = ";".join(genbank_missing_parts),
     )
 
 def collect_sample_report_data(sample_id: str, runtime_manifest_path: str | Path,

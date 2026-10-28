@@ -10,10 +10,13 @@ boilerplate text standing in for what actually ran.
 
 # Imports
 from mitopipeline.utils.reporting.models import SampleReportData
-from mitopipeline.utils.reporting.typst_style import render_callout_box_close, render_callout_box_open
 
 def _assembly_sentence(report_data: SampleReportData) -> str:
     """Describes the real GetOrganelle invocation and whether rescue was needed."""
+    # Deferred import avoids a circular import: markdown_report.py
+    # itself imports render_methods_text from this module.
+    from mitopipeline.utils.reporting.markdown_report import basename_code
+
     config = report_data.assembly_config
     assembly = report_data.assembly
 
@@ -21,7 +24,7 @@ def _assembly_sentence(report_data: SampleReportData) -> str:
         return "Mitochondrial genome assembly was attempted with GetOrganelle, though its resolved configuration was not recorded for this run."
 
     seed_clause = (
-        f"seeded with a reference locus (`{config.seed_file}`)" if config.seeded
+        f"seeded with a reference locus ({basename_code(config.seed_file)})" if config.seeded
         else "run unseeded, against GetOrganelle's own default reference database"
     )
     sentence = (
@@ -42,18 +45,36 @@ def _assembly_sentence(report_data: SampleReportData) -> str:
 
 def _identification_sentence(report_data: SampleReportData) -> str:
     """Describes the real BLAST invocation and its outcome."""
+    from mitopipeline.utils.reporting.markdown_report import basename_code
+
     config = report_data.blast_config
     blast = report_data.blast
 
+    # Distinguishing "never configured" (the stage itself is off)
+    # from "skipped because this sample had no assembly to identify"
+    # -- both read as config is None, since blast_config.smk never
+    # even calls the exec script without a selected FASTA, but only
+    # the first is genuinely "not configured." assembly_config being
+    # present confirms GetOrganelle's own stage did run for this
+    # sample (it resolves unconditionally, success or not).
     if config is None:
+        if report_data.assembly_config is not None and report_data.assembly is None:
+            return "Taxonomic identification via BLAST was skipped: this sample had no selected assembly to identify."
         return "Taxonomic identification via BLAST was not configured for this run."
 
-    sentence = f"Taxonomic identification was performed with BLAST (`{config.mode}` against `{config.database}`)."
+    sentence = f"Taxonomic identification was performed with BLAST (`{config.mode}` against {basename_code(config.database)})."
     if blast is not None:
-        sentence += (
-            f" The top match was `{blast.top_scientific_name or blast.top_accession}` "
-            f"at {blast.top_identity_percent:.2f}% identity and {blast.top_query_coverage_percent:.2f}% query coverage."
-        )
+        name = blast.top_scientific_name
+        if name and name.strip().upper() != "N/A":
+            sentence += (
+                f" The top match was `{name}` "
+                f"at {blast.top_identity_percent:.2f}% identity and {blast.top_query_coverage_percent:.2f}% query coverage."
+            )
+        else:
+            sentence += (
+                f" The top match was `{blast.top_accession}` (taxon unresolved) "
+                f"at {blast.top_identity_percent:.2f}% identity and {blast.top_query_coverage_percent:.2f}% query coverage."
+            )
     return sentence
 
 def _annotation_sentence(report_data: SampleReportData) -> str:
@@ -62,6 +83,8 @@ def _annotation_sentence(report_data: SampleReportData) -> str:
     annotation = report_data.annotation
 
     if config is None:
+        if report_data.assembly_config is not None and report_data.assembly is None:
+            return "Gene annotation via MITOS2 was skipped: this sample had no selected assembly to annotate."
         return "Gene annotation via MITOS2 was not configured for this run."
 
     sentence = (
@@ -69,19 +92,22 @@ def _annotation_sentence(report_data: SampleReportData) -> str:
         f"(genetic code {config.genetic_code}, reference set `{config.refseqver}`)."
     )
     if annotation is not None:
-        sentence += (
-            f" {annotation.gene_count} gene feature(s) were identified, including "
-            f"{annotation.core_gene_count} of the 13 core animal mitochondrial protein-coding genes."
-        )
+        sentence += f" {annotation.core_gene_count} of the 13 core animal mitochondrial protein-coding genes were identified"
+        if annotation.trna_count is not None and annotation.rrna_count is not None:
+            sentence += f", along with {annotation.trna_count} tRNA(s) and {annotation.rrna_count} rRNA(s)."
+        else:
+            sentence += "."
     return sentence
 
 def _validation_sentence(report_data: SampleReportData) -> str:
     """Describes the real biological validation outcome."""
+    from mitopipeline.utils.reporting.markdown_report import humanize_enum
+
     if report_data.overall_verdict is None:
         return ""
     return (
-        f" Biological validation against assembly, annotation, and identification evidence reached an "
-        f"overall verdict of {report_data.overall_verdict}."
+        f" Biological validation against assembly, annotation, and identification evidence reached a "
+        f"plausibility verdict of {humanize_enum(report_data.overall_verdict)}."
     )
 
 def render_methods_text(report_data: SampleReportData) -> str:
@@ -101,24 +127,3 @@ def render_methods_text(report_data: SampleReportData) -> str:
     ]
     text = " ".join(sentences) + _validation_sentence(report_data)
     return text
-
-def render_methods_section(report_data: SampleReportData) -> list[str]:
-    """
-    Renders the "Methods" section as Markdown lines, with the
-    paragraph itself set inside a gray callout box matching the
-    project's own real document styling.
-
-    Args:
-        report_data (SampleReportData): The assembled report data.
-
-    Returns:
-        list[str]: The Markdown lines for this section.
-    """
-    return [
-        "## Methods", "",
-        render_callout_box_open("Methods"),
-        render_methods_text(report_data),
-        "",
-        render_callout_box_close(),
-        "",
-    ]

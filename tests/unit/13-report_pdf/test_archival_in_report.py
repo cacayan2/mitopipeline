@@ -42,6 +42,22 @@ def test_collect_archival_summary_from_real_tables(tmp_path: Path) -> None:
 def test_collect_archival_summary_none_when_nothing_supplied() -> None:
     assert collect_archival_summary("sample1") is None
 
+def test_collect_archival_summary_dedupes_genbank_missing_across_files_and_metadata(tmp_path: Path) -> None:
+    """Regression: missing_files and missing_metadata can legitimately
+    share a field NAME for two different real reasons (a missing FILE
+    vs a missing METADATA field with the same name) -- the report's
+    own displayed list must not show that name twice."""
+    genbank_json = tmp_path / "sample1.genbank_record.json"
+    genbank_json.write_text(
+        '{"review_status": "MANUAL_REVIEW_REQUIRED", '
+        '"missing_files": "annotation_gff;assembly_fasta", '
+        '"missing_metadata": "assembly_fasta"}'
+    )
+    summary = collect_archival_summary("sample1", genbank_record_json = genbank_json)
+    parts = summary.genbank_missing.split(";")
+    assert parts.count("assembly_fasta") == 1
+    assert set(parts) == {"annotation_gff", "assembly_fasta"}
+
 def test_archival_summary_ready_when_all_sources_ready() -> None:
     summary = ArchivalSummary(sra_review_status = "READY", biosample_review_status = "READY", genbank_review_status = "READY")
     assert summary.ready_for_review is True
@@ -55,13 +71,13 @@ def test_render_archival_section_shows_real_status() -> None:
                                biosample_missing_fields = "collection_date", genbank_review_status = "READY")
     lines = render_archival_section(_empty_sample(archival = archival))
     text = "\n".join(lines)
-    assert "READY" in text and "MANUAL_REVIEW_REQUIRED" in text
-    assert "collection_date" in text
-    assert "Ready for submission review: No" in text
+    assert "Ready" in text and "Manual review required" in text
+    assert "Collection date" in text
+    assert "**Ready for submission review:**" in text
 
 def test_sample_report_includes_archival_section(tmp_path: Path) -> None:
     text = render_sample_report(_empty_sample(), tmp_path / "sample1.report.md")
-    assert "## NCBI archival readiness" in text
+    assert "## NCBI Archival Readiness" in text
 
 def test_run_report_archival_summary_shows_real_counts(tmp_path: Path) -> None:
     ready = ArchivalSummary(sra_review_status = "READY", biosample_review_status = "READY", genbank_review_status = "READY")

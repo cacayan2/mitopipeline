@@ -159,7 +159,7 @@ stage_options:
       database_source: ncbi
       database_dir: resources/blast
       database: resources/blast/actinopterygii_mt_refs
-      reference_fasta: resources/blast/reference_mitogenomes.fasta
+      reference_fasta: resources/blast/actinopterygii_mitogenomes.fasta
       database_title: MitoPipeline mitochondrial reference database
       # Downloaded and built automatically (ctrl/rules/05a-blast_config.smk's
       # blast_database_setup rule) -- never a manual setup step.
@@ -211,10 +211,18 @@ stage_options:
       # false to draw it exactly as IQ-TREE wrote it instead.
       render_dpi: 600
       midpoint_root_figure: true
-  report_export: 
+  report_export:
       pandoc:
         bin: pandoc
-        engine: typst
+        # Absolute path, not the bare "typst" on $PATH: this host's
+        # system typst is a snap package whose confined filesystem
+        # view broke after an external kernel-level cache-drop event
+        # (confirmed via dmesg, unrelated to this project) -- it can
+        # no longer find even its own input file. A real, standalone
+        # typst binary (same version, no snap confinement) is
+        # installed at this path as the real fix; point back to the
+        # bare "typst" once the system package is healthy again.
+        engine: /home/eacac/.local/bin/typst
   archival:
     sra:
       library_strategy: WGS

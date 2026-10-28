@@ -58,7 +58,7 @@ def test_full_report_renders_markdown_and_pdf(tmp_path: Path, monkeypatch: pytes
     assert result["success"] is True
     markdown_path = Path(result["markdown_path"])
     assert markdown_path.is_file()
-    assert "circular" in markdown_path.read_text()
+    assert "Circular" in markdown_path.read_text()
     if result["pdf_path"] is not None:
         assert Path(result["pdf_path"]).is_file()
 
@@ -74,7 +74,7 @@ def test_missing_optional_inputs_still_renders_markdown(tmp_path: Path, monkeypa
     result = json.loads((output_dir / f"{sample_id}.report_result.json").read_text())
     assert result["success"] is True
     markdown_text = Path(result["markdown_path"]).read_text()
-    assert "_Assembly statistics were not available._" in markdown_text
+    assert "No assembly: contig selection did not find a usable circular or fragmented sequence" in markdown_text
 
 def test_pdf_export_skip_does_not_fail_the_step(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     sample_id = "sample1"

@@ -217,3 +217,57 @@ def read_top_blast_hits(path: str | Path, sample_id: str | None = None, logger: 
     return hits
 
     if logger is not None: logger.info(f"Wrote {len(hits)} BLAST hits to {output_path}.")
+
+def resolve_scientific_name_from_fasta(reference_fasta: str | Path, accession: str,
+                                        logger: Logger | None = None) -> str | None:
+    """
+    Resolves a BLAST hit's scientific name from the real local
+    reference FASTA's own header description, for when BLAST's own
+    sscinames column came back empty/unresolved (a known gap in this
+    project's local Actinopterygii reference database) -- every real
+    header in that FASTA already carries its organism name (e.g.
+    "NC_002333.2 Danio rerio mitochondrion, complete genome"), so
+    nothing is fabricated here, only read back from data already on
+    disk.
+
+    Args:
+        reference_fasta (str | Path): The local reference FASTA BLAST was run against.
+        accession (str): The hit's subject accession, as BLAST reports it (e.g. "ref|NC_002333.2|" or a bare accession).
+        logger (Logger | None): Logger to use. Defaults to None.
+
+    Returns:
+        str | None: The resolved scientific name, or None if it can't be resolved (missing file, accession not found, or no recognizable organism name in the header).
+    """
+    clean_accession = accession.strip()
+    if clean_accession.startswith("ref|"):
+        clean_accession = clean_accession[len("ref|"):]
+    clean_accession = clean_accession.strip("|").strip()
+    if not clean_accession:
+        return None
+
+    reference_fasta = Path(reference_fasta)
+    if not reference_fasta.is_file():
+        return None
+
+    from Bio import SeqIO
+    try:
+        index = SeqIO.index(str(reference_fasta), "fasta")
+    except (OSError, ValueError) as e:
+        if logger is not None: logger.warning(f"Could not index reference FASTA {reference_fasta} for scientific-name resolution: {e}")
+        return None
+
+    try:
+        record = index.get(clean_accession)
+        if record is None:
+            return None
+        description = record.description[len(record.id):].strip()
+        lowered = description.lower()
+        for marker in ("mitochondrion", "mitochondrial"):
+            marker_index = lowered.find(marker)
+            if marker_index != -1:
+                name = description[:marker_index].strip().rstrip(",")
+                return name or None
+        words = description.split()
+        return " ".join(words[:2]) if len(words) >= 2 else None
+    finally:
+        index.close()
