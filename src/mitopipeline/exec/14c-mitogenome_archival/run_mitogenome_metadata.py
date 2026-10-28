@@ -62,7 +62,7 @@ def main() -> int:
 
     record = build_genbank_submission(
         args.sample_id, organism, args.contig_selection_json, args.annotation_result_json,
-        args.output_dir, defaults = defaults, mode = args.mode, logger = logger,
+        args.output_dir, manifest_row = metadata, defaults = defaults, mode = args.mode, logger = logger,
     )
 
     record_path = args.output_dir / f"{args.sample_id}.genbank_record.json"

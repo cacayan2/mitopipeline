@@ -82,12 +82,30 @@ class Mitos2Runner(BaseTool):
         self.circular = circular
         self.tool_options = dict(tool_options or {})
 
-        self.result_gff = self.output_dir / "result.gff"
-        self.result_fas = self.output_dir / "result.fas"
-        self.result_faa = self.output_dir / "result.faa"
-        self.result_bed = self.output_dir / "result.bed"
-        self.result_table = self.output_dir / "result.seq"
-        self.result_geneorder = self.output_dir / "result.geneorder"
+        self.result_gff = self.output_dir / f"{sample_id}.annotation.gff"
+        self.result_fas = self.output_dir / f"{sample_id}.annotation.fas"
+        self.result_faa = self.output_dir / f"{sample_id}.annotation.faa"
+        self.result_bed = self.output_dir / f"{sample_id}.annotation.bed"
+        self.result_table = self.output_dir / f"{sample_id}.annotation.seq"
+        self.result_geneorder = self.output_dir / f"{sample_id}.annotation.geneorder"
+
+        # runmitos.py's own real, fixed output filenames (the tool
+        # offers no output-prefix option) -- renamed to the sample-
+        # prefixed paths above in postprocess_outputs(), matching the
+        # same convention already applied to every other stage's own
+        # real output (fastp, FastQC, GetOrganelle).
+        self._native_names = {
+            "result.gff": self.result_gff,
+            "result.fas": self.result_fas,
+            "result.faa": self.result_faa,
+            "result.bed": self.result_bed,
+            "result.seq": self.result_table,
+            "result.geneorder": self.result_geneorder,
+            "result.mitos": self.output_dir / f"{sample_id}.annotation.mitos",
+            "result.png": self.output_dir / f"{sample_id}.annotation.png",
+            "ignored.mitos": self.output_dir / f"{sample_id}.annotation.ignored.mitos",
+            "stst.dat": self.output_dir / f"{sample_id}.annotation.stst.dat",
+        }
 
     def validate_inputs(self) -> None:
         """
@@ -158,6 +176,28 @@ class Mitos2Runner(BaseTool):
             command.append("--linear")
 
         return self._add_options(command)
+
+    def postprocess_outputs(self) -> None:
+        """
+        Renames MITOS2's own real, fixed-name output files (e.g.
+        "result.gff") into sample-prefixed equivalents (e.g.
+        "{sample_id}.annotation.gff") -- runmitos.py offers no
+        output-prefix option of its own, so this is done directly
+        against whatever it actually wrote. A native file that was
+        never produced (e.g. no --zip, no --best) is skipped, not an
+        error; already-renamed files (a resumed/idempotent re-run) are
+        left as-is.
+
+        Args:
+            None
+
+        Returns:
+            None
+        """
+        for native_name, destination in self._native_names.items():
+            source = self.output_dir / native_name
+            if source.is_file():
+                source.rename(destination)
 
     def validate_outputs(self) -> None:
         """

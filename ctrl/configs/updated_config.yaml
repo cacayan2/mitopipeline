@@ -27,9 +27,14 @@ stages:
   reporting: true
   pdf_export: true
   sra_archival: true
-  biosample_archival: false
-  mitogenome_archival: false
-  archival_validation: false
+  biosample_archival: true
+  mitogenome_archival: true
+  archival_validation: true
+  # table2asn_validation is left off: its own rule file
+  # (ctrl/rules/16-table2asn_validation.smk) is a deliberate
+  # placeholder with no real rules defined yet (not just
+  # unconfigured), and it needs a real NCBI-issued .sbt submission
+  # template this config has no legitimate value for.
   table2asn_validation: false
 
 stage_options:

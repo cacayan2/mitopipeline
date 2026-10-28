@@ -23,10 +23,41 @@ class AssemblyConfigSummary:
         organelle_type (str): The GetOrganelle "-F" organelle type used.
         seeded (bool): Whether a seed reference was available for this run.
         seed_file (str | None): The seed file used, or None when unseeded.
+        seed_gene (str | None): The mitochondrial locus the seed was selected for (e.g. "COXI"), from the real seed_selection.json, or None when unavailable.
+        seed_accession (str | None): The real source accession for the selected seed, or the fallback marker when GetOrganelle's own default database was used instead.
+        seed_source (str | None): Which reference source produced the seed ("mitofish" or "fallback_default_database"), or None when unavailable.
+        seed_fallback_reason (str | None): Why a MitoFish seed couldn't be used, when seeded is False and a real reason was recorded (never fabricated).
     """
     organelle_type: str
     seeded: bool
     seed_file: str | None
+    seed_gene: str | None = None
+    seed_accession: str | None = None
+    seed_source: str | None = None
+    seed_fallback_reason: str | None = None
+
+@dataclass(frozen = True, slots = True)
+class RescueAttemptSummary:
+    """
+    One real rescue attempt's own outcome for this sample -- read
+    from #07's own real rescue_mapping.json (whether the attempt even
+    ran) and, if it did, the reassembly's own real assembly_status.json
+    (what GetOrganelle actually produced). Recorded whether or not the
+    attempt was ultimately selected, so the methods section can report
+    every real attempt made, not only the one that succeeded.
+
+    Attributes:
+        attempt (int): The rescue attempt number (1-indexed).
+        attempted (bool): Whether this attempt actually ran a reassembly, or was skipped because its own trigger condition wasn't met.
+        reason (str): The real reason recorded for whether/why this attempt ran.
+        profile_name (str | None): The GetOrganelle profile name used for this attempt's reassembly, or None if it never ran.
+        status (str | None): The reassembly's own real outcome status (e.g. "circular", "fragmented", "missing"), or None if it never ran.
+    """
+    attempt: int
+    attempted: bool
+    reason: str
+    profile_name: str | None = None
+    status: str | None = None
 
 @dataclass(frozen = True, slots = True)
 class BlastConfigSummary:
@@ -70,6 +101,27 @@ class ArchivalSummary:
         return all(s == "READY" for s in statuses)
 
 @dataclass(frozen = True, slots = True)
+class ReadQCSummary:
+    """
+    One read-set's own real FastQC-derived QC summary -- raw, trimmed,
+    or recruited reads -- combining R1 and R2 into one display-ready
+    record read straight from FastQC's own real zip output, never
+    recomputed from the raw reads themselves.
+
+    Attributes:
+        total_sequences (int | None): R1 + R2 total sequence count.
+        percent_gc (float | None): The average of R1's and R2's own real %GC.
+        sequence_length (str | None): FastQC's own real sequence-length value (R1/R2 always match in practice).
+        overall_verdict (str): The worse of R1's and R2's own overall FastQC verdict (PASS/WARN/FAIL).
+        representative_image_png (Path | None): R1's own real per-base-quality chart, extracted from its FastQC zip, or None if unavailable.
+    """
+    total_sequences: int | None
+    percent_gc: float | None
+    sequence_length: str | None
+    overall_verdict: str
+    representative_image_png: Path | None = None
+
+@dataclass(frozen = True, slots = True)
 class SampleReportData:
     """
     Everything #358's per-sample report (and the live methods
@@ -90,6 +142,11 @@ class SampleReportData:
         annotation_config (AnnotationConfigSummary | None): The real MITOS2 settings used, or None.
         archival (ArchivalSummary | None): This sample's real NCBI archival preparation status, or None when the archival stages didn't run.
         phylogeny (PhylogenySummary | None): This sample's own real phylogenetic outcome (its assembled genome plus its own live-fetched BLAST references, restoring v0.1.0's per-sample design), or None when phylogeny didn't run for this sample.
+        raw_read_qc (ReadQCSummary | None): FastQC's own real QC summary for the raw sequencing reads, or None when unavailable.
+        trimmed_read_qc (ReadQCSummary | None): FastQC's own real QC summary for the trimmed reads, or None when unavailable.
+        recruited_read_qc (ReadQCSummary | None): FastQC's own real QC summary for the reads GetOrganelle recruited as mitochondrial-like before assembly, or None when unavailable.
+        aggregated_data_dir (Path | None): The run's own consolidated aggregated_data/ directory, or None when unavailable.
+        rescue_attempts (tuple[RescueAttemptSummary, ...]): Every real rescue attempt made for this sample, in attempt order -- empty when rescue was never configured or never triggered.
         rescued (bool): Whether the selected attempt came from a rescue retry (source_attempt > 0), not the primary assembly.
     """
     sample_id: str
@@ -106,6 +163,11 @@ class SampleReportData:
     annotation_config: AnnotationConfigSummary | None = None
     archival: ArchivalSummary | None = None
     phylogeny: "PhylogenySummary | None" = None
+    raw_read_qc: ReadQCSummary | None = None
+    trimmed_read_qc: ReadQCSummary | None = None
+    recruited_read_qc: ReadQCSummary | None = None
+    aggregated_data_dir: Path | None = None
+    rescue_attempts: tuple[RescueAttemptSummary, ...] = field(default_factory = tuple)
 
     @property
     def rescued(self) -> bool:

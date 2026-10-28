@@ -20,7 +20,12 @@ if stage_enabled("14c-mitogenome_archival"):
 rule mitogenome_archival:
     input:
         contig_selection_done = str(JOB_DIR / "06-contig_selection" / "{sample}" / "{sample}.contig_selection.done"),
-        annotation_done = str(JOB_DIR / "08b-annotation" / "{sample}" / "{sample}.annotation.done")
+        annotation_done = str(JOB_DIR / "08b-annotation" / "{sample}" / "{sample}.annotation.done"),
+        # A real dependency edge (not just a params path) so editing
+        # the manifest to add a missing archival field and re-running
+        # regenerates this record on its own -- without that edge,
+        # Snakemake has no way to know this rule's own output is stale.
+        runtime_manifest = str(RUNTIME_MANIFEST_PATH)
     output:
         done = str(JOB_DIR / "14c-mitogenome_archival" / "{sample}" / "{sample}.mitogenome_archival.done")
     params:

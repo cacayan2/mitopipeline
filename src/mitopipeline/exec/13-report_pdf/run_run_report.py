@@ -42,7 +42,7 @@ def parse_args() -> argparse.Namespace:
 def _sample_paths(job_dir: Path, sample_id: str) -> dict:
     """The same real, fixed stage-relative paths every other stage's own rule already uses."""
     return {
-        "statistics_json": job_dir / "12-stats_aggregation" / sample_id / f"{sample_id}.statistics.json",
+        "statistics_json": job_dir / "12a-stats_aggregation" / sample_id / f"{sample_id}.statistics.json",
         "biological_validation_json": job_dir / "06-contig_selection" / sample_id / f"{sample_id}.biological_validation.json",
         "visualization_result_json": job_dir / "09-visualization" / sample_id / f"{sample_id}.circular_map_result.json",
         "fastp_json": job_dir / "trimming" / sample_id / f"{sample_id}.fastp.json",

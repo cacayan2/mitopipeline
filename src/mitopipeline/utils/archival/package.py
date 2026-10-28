@@ -14,6 +14,7 @@ import csv
 import hashlib
 from logging import Logger
 from pathlib import Path
+from mitopipeline.utils.archival.field_hints import RERUN_NOTE, field_hint
 
 def _file_checksum(path: Path) -> str:
     """Computes a real MD5 checksum of a file's own contents, streamed to handle large FASTAs."""
@@ -98,6 +99,13 @@ def render_submission_checklist(validation_records: list[dict[str, str]], job_id
         if record["submission_blockers"]:
             lines.append("")
             lines.append(f"**Blockers:** {record['submission_blockers']}")
+        missing_fields = [f for f in record.get("missing_metadata", "").split(";") if f]
+        if missing_fields:
+            lines.append("")
+            lines.append(f"**How to complete:** {RERUN_NOTE}")
+            lines.append("")
+            for field in missing_fields:
+                lines.append(f"- `{field}`: {field_hint(field)}")
         lines.append("")
 
     return "\n".join(lines)

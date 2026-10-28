@@ -13,12 +13,15 @@ import csv
 import json
 from logging import Logger
 from pathlib import Path
+from mitopipeline.utils.fastqc.parse import extract_fastqc_image, parse_fastqc_zip
 from mitopipeline.utils.reporting.models import (
     AnnotationConfigSummary,
     ArchivalSummary,
     AssemblyConfigSummary,
     BlastConfigSummary,
     PhylogenySummary,
+    ReadQCSummary,
+    RescueAttemptSummary,
     RunReportData,
     SampleReportData,
 )
@@ -59,10 +62,45 @@ def read_sample_metadata(runtime_manifest_path: str | Path, sample_id: str,
     if logger is not None: logger.warning(f"Sample {sample_id} not found in runtime manifest {runtime_manifest_path}.")
     return {}
 
+def _parse_fastp_settings(command: str) -> dict:
+    """
+    Extracts the real trimming thresholds fastp was actually invoked
+    with, from its own command string (fastp's JSON report records
+    its own exact real command line, confirmed directly) -- never a
+    second, independently-maintained copy of the configured values
+    that could drift from what actually ran.
+
+    Args:
+        command (str): fastp's own real command string.
+
+    Returns:
+        dict: The settings found (missing/unparseable flags are simply absent, never guessed).
+    """
+    tokens = command.split()
+    flag_map = {
+        "--qualified_quality_phred": "qualified_quality_phred",
+        "--length_required": "length_required",
+        "--cut_window_size": "cut_window_size",
+        "--cut_mean_quality": "cut_mean_quality",
+        "--n_base_limit": "n_base_limit",
+        "--unqualified_percent_limit": "unqualified_percent_limit",
+    }
+    settings: dict = {}
+    for index, token in enumerate(tokens):
+        key = flag_map.get(token)
+        if key is not None and index + 1 < len(tokens):
+            try:
+                settings[key] = int(tokens[index + 1])
+            except ValueError:
+                pass
+    settings["adapter_detection"] = "--detect_adapter_for_pe" in tokens
+    return settings
+
 def parse_fastp_stats(fastp_json_path: str | Path | None) -> dict | None:
     """
     Parses fastp's own real JSON report into the summary fields the
-    report displays.
+    report displays, including the real trimming settings it was
+    actually invoked with.
 
     Args:
         fastp_json_path (str | Path | None): fastp's own JSON report path.
@@ -83,6 +121,7 @@ def parse_fastp_stats(fastp_json_path: str | Path | None) -> dict | None:
             "q20_rate_out": after["q20_rate"], "q30_rate_out": after["q30_rate"],
             "gc_content_out": after["gc_content"],
             "low_quality_reads": int(filtering.get("low_quality_reads", 0)),
+            **_parse_fastp_settings(str(data.get("command", ""))),
         }
     except (KeyError, TypeError, ValueError):
         return None
@@ -150,6 +189,7 @@ def collect_sample_report_data(sample_id: str, runtime_manifest_path: str | Path
                                 visualization_result_json: str | Path | None = None,
                                 fastp_json: str | Path | None = None,
                                 getorganelle_config_json: str | Path | None = None,
+                                seed_selection_json: str | Path | None = None,
                                 blast_config_json: str | Path | None = None,
                                 mitos2_config_json: str | Path | None = None,
                                 sra_metadata_tsv: str | Path | None = None,
@@ -158,6 +198,15 @@ def collect_sample_report_data(sample_id: str, runtime_manifest_path: str | Path
                                 iqtree_result_json: str | Path | None = None,
                                 phylogeny_model: str | None = None,
                                 tree_figure_png: str | Path | None = None,
+                                raw_r1_fastqc_zip: str | Path | None = None,
+                                raw_r2_fastqc_zip: str | Path | None = None,
+                                trimmed_r1_fastqc_zip: str | Path | None = None,
+                                trimmed_r2_fastqc_zip: str | Path | None = None,
+                                recruited_r1_fastqc_zip: str | Path | None = None,
+                                recruited_r2_fastqc_zip: str | Path | None = None,
+                                read_qc_image_dir: str | Path | None = None,
+                                aggregated_data_dir: str | Path | None = None,
+                                rescue_dir: str | Path | None = None,
                                 logger: Logger | None = None) -> SampleReportData:
     """
     Assembles one sample's report data from its real result JSON.
@@ -170,6 +219,7 @@ def collect_sample_report_data(sample_id: str, runtime_manifest_path: str | Path
         visualization_result_json (str | Path | None): The result JSON written by run_circular_map.py.
         fastp_json (str | Path | None): fastp's own JSON report for this sample.
         getorganelle_config_json (str | Path | None): The resolved GetOrganelle config JSON.
+        seed_selection_json (str | Path | None): This sample's own real seed-selection result JSON, written by run_seed_selection.py.
         blast_config_json (str | Path | None): The resolved BLAST config JSON.
         mitos2_config_json (str | Path | None): The resolved MITOS2 config JSON.
         sra_metadata_tsv (str | Path | None): The SRA metadata table written by run_sra_metadata.py.
@@ -178,6 +228,15 @@ def collect_sample_report_data(sample_id: str, runtime_manifest_path: str | Path
         iqtree_result_json (str | Path | None): This sample's own result JSON written by run_iqtree.py.
         phylogeny_model (str | None): The substitution model IQ-TREE was run with, when known.
         tree_figure_png (str | Path | None): This sample's own rendered tree figure PNG, if run_tree_figure.py produced one.
+        raw_r1_fastqc_zip (str | Path | None): This sample's own raw R1 FastQC zip, written by run_fastqc_raw.py.
+        raw_r2_fastqc_zip (str | Path | None): This sample's own raw R2 FastQC zip, written by run_fastqc_raw.py.
+        trimmed_r1_fastqc_zip (str | Path | None): This sample's own trimmed R1 FastQC zip, written by run_fastqc_trimmed.py.
+        trimmed_r2_fastqc_zip (str | Path | None): This sample's own trimmed R2 FastQC zip, written by run_fastqc_trimmed.py.
+        recruited_r1_fastqc_zip (str | Path | None): The selected attempt's own recruited-reads R1 FastQC zip, written by GetOrganelleRunner.
+        recruited_r2_fastqc_zip (str | Path | None): The selected attempt's own recruited-reads R2 FastQC zip, written by GetOrganelleRunner.
+        read_qc_image_dir (str | Path | None): Where to extract each read-set's own representative FastQC chart. None skips image extraction.
+        aggregated_data_dir (str | Path | None): The run's own consolidated aggregated_data/ directory, written by run_data_aggregation.py, or None if unavailable.
+        rescue_dir (str | Path | None): This sample's own real 07-assembly_rescue/{sample} directory, or None if unavailable.
         logger (Logger | None): Logger to use. Defaults to None.
 
     Returns:
@@ -212,9 +271,18 @@ def collect_sample_report_data(sample_id: str, runtime_manifest_path: str | Path
     assembly_config = None
     go_config = _read_json(Path(getorganelle_config_json) if getorganelle_config_json else None)
     if go_config is not None:
+        # seed_selection.json carries the real seed gene/accession/
+        # source -- getorganelle_config.json only ever records the
+        # seed FILE path, never which real reference it came from.
+        seed_selection = _read_json(Path(seed_selection_json) if seed_selection_json else None)
+        seeded = bool(go_config.get("seeded", False))
         assembly_config = AssemblyConfigSummary(
             organelle_type = go_config.get("organelle_type", "animal_mt"),
-            seeded = bool(go_config.get("seeded", False)), seed_file = go_config.get("seed_file"),
+            seeded = seeded, seed_file = go_config.get("seed_file"),
+            seed_gene = seed_selection.get("gene") if seed_selection else None,
+            seed_accession = seed_selection.get("accession") if (seed_selection and seeded) else None,
+            seed_source = seed_selection.get("source") if seed_selection else None,
+            seed_fallback_reason = seed_selection.get("fallback_reason") if (seed_selection and not seeded) else None,
         )
 
     blast_config = None
@@ -232,6 +300,20 @@ def collect_sample_report_data(sample_id: str, runtime_manifest_path: str | Path
     archival = collect_archival_summary(sample_id, sra_metadata_tsv, biosample_metadata_tsv, genbank_record_json)
     phylogeny = collect_phylogeny_summary(iqtree_result_json, model = phylogeny_model, tree_figure_png = tree_figure_png)
 
+    image_dir = Path(read_qc_image_dir) if read_qc_image_dir else None
+    raw_read_qc = collect_read_qc(
+        raw_r1_fastqc_zip, raw_r2_fastqc_zip,
+        image_output_path = (image_dir / "raw_per_base_quality.png") if image_dir else None, logger = logger,
+    )
+    trimmed_read_qc = collect_read_qc(
+        trimmed_r1_fastqc_zip, trimmed_r2_fastqc_zip,
+        image_output_path = (image_dir / "trimmed_per_base_quality.png") if image_dir else None, logger = logger,
+    )
+    recruited_read_qc = collect_read_qc(
+        recruited_r1_fastqc_zip, recruited_r2_fastqc_zip,
+        image_output_path = (image_dir / "recruited_per_base_quality.png") if image_dir else None, logger = logger,
+    )
+
     return SampleReportData(
         sample_id = sample_id, metadata = metadata, fastp_stats = parse_fastp_stats(fastp_json),
         assembly = assembly, blast = blast, annotation = annotation,
@@ -239,6 +321,9 @@ def collect_sample_report_data(sample_id: str, runtime_manifest_path: str | Path
         visualization_png = visualization_png, assembly_config = assembly_config,
         blast_config = blast_config, annotation_config = annotation_config, archival = archival,
         phylogeny = phylogeny,
+        raw_read_qc = raw_read_qc, trimmed_read_qc = trimmed_read_qc, recruited_read_qc = recruited_read_qc,
+        aggregated_data_dir = Path(aggregated_data_dir) if aggregated_data_dir else None,
+        rescue_attempts = collect_rescue_summary(rescue_dir),
     )
 
 def collect_phylogeny_summary(iqtree_result_json: str | Path | None, model: str | None = None,
@@ -264,6 +349,99 @@ def collect_phylogeny_summary(iqtree_result_json: str | Path | None, model: str 
         reason = result.get("reason", ""), model = model,
         tree_figure_png = figure_path if (figure_path and figure_path.is_file()) else None,
     )
+
+def collect_read_qc(r1_zip: str | Path | None, r2_zip: str | Path | None,
+                     image_output_path: str | Path | None = None,
+                     logger: Logger | None = None) -> ReadQCSummary | None:
+    """
+    Combines one read-set's R1/R2 FastQC zips into one display-ready
+    summary, extracting R1's own real per-base-quality chart as a
+    standalone PNG for the report to embed as a figure.
+
+    Args:
+        r1_zip (str | Path | None): This read-set's own R1 FastQC zip.
+        r2_zip (str | Path | None): This read-set's own R2 FastQC zip.
+        image_output_path (str | Path | None): Where to write R1's extracted per-base-quality chart. None skips image extraction.
+        logger (Logger | None): Logger to use. Defaults to None.
+
+    Returns:
+        ReadQCSummary | None: The combined summary, or None when neither zip could be read.
+    """
+    r1_summary = parse_fastqc_zip(r1_zip, logger = logger) if r1_zip else None
+    r2_summary = parse_fastqc_zip(r2_zip, logger = logger) if r2_zip else None
+    if r1_summary is None and r2_summary is None:
+        return None
+
+    counts = [s.total_sequences for s in (r1_summary, r2_summary) if s and s.total_sequences is not None]
+    total_sequences = sum(counts) if counts else None
+
+    gc_values = [s.percent_gc for s in (r1_summary, r2_summary) if s and s.percent_gc is not None]
+    percent_gc = (sum(gc_values) / len(gc_values)) if gc_values else None
+
+    sequence_length = next((s.sequence_length for s in (r1_summary, r2_summary) if s and s.sequence_length), None)
+
+    verdict_rank = {"PASS": 0, "WARN": 1, "FAIL": 2}
+    verdicts = [s.overall_verdict for s in (r1_summary, r2_summary) if s is not None]
+    overall_verdict = max(verdicts, key = lambda v: verdict_rank.get(v, 0)) if verdicts else "PASS"
+
+    image_path = None
+    if r1_zip is not None and image_output_path is not None:
+        image_path = extract_fastqc_image(r1_zip, "per_base_quality.png", image_output_path, logger = logger)
+
+    return ReadQCSummary(
+        total_sequences = total_sequences, percent_gc = percent_gc, sequence_length = sequence_length,
+        overall_verdict = overall_verdict, representative_image_png = image_path,
+    )
+
+def _attempt_number(attempt_dir_name: str) -> int:
+    """Extracts the integer attempt number from a real "attempt_N" directory name."""
+    try:
+        return int(attempt_dir_name.rsplit("_", 1)[-1])
+    except ValueError:
+        return 0
+
+def collect_rescue_summary(rescue_dir: str | Path | None) -> tuple[RescueAttemptSummary, ...]:
+    """
+    Reads every real rescue attempt made for one sample, in attempt
+    order -- whether each attempt actually ran (its own real
+    rescue_mapping.json) and, if it did, what GetOrganelle actually
+    produced (the reassembly's own real assembly_status.json).
+    Covers every attempt the pipeline made, not only one that was
+    ultimately selected, so the methods section can report rescue
+    honestly even when every attempt failed or was skipped.
+
+    Args:
+        rescue_dir (str | Path | None): This sample's own real 07-assembly_rescue/{sample} directory.
+
+    Returns:
+        tuple[RescueAttemptSummary, ...]: Every real attempt found, in attempt order. Empty when rescue_dir is unavailable or has no attempts recorded.
+    """
+    if rescue_dir is None:
+        return ()
+    rescue_dir = Path(rescue_dir)
+    if not rescue_dir.is_dir():
+        return ()
+
+    attempts: list[RescueAttemptSummary] = []
+    for attempt_dir in sorted(rescue_dir.glob("attempt_*"), key = lambda p: _attempt_number(p.name)):
+        mapping_json_path = next(attempt_dir.glob("*.rescue_mapping.json"), None)
+        mapping = _read_json(mapping_json_path) if mapping_json_path else None
+        if mapping is None:
+            continue
+
+        reassembly_status = None
+        sample_id = mapping.get("sample_id")
+        if sample_id:
+            reassembly_status = _read_json(attempt_dir / "reassembly" / f"{sample_id}.assembly_status.json")
+
+        attempts.append(RescueAttemptSummary(
+            attempt = _attempt_number(attempt_dir.name),
+            attempted = bool(mapping.get("attempted", False)),
+            reason = mapping.get("reason", ""),
+            profile_name = reassembly_status.get("profile_name") if reassembly_status else None,
+            status = reassembly_status.get("status") if reassembly_status else None,
+        ))
+    return tuple(attempts)
 
 def collect_run_report_data(job_id: str, generated_at: str, samples: list[SampleReportData]) -> RunReportData:
     """

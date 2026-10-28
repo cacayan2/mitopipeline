@@ -72,6 +72,15 @@ def validate_archival_readiness(sample_id: str, organism: str, raw_fastq_ready: 
     biosample_ready = biosample_row is not None and biosample_row.get("review_status") == READY
     genbank_ready = genbank_row is not None and genbank_row.get("review_status") == READY
 
+    # A missing GenBank assembly/annotation file and its corresponding
+    # required-metadata field (both sourced from genbank_metadata.py's
+    # own record) name the same real gap -- dedupe so it doesn't read
+    # twice (e.g. "assembly_fasta;assembly_fasta").
+    genbank_missing_fields = dict.fromkeys(
+        f for part in (genbank_row.get("missing_files", ""), genbank_row.get("missing_metadata", "")) if genbank_row and part
+        for f in part.split(";")
+    )
+
     blockers: list[str] = []
     if not raw_fastq_ready: blockers.append("raw FASTQ files missing")
     if not assembly_ready: blockers.append("assembly not available")
@@ -81,9 +90,7 @@ def validate_archival_readiness(sample_id: str, organism: str, raw_fastq_ready: 
     if biosample_row is None: blockers.append("no BioSample record")
     elif not biosample_ready: blockers.append(f"BioSample fields need review: {biosample_row.get('missing_fields', '')}")
     if genbank_row is None: blockers.append("no GenBank record")
-    elif not genbank_ready:
-        parts = [genbank_row.get("missing_files", ""), genbank_row.get("missing_metadata", "")]
-        blockers.append(f"GenBank needs review: {';'.join(p for p in parts if p)}")
+    elif not genbank_ready: blockers.append(f"GenBank needs review: {';'.join(genbank_missing_fields)}")
 
     ready_for_review = not blockers
 
@@ -97,10 +104,14 @@ def validate_archival_readiness(sample_id: str, organism: str, raw_fastq_ready: 
             "" if raw_fastq_ready else "raw_fastq", "" if assembly_ready else "assembly",
             "" if annotation_ready else "annotation",
         ] if f),
-        "missing_metadata": ";".join(f for f in [
-            sra_row.get("missing_fields", "") if sra_row else "",
-            biosample_row.get("missing_fields", "") if biosample_row else "",
-        ] if f),
+        # Every real missing SRA/BioSample/GenBank field name for this
+        # sample, in one place -- the single source render_submission_checklist()
+        # reads to attach a field_hints.py hint per name.
+        "missing_metadata": ";".join(dict.fromkeys(f for f in [
+            *((sra_row.get("missing_fields", "") if sra_row else "").split(";")),
+            *((biosample_row.get("missing_fields", "") if biosample_row else "").split(";")),
+            *genbank_missing_fields,
+        ] if f)),
         "submission_blockers": "; ".join(blockers),
     }
     return {column: record[column] for column in VALIDATION_COLUMNS}

@@ -70,6 +70,43 @@ def test_missing_configured_defaults_are_tracked_in_metadata(tmp_path: Path) -> 
 
     assert "organism" in record["missing_metadata"]
 
+def test_manifest_row_wins_over_configured_defaults(tmp_path: Path) -> None:
+    fasta = tmp_path / "data.fasta"
+    fasta.write_text(">s\nACGT\n")
+    selection_json = _write_json(tmp_path / "selection.json", {
+        "selected": True, "status": "circular", "fasta_path": str(fasta), "length_bp": 4,
+    })
+    output_dir = tmp_path / "genbank"
+
+    record = build_genbank_submission(
+        "sample1", "Danio rerio", selection_json, tmp_path / "missing.json", output_dir,
+        manifest_row = {"molecule_type": "RNA", "assembly_method": "Custom assembler v2"},
+        defaults = DEFAULTS,
+    )
+
+    assert record["molecule_type"] == "RNA"
+    assert record["assembly_method"] == "Custom assembler v2"
+    # genome_location/annotation_method weren't in the manifest row, so the configured default still applies.
+    assert record["genome_location"] == "mitochondrion"
+    assert record["annotation_method"] == "MITOS2"
+
+def test_manifest_row_never_overrides_topology(tmp_path: Path) -> None:
+    """topology must always reflect this sample's own real assembly
+    status -- never a manifest/config value a human could set to
+    contradict the real evidence."""
+    fasta = tmp_path / "data.fasta"
+    fasta.write_text(">s\nACGT\n")
+    selection_json = _write_json(tmp_path / "selection.json", {
+        "selected": True, "status": "fragmented", "fasta_path": str(fasta), "length_bp": 4,
+    })
+    output_dir = tmp_path / "genbank"
+
+    record = build_genbank_submission(
+        "sample1", "Danio rerio", selection_json, tmp_path / "missing.json", output_dir,
+        manifest_row = {"topology": "circular"}, defaults = DEFAULTS,
+    )
+    assert record["topology"] == "linear"
+
 def test_invalid_mode_raises(tmp_path: Path) -> None:
     selection_json = _write_json(tmp_path / "selection.json", {"selected": False})
     with pytest.raises(ValueError):

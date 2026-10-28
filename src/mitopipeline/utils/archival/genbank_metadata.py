@@ -32,6 +32,7 @@ def _read_json(path: Path) -> dict | None:
 
 def build_genbank_submission(sample_id: str, organism: str, contig_selection_json: str | Path,
                               annotation_result_json: str | Path, output_directory: str | Path,
+                              manifest_row: dict[str, str] | None = None,
                               defaults: dict[str, object] | None = None, mode: str = "copy",
                               logger: Logger | None = None) -> dict[str, str]:
     """
@@ -45,7 +46,8 @@ def build_genbank_submission(sample_id: str, organism: str, contig_selection_jso
         contig_selection_json (str | Path): The selection JSON written by run_contig_selection.py.
         annotation_result_json (str | Path): The result JSON written by run_mitos2_annotation.py.
         output_directory (str | Path): Where to create this sample's own submission folder.
-        defaults (dict[str, object] | None): Configured GenBank defaults (stage_options.archival.biosample -- molecule_type, genome_location, topology, assembly_method, annotation_method).
+        manifest_row (dict[str, str] | None): This sample's own runtime manifest row -- molecule_type/genome_location/assembly_method/annotation_method, when present, win over defaults (topology is never read from here; it always reflects this sample's own real assembly status).
+        defaults (dict[str, object] | None): Configured GenBank defaults (stage_options.archival.biosample -- molecule_type, genome_location, topology, assembly_method, annotation_method), used only when the manifest itself has no value.
         mode (str): "copy" or "symlink" for collecting the real files. Defaults to "copy".
         logger (Logger | None): Logger to use. Defaults to None.
 
@@ -58,6 +60,7 @@ def build_genbank_submission(sample_id: str, organism: str, contig_selection_jso
     if mode not in ("copy", "symlink"):
         raise ValueError(f"mode must be 'copy' or 'symlink', got {mode!r}.")
 
+    manifest_row = manifest_row or {}
     defaults = defaults or {}
     output_directory = Path(output_directory)
     folder_name = _safe_folder_name(f"{sample_id}_{organism}" if organism else sample_id)
@@ -110,11 +113,13 @@ def build_genbank_submission(sample_id: str, organism: str, contig_selection_jso
         "assembly_fasta": assembly_fasta,
         "annotation_gff": annotation_gff,
         "sequence_length_bp": sequence_length_bp,
-        "molecule_type": str(defaults.get("molecule_type", "DNA")),
-        "genome_location": str(defaults.get("genome_location", "mitochondrion")),
+        "molecule_type": manifest_row.get("molecule_type", "").strip() or str(defaults.get("molecule_type", "DNA")),
+        "genome_location": manifest_row.get("genome_location", "").strip() or str(defaults.get("genome_location", "mitochondrion")),
+        # Never manifest/config-overridable -- always the real selected
+        # attempt's own assembly status, never a human-asserted claim.
         "topology": topology,
-        "assembly_method": str(defaults.get("assembly_method", "GetOrganelle")),
-        "annotation_method": str(defaults.get("annotation_method", "MITOS2")),
+        "assembly_method": manifest_row.get("assembly_method", "").strip() or str(defaults.get("assembly_method", "GetOrganelle")),
+        "annotation_method": manifest_row.get("annotation_method", "").strip() or str(defaults.get("annotation_method", "MITOS2")),
     }
 
     missing_metadata = [field for field in GENBANK_REQUIRED_FIELDS if not record.get(field)]

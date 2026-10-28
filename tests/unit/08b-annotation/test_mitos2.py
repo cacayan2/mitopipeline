@@ -137,3 +137,47 @@ def test_validate_outputs_passes_with_real_content(tmp_path: Path) -> None:
     runner.result_gff.write_text("##gff-version 3\nSAMPLE_01\tMITOS\tgene\t1\t10\t.\t+\t.\tID=nad1\n")
     runner.result_fas.write_text(">nad1\nACGT\n")
     runner.validate_outputs()   # does not raise
+
+def test_result_paths_carry_the_sample_id_prefix(tmp_path: Path) -> None:
+    runner = _make_runner(tmp_path)
+    assert runner.result_gff.name == "SAMPLE_01.annotation.gff"
+    assert runner.result_fas.name == "SAMPLE_01.annotation.fas"
+    assert runner.result_faa.name == "SAMPLE_01.annotation.faa"
+    assert runner.result_bed.name == "SAMPLE_01.annotation.bed"
+    assert runner.result_table.name == "SAMPLE_01.annotation.seq"
+    assert runner.result_geneorder.name == "SAMPLE_01.annotation.geneorder"
+
+def test_postprocess_outputs_renames_every_real_native_file(tmp_path: Path) -> None:
+    """runmitos.py itself offers no output-prefix option -- it always
+    writes fixed names like "result.gff" -- so postprocess_outputs()
+    must rename whatever it actually produced into the sample-prefixed
+    paths every other consumer reads via the runner's own attributes."""
+    runner = _make_runner(tmp_path)
+    runner.output_dir.mkdir(parents = True)
+    for native_name in ("result.gff", "result.fas", "result.faa", "result.bed",
+                        "result.seq", "result.geneorder", "ignored.mitos", "stst.dat"):
+        (runner.output_dir / native_name).write_text("x")
+
+    runner.postprocess_outputs()
+
+    assert runner.result_gff.is_file()
+    assert runner.result_fas.is_file()
+    assert not (runner.output_dir / "result.gff").exists()
+    assert not (runner.output_dir / "ignored.mitos").exists()
+    assert (runner.output_dir / "SAMPLE_01.annotation.ignored.mitos").is_file()
+    assert (runner.output_dir / "SAMPLE_01.annotation.stst.dat").is_file()
+
+def test_postprocess_outputs_skips_native_files_that_were_never_produced(tmp_path: Path) -> None:
+    """Optional MITOS2 outputs (e.g. result.png, only with certain
+    options) must not crash postprocess_outputs() when absent."""
+    runner = _make_runner(tmp_path)
+    runner.output_dir.mkdir(parents = True)
+    runner.postprocess_outputs()   # does not raise with nothing present
+    assert not runner.result_gff.exists()
+
+def test_postprocess_outputs_is_idempotent_on_an_already_renamed_directory(tmp_path: Path) -> None:
+    runner = _make_runner(tmp_path)
+    runner.output_dir.mkdir(parents = True)
+    runner.result_gff.write_text("already renamed")
+    runner.postprocess_outputs()   # does not raise re-running against renamed files
+    assert runner.result_gff.read_text() == "already renamed"

@@ -54,6 +54,42 @@ def test_readiness_record_lists_real_blockers_when_not_ready() -> None:
     assert "no SRA record" in record["submission_blockers"]
     assert "collection_date" in record["submission_blockers"]
 
+def test_readiness_record_dedupes_genbank_blocker_across_files_and_metadata() -> None:
+    """Regression: GenBank's own missing_files and missing_metadata can
+    legitimately share a field NAME for two different real reasons (a
+    missing FILE vs a missing required METADATA field that reads empty
+    precisely because that file was never copied) -- the combined
+    submission_blockers string must not show that name twice."""
+    record = validate_archival_readiness(
+        sample_id = "sample1", organism = "Danio rerio",
+        raw_fastq_ready = True, assembly_ready = False, annotation_ready = True,
+        sra_row = {"review_status": "READY", "missing_fields": ""},
+        biosample_row = {"review_status": "READY", "missing_fields": ""},
+        genbank_row = {"review_status": "MANUAL_REVIEW_REQUIRED",
+                       "missing_files": "annotation_gff;assembly_fasta",
+                       "missing_metadata": "assembly_fasta"},
+    )
+    blocker = next(b for b in record["submission_blockers"].split("; ") if b.startswith("GenBank"))
+    fields = blocker.removeprefix("GenBank needs review: ").split(";")
+    assert fields.count("assembly_fasta") == 1
+    assert set(fields) == {"annotation_gff", "assembly_fasta"}
+
+def test_readiness_record_missing_metadata_covers_sra_biosample_and_genbank() -> None:
+    """missing_metadata is the single source render_submission_checklist()
+    reads to attach a hint per field -- it must carry every real
+    missing field name across all three record types, not just SRA/
+    BioSample (GenBank's own fields used to be visible only inside the
+    free-text submission_blockers string)."""
+    record = validate_archival_readiness(
+        sample_id = "sample1", organism = "Danio rerio",
+        raw_fastq_ready = True, assembly_ready = True, annotation_ready = True,
+        sra_row = {"review_status": "MANUAL_REVIEW_REQUIRED", "missing_fields": "instrument_model"},
+        biosample_row = {"review_status": "MANUAL_REVIEW_REQUIRED", "missing_fields": "collection_date;geo_loc_name"},
+        genbank_row = {"review_status": "MANUAL_REVIEW_REQUIRED", "missing_files": "", "missing_metadata": "topology"},
+    )
+    fields = set(record["missing_metadata"].split(";"))
+    assert fields == {"instrument_model", "collection_date", "geo_loc_name", "topology"}
+
 def test_build_archival_validation_from_real_tsv_files(tmp_path: Path) -> None:
     r1, r2 = tmp_path / "r1.fq", tmp_path / "r2.fq"
     r1.write_text("read1")

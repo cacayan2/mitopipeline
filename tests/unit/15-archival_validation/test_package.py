@@ -63,6 +63,33 @@ def test_submission_checklist_reflects_real_readiness() -> None:
     assert "raw FASTQ files missing; no SRA record" in checklist
     assert "never submits to NCBI directly" in checklist
 
+def test_submission_checklist_attaches_a_hint_per_missing_field() -> None:
+    records = [
+        {"sample_id": "sample1", "organism": "Danio rerio", "raw_fastq_ready": "True",
+         "assembly_ready": "True", "annotation_ready": "True", "sra_ready": "False",
+         "biosample_ready": "False", "genbank_ready": "True", "ready_for_review": "False",
+         "missing_metadata": "instrument_model;collection_date",
+         "submission_blockers": "SRA fields need review: instrument_model; BioSample fields need review: collection_date"},
+    ]
+
+    checklist = render_submission_checklist(records, "job1")
+
+    assert "**How to complete:**" in checklist
+    assert "`instrument_model`: " in checklist
+    assert "Illumina NovaSeq 6000" in checklist
+    assert "`collection_date`: " in checklist
+    assert "YYYY-MM-DD" in checklist
+
+def test_submission_checklist_omits_how_to_complete_when_nothing_missing() -> None:
+    records = [
+        {"sample_id": "sample1", "organism": "Danio rerio", "raw_fastq_ready": "True",
+         "assembly_ready": "True", "annotation_ready": "True", "sra_ready": "True",
+         "biosample_ready": "True", "genbank_ready": "True", "ready_for_review": "True",
+         "missing_metadata": "", "submission_blockers": ""},
+    ]
+    checklist = render_submission_checklist(records, "job1")
+    assert "**How to complete:**" not in checklist
+
 def test_write_submission_checklist_writes_a_real_file(tmp_path: Path) -> None:
     records = [{"sample_id": "sample1", "organism": "Danio rerio", "raw_fastq_ready": "True",
                "assembly_ready": "True", "annotation_ready": "True", "sra_ready": "True",

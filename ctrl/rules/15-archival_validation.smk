@@ -12,7 +12,9 @@ rule archival_validation:
     input:
         sra_done = str(JOB_DIR / "14a-sra_archival" / "sra_archival.done"),
         biosample_done = str(JOB_DIR / "14b-biosample_archival" / "biosample_archival.done"),
-        mitogenome_done = sample_target("14c-mitogenome_archival", "{sample}.mitogenome_archival.done")
+        mitogenome_done = sample_target("14c-mitogenome_archival", "{sample}.mitogenome_archival.done"),
+        # Real dependency edge, same reasoning as 14c-mitogenome_archival.smk.
+        runtime_manifest = str(RUNTIME_MANIFEST_PATH)
     output:
         done = str(JOB_DIR / "15-archival_validation" / "archival_validation.done")
     params:

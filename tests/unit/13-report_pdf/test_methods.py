@@ -75,6 +75,26 @@ def test_methods_text_describes_annotation() -> None:
     assert "22 tRNA(s)" in text
     assert "2 rRNA(s)" in text
 
+def test_methods_text_annotation_includes_mitofish_biomarker_alongside_genetic_code() -> None:
+    sample = _sample(
+        assembly_config = AssemblyConfigSummary(organelle_type = "animal_mt", seeded = True, seed_file = None,
+                                                seed_gene = "COXI", seed_accession = "AC024175", seed_source = "mitofish"),
+        annotation_config = AnnotationConfigSummary(genetic_code = 2, refseqver = "refseq89m"),
+        annotation = AnnotationStatistics(sample_id = "s", gene_count = 13, core_gene_count = 13,
+                                          trna_count = 22, rrna_count = 2),
+    )
+    text = render_methods_text(sample)
+    assert "genetic code 2, MitoFish biomarker COXI" in text
+
+def test_methods_text_annotation_omits_biomarker_when_unseeded() -> None:
+    sample = _sample(
+        assembly_config = AssemblyConfigSummary(organelle_type = "animal_mt", seeded = False, seed_file = None),
+        annotation_config = AnnotationConfigSummary(genetic_code = 2, refseqver = "refseq89m"),
+    )
+    text = render_methods_text(sample)
+    assert "genetic code 2, reference set" in text
+    assert "MitoFish biomarker" not in text
+
 def test_methods_text_includes_validation_verdict_when_available() -> None:
     sample = _sample(overall_verdict = "PASS")
     text = render_methods_text(sample)
@@ -89,8 +109,16 @@ def test_methods_text_distinguishes_skipped_from_not_configured() -> None:
     """Regression: a sample whose assembly genuinely ran (config was
     resolved) but produced nothing selected must read "skipped", not
     the misleading "not configured" (which implies the stage itself
-    was turned off)."""
-    sample = _sample(assembly_config = AssemblyConfigSummary(organelle_type = "animal_mt", seeded = False, seed_file = None))
+    was turned off). fastp_stats is supplied so the trimming sentence
+    (a genuinely separate, assembly-independent stage) doesn't itself
+    say "not configured" and pollute this specific assertion."""
+    sample = _sample(
+        assembly_config = AssemblyConfigSummary(organelle_type = "animal_mt", seeded = False, seed_file = None),
+        fastp_stats = {
+            "reads_in": 1000, "reads_out": 900, "read_retention_rate": 0.9,
+            "q20_rate_out": 0.98, "q30_rate_out": 0.95, "gc_content_out": 0.45, "low_quality_reads": 50,
+        },
+    )
     text = render_methods_text(sample)
     assert "was skipped: this sample had no selected assembly" in text
     assert "was not configured for this run" not in text

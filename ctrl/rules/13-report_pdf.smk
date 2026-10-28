@@ -7,12 +7,44 @@ v0.1.0's per-sample design), then the run-level Markdown + PDF report
 (#360/#441/#443) aggregating every sample.
 """
 
+def _recruited_reads_fastqc_dir(selection_path: Path) -> str:
+    """
+    The selected attempt's own recruited-reads FastQC directory --
+    sibling of the same contig_selection.json fasta_path every other
+    rule in this file already derives its own selected-attempt path
+    from (see 12a-stats_aggregation.smk's identical real reasoning for
+    why this can't be a fixed path: the selected attempt may be the
+    primary run or any rescue reassembly).
+    """
+    import json
+    try:
+        selection = json.loads(Path(selection_path).read_text(encoding = "utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return ""
+    if not selection.get("selected") or not selection.get("fasta_path"):
+        return ""
+    return str(Path(selection["fasta_path"]).parent / "recruited_reads_fastqc")
+
 def _sample_report_inputs(wildcards):
     inputs = {
-        "stats_done": str(JOB_DIR / "12-stats_aggregation" / wildcards.sample / f"{wildcards.sample}.stats_aggregation.done"),
+        "stats_done": str(JOB_DIR / "12a-stats_aggregation" / wildcards.sample / f"{wildcards.sample}.stats_aggregation.done"),
         "validation_done": str(JOB_DIR / "06-contig_selection" / wildcards.sample / f"{wildcards.sample}.biological_validation.done"),
         "visualization_done": str(JOB_DIR / "09-visualization" / wildcards.sample / f"{wildcards.sample}.visualization.done"),
+        "selection": str(JOB_DIR / "06-contig_selection" / wildcards.sample / f"{wildcards.sample}.contig_selection.json"),
+        # A real dependency edge (not just a params path) so editing
+        # the manifest to add a missing archival field and re-running
+        # regenerates this sample's report on its own.
+        "runtime_manifest": str(RUNTIME_MANIFEST_PATH),
     }
+    if stage_enabled("12b-data_aggregation"):
+        inputs["data_aggregation_done"] = str(JOB_DIR / "aggregated_data" / "data_aggregation.done")
+    # Raw/trimmed FastQC are only real dependency edges when those
+    # stages are actually enabled -- same reasoning as phylogeny/
+    # archival below.
+    if stage_enabled("01-qc_raw"):
+        inputs["qc_raw_done"] = str(JOB_DIR / "qc" / "raw" / wildcards.sample / f"{wildcards.sample}.qc_raw.done")
+    if stage_enabled("03-qc_trimmed"):
+        inputs["qc_trimmed_done"] = str(JOB_DIR / "qc" / "trimmed" / wildcards.sample / f"{wildcards.sample}.qc_trimmed.done")
     # Phylogeny/archival dependencies are only real dependency edges
     # when those stages are actually enabled -- otherwise their own
     # .done markers are never produced by anything else in the DAG.
@@ -39,11 +71,12 @@ rule sample_report:
         done = str(JOB_DIR / "13-report_pdf" / "{sample}" / "{sample}.report_pdf.done")
     params:
         runtime_manifest = str(RUNTIME_MANIFEST_PATH),
-        statistics_json = str(JOB_DIR / "12-stats_aggregation" / "{sample}" / "{sample}.statistics.json"),
+        statistics_json = str(JOB_DIR / "12a-stats_aggregation" / "{sample}" / "{sample}.statistics.json"),
         biological_validation_json = str(JOB_DIR / "06-contig_selection" / "{sample}" / "{sample}.biological_validation.json"),
         visualization_result_json = str(JOB_DIR / "09-visualization" / "{sample}" / "{sample}.circular_map_result.json"),
         fastp_json = str(JOB_DIR / "trimming" / "{sample}" / "{sample}.fastp.json"),
         getorganelle_config_json = str(JOB_DIR / "04a-getorganelle_config" / "{sample}" / "{sample}.getorganelle_config.json"),
+        seed_selection_json = str(JOB_DIR / "04c-seed_sequences" / "{sample}" / "{sample}.seed_selection.json"),
         blast_config_json = str(JOB_DIR / "05a-blast_config" / "{sample}" / "{sample}.blast_config.json"),
         mitos2_config_json = str(JOB_DIR / "08a-mitos2_config" / "{sample}" / "{sample}.mitos2_config.json"),
         sra_metadata_tsv = str(JOB_DIR / "14a-sra_archival" / "sra_metadata.tsv"),
@@ -52,6 +85,13 @@ rule sample_report:
         iqtree_result_json = str(JOB_DIR / "11-phylogeny" / "{sample}" / "iqtree_result.json"),
         phylogeny_model = config["stage_options"]["phylogeny"]["iqtree"].get("model", "") if stage_enabled("11-phylogeny") else "",
         tree_figure_png = str(JOB_DIR / "11-phylogeny" / "{sample}" / "tree_figure.png"),
+        raw_r1_fastqc_zip = str(JOB_DIR / "qc" / "raw" / "{sample}" / "{sample}.R1_fastqc.zip"),
+        raw_r2_fastqc_zip = str(JOB_DIR / "qc" / "raw" / "{sample}" / "{sample}.R2_fastqc.zip"),
+        trimmed_r1_fastqc_zip = str(JOB_DIR / "qc" / "trimmed" / "{sample}" / "{sample}.R1_fastqc.zip"),
+        trimmed_r2_fastqc_zip = str(JOB_DIR / "qc" / "trimmed" / "{sample}" / "{sample}.R2_fastqc.zip"),
+        recruited_reads_fastqc_dir = lambda wc, input: _recruited_reads_fastqc_dir(input.selection),
+        aggregated_data_dir = str(JOB_DIR / "aggregated_data"),
+        rescue_dir = str(JOB_DIR / "07-assembly_rescue" / "{sample}"),
         pandoc_bin = config["stage_options"]["report_export"]["pandoc"]["bin"],
         pdf_engine = config["stage_options"]["report_export"]["pandoc"]["engine"],
         output_dir = str(JOB_DIR / "13-report_pdf" / "{sample}"),
@@ -66,6 +106,7 @@ rule sample_report:
         if [ -n "{params.phylogeny_model}" ]; then
             MODEL_ARGS="--phylogeny-model {params.phylogeny_model:q}"
         fi
+        RECRUITED_FASTQC_DIR="{params.recruited_reads_fastqc_dir}"
         {PYTHON_BIN:q} {params.exec_script:q} \
             --sample-id {wildcards.sample} \
             --runtime-manifest {params.runtime_manifest:q} \
@@ -74,6 +115,7 @@ rule sample_report:
             --visualization-result-json {params.visualization_result_json:q} \
             --fastp-json {params.fastp_json:q} \
             --getorganelle-config-json {params.getorganelle_config_json:q} \
+            --seed-selection-json {params.seed_selection_json:q} \
             --blast-config-json {params.blast_config_json:q} \
             --mitos2-config-json {params.mitos2_config_json:q} \
             --sra-metadata-tsv {params.sra_metadata_tsv:q} \
@@ -82,6 +124,14 @@ rule sample_report:
             --iqtree-result-json {params.iqtree_result_json:q} \
             $MODEL_ARGS \
             --tree-figure-png {params.tree_figure_png:q} \
+            --raw-r1-fastqc-zip {params.raw_r1_fastqc_zip:q} \
+            --raw-r2-fastqc-zip {params.raw_r2_fastqc_zip:q} \
+            --trimmed-r1-fastqc-zip {params.trimmed_r1_fastqc_zip:q} \
+            --trimmed-r2-fastqc-zip {params.trimmed_r2_fastqc_zip:q} \
+            --recruited-r1-fastqc-zip "$RECRUITED_FASTQC_DIR/recruited_R1_fastqc.zip" \
+            --recruited-r2-fastqc-zip "$RECRUITED_FASTQC_DIR/recruited_R2_fastqc.zip" \
+            --aggregated-data-dir {params.aggregated_data_dir:q} \
+            --rescue-dir {params.rescue_dir:q} \
             --pandoc-bin {params.pandoc_bin:q} \
             --pdf-engine {params.pdf_engine:q} \
             --output-dir {params.output_dir:q} \

@@ -12,6 +12,7 @@ import os
 import re
 from datetime import datetime, timezone
 from pathlib import Path
+from mitopipeline.utils.archival.field_hints import RERUN_NOTE, field_hint
 from mitopipeline.utils.reporting.methods import render_methods_text
 from mitopipeline.utils.reporting.models import SampleReportData
 from mitopipeline.utils.reporting.typst_style import (
@@ -264,6 +265,53 @@ def render_metadata_section(report_data: SampleReportData) -> list[str]:
             rows.append([humanize_key(key), wrap_cell_text(value, width = 48)])
     return ["## Sample Metadata", "", markdown_table(["Field", "Value"], rows), ""]
 
+def render_aggregated_data_section(report_data: SampleReportData, report_path: Path) -> list[str]:
+    """
+    Links directly to this sample's own consolidated files in the
+    run's aggregated_data/ tree (assembly FASTA, annotation GFF/map,
+    phylogeny Newick/figure, real NCBI archival materials) -- quick
+    access without hunting across a dozen per-stage directories for
+    the files that actually matter, and a single place to review
+    before the real manual NCBI submission.
+    """
+    lines = ["## Aggregated Data", ""]
+    aggregated_dir = report_data.aggregated_data_dir
+    if aggregated_dir is None:
+        return [*lines, "_Aggregated data was not available for this run._", ""]
+
+    sample_id = report_data.sample_id
+    links = [
+        link for link in [
+            file_link("Assembly FASTA", aggregated_dir / "assemblies" / f"{sample_id}.assembly.fasta", report_path),
+            file_link("Annotation GFF", aggregated_dir / "annotations" / "gff" / f"{sample_id}.annotation.gff", report_path),
+            file_link("Annotated genome map", aggregated_dir / "annotations" / f"{sample_id}.annotated_map.png", report_path),
+            file_link("Phylogenetic tree (Newick)", aggregated_dir / "phylogenies" / f"{sample_id}.treefile.nwk", report_path),
+            file_link("Tree figure", aggregated_dir / "phylogenies" / f"{sample_id}.tree_figure.png", report_path),
+        ]
+        if link is not None
+    ]
+    if links:
+        lines += ["Quick links to this sample's own consolidated output files:", "", "- " + "\n- ".join(links), ""]
+    else:
+        lines += ["_No aggregated files were available for this sample._", ""]
+
+    archival_links = [
+        link for link in [
+            file_link("SRA metadata table", aggregated_dir / "archival" / "sra_metadata.tsv", report_path),
+            file_link("BioSample metadata table", aggregated_dir / "archival" / "biosample_metadata.tsv", report_path),
+            file_link("GenBank assembly FASTA", aggregated_dir / "archival" / "genbank" / sample_id / f"{sample_id}.fasta", report_path),
+            file_link("GenBank annotation GFF", aggregated_dir / "archival" / "genbank" / sample_id / f"{sample_id}.gff", report_path),
+            file_link("Submission readiness report", aggregated_dir / "archival" / "archival_validation.tsv", report_path),
+            file_link("Submission checklist", aggregated_dir / "archival" / "submission_checklist.md", report_path),
+            file_link("MD5 checksums", aggregated_dir / "archival" / "md5_checksums.tsv", report_path),
+        ]
+        if link is not None
+    ]
+    if archival_links:
+        lines += ["NCBI archival materials, staged for manual review before submission:", "", "- " + "\n- ".join(archival_links), ""]
+
+    return lines
+
 def render_fastp_section(report_data: SampleReportData) -> list[str]:
     """Renders read trimming/filtering statistics."""
     stats = report_data.fastp_stats
@@ -280,6 +328,46 @@ def render_fastp_section(report_data: SampleReportData) -> list[str]:
         ["Low-quality reads removed", format_integer(stats["low_quality_reads"])],
     ]
     return [*lines, markdown_table(["Metric", "Value"], rows), ""]
+
+def render_read_qc_section(report_data: SampleReportData) -> list[str]:
+    """
+    Renders FastQC's own real quality control for every read-set this
+    sample's assembly actually depended on: the raw sequencing reads,
+    the trimmed reads, and -- the reads GetOrganelle itself recruited
+    as mitochondrial-like and actually handed to SPAdes for assembly,
+    not just the raw input the rest of the pipeline started from.
+    """
+    lines = ["## Read Quality Control", ""]
+    readsets = [
+        ("Raw Reads", report_data.raw_read_qc),
+        ("Trimmed Reads", report_data.trimmed_read_qc),
+        ("Recruited Reads (used for assembly)", report_data.recruited_read_qc),
+    ]
+    if all(qc is None for _, qc in readsets):
+        return [*lines, "_FastQC quality control was not available._", ""]
+
+    for label, qc in readsets:
+        lines += [f"### {label}", ""]
+        if qc is None:
+            lines += ["_Not available._", ""]
+            continue
+
+        rows = []
+        if qc.total_sequences is not None:
+            rows.append(["Total sequences", format_integer(qc.total_sequences)])
+        if qc.sequence_length:
+            rows.append(["Sequence length", f"{qc.sequence_length} bp"])
+        if qc.percent_gc is not None:
+            rows.append(["GC content", format_percent(qc.percent_gc)])
+        rows.append(["FastQC verdict", status_badge(qc.overall_verdict)])
+        lines += [markdown_table(["Metric", "Value"], rows), ""]
+
+        if qc.representative_image_png is not None and Path(qc.representative_image_png).exists():
+            image_path = str(Path(qc.representative_image_png).resolve())
+            caption = f"Per-base sequence quality for {report_data.sample_id}'s {label.lower()} (R1)."
+            lines += [render_figure(image_path, caption), ""]
+
+    return lines
 
 def render_assembly_section(report_data: SampleReportData) -> list[str]:
     """Renders assembly statistics."""
@@ -394,6 +482,15 @@ def render_archival_section(report_data: SampleReportData) -> list[str]:
         "A human reviewer should resolve any fields listed above before uploading through the "
         "NCBI Submission Portal.", "",
     ]
+
+    missing_fields = dict.fromkeys(f for raw in (
+        archival.sra_missing_fields, archival.biosample_missing_fields, archival.genbank_missing,
+    ) for f in raw.split(";") if f)
+    if missing_fields:
+        lines += [f"**How to complete:** {RERUN_NOTE}", ""]
+        lines += [f"- `{field}`: {field_hint(field)}" for field in missing_fields]
+        lines += [""]
+
     return lines
 
 def render_visualization_section(report_data: SampleReportData, report_path: Path) -> list[str]:
@@ -444,7 +541,9 @@ def render_sample_report(report_data: SampleReportData, report_path: str | Path)
             sample_id = report_data.sample_id, generated_at = generated_at,
         ),
         *render_metadata_section(report_data),
+        *render_aggregated_data_section(report_data, report_path),
         *render_fastp_section(report_data),
+        *render_read_qc_section(report_data),
         *render_assembly_section(report_data),
         *render_annotation_section(report_data),
         *render_blast_section(report_data),

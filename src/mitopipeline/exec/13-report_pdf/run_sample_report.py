@@ -33,6 +33,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--visualization-result-json", type = Path, default = None, help = "The result JSON written by run_circular_map.py.")
     parser.add_argument("--fastp-json", type = Path, default = None, help = "This sample's own fastp JSON report.")
     parser.add_argument("--getorganelle-config-json", type = Path, default = None, help = "The resolved GetOrganelle config JSON.")
+    parser.add_argument("--seed-selection-json", type = Path, default = None, help = "This sample's own real seed-selection result JSON, written by run_seed_selection.py.")
     parser.add_argument("--blast-config-json", type = Path, default = None, help = "The resolved BLAST config JSON.")
     parser.add_argument("--mitos2-config-json", type = Path, default = None, help = "The resolved MITOS2 config JSON.")
     parser.add_argument("--sra-metadata-tsv", type = Path, default = None, help = "The SRA metadata table written by run_sra_metadata.py.")
@@ -41,6 +42,14 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--iqtree-result-json", type = Path, default = None, help = "This sample's own result JSON written by run_iqtree.py.")
     parser.add_argument("--phylogeny-model", type = str, default = None, help = "The substitution model IQ-TREE was run with, if known.")
     parser.add_argument("--tree-figure-png", type = Path, default = None, help = "This sample's own rendered tree figure PNG, if run_tree_figure.py produced one.")
+    parser.add_argument("--raw-r1-fastqc-zip", type = Path, default = None, help = "This sample's own raw R1 FastQC zip, written by run_fastqc_raw.py.")
+    parser.add_argument("--raw-r2-fastqc-zip", type = Path, default = None, help = "This sample's own raw R2 FastQC zip, written by run_fastqc_raw.py.")
+    parser.add_argument("--trimmed-r1-fastqc-zip", type = Path, default = None, help = "This sample's own trimmed R1 FastQC zip, written by run_fastqc_trimmed.py.")
+    parser.add_argument("--trimmed-r2-fastqc-zip", type = Path, default = None, help = "This sample's own trimmed R2 FastQC zip, written by run_fastqc_trimmed.py.")
+    parser.add_argument("--recruited-r1-fastqc-zip", type = Path, default = None, help = "The selected attempt's own recruited-reads R1 FastQC zip, written by GetOrganelleRunner.")
+    parser.add_argument("--recruited-r2-fastqc-zip", type = Path, default = None, help = "The selected attempt's own recruited-reads R2 FastQC zip, written by GetOrganelleRunner.")
+    parser.add_argument("--aggregated-data-dir", type = Path, default = None, help = "The run's own consolidated aggregated_data/ directory, written by run_data_aggregation.py.")
+    parser.add_argument("--rescue-dir", type = Path, default = None, help = "This sample's own 07-assembly_rescue/ directory, if rescue was configured.")
     parser.add_argument("--pandoc-bin", type = str, default = "pandoc", help = "The pandoc executable name. Defaults to 'pandoc'.")
     parser.add_argument("--pdf-engine", type = str, default = "typst", help = "The PDF engine pandoc should use. Defaults to 'typst'.")
     parser.add_argument("--output-dir", type = Path, required = True, help = "The directory to write this sample's report to.")
@@ -82,11 +91,18 @@ def main() -> int:
         args.sample_id, args.runtime_manifest, statistics_json = args.statistics_json,
         biological_validation_json = args.biological_validation_json,
         visualization_result_json = args.visualization_result_json, fastp_json = args.fastp_json,
-        getorganelle_config_json = args.getorganelle_config_json, blast_config_json = args.blast_config_json,
+        getorganelle_config_json = args.getorganelle_config_json, seed_selection_json = args.seed_selection_json,
+        blast_config_json = args.blast_config_json,
         mitos2_config_json = args.mitos2_config_json, sra_metadata_tsv = args.sra_metadata_tsv,
         biosample_metadata_tsv = args.biosample_metadata_tsv, genbank_record_json = args.genbank_record_json,
         iqtree_result_json = args.iqtree_result_json, phylogeny_model = args.phylogeny_model,
         tree_figure_png = args.tree_figure_png,
+        raw_r1_fastqc_zip = args.raw_r1_fastqc_zip, raw_r2_fastqc_zip = args.raw_r2_fastqc_zip,
+        trimmed_r1_fastqc_zip = args.trimmed_r1_fastqc_zip, trimmed_r2_fastqc_zip = args.trimmed_r2_fastqc_zip,
+        recruited_r1_fastqc_zip = args.recruited_r1_fastqc_zip, recruited_r2_fastqc_zip = args.recruited_r2_fastqc_zip,
+        read_qc_image_dir = args.output_dir / "read_qc_images",
+        aggregated_data_dir = args.aggregated_data_dir,
+        rescue_dir = args.rescue_dir,
         logger = logger,
     )
 

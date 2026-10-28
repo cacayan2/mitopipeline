@@ -9,10 +9,13 @@ configs -- including missing-data handling (#359).
 
 # Imports
 import json
+import zipfile
 from pathlib import Path
 import pytest
 from mitopipeline.utils.reporting.collect import (
     collect_phylogeny_summary,
+    collect_read_qc,
+    collect_rescue_summary,
     collect_run_report_data,
     collect_sample_report_data,
     parse_fastp_stats,
@@ -47,6 +50,32 @@ def test_parse_fastp_stats_from_a_real_shaped_report(tmp_path: Path) -> None:
     assert stats["reads_out"] == 900
     assert stats["read_retention_rate"] == pytest.approx(0.9)
     assert stats["low_quality_reads"] == 50
+
+def test_parse_fastp_stats_extracts_real_settings_from_the_command_string(tmp_path: Path) -> None:
+    """fastp's own JSON report records the exact real command it was
+    invoked with (confirmed directly) -- settings are parsed from
+    that, never re-derived from a separately-maintained config copy
+    that could drift from what actually ran."""
+    fastp_json = _write_json(tmp_path / "fastp.json", {
+        "summary": {
+            "before_filtering": {"total_reads": 1000, "q20_rate": 0.98, "q30_rate": 0.95, "gc_content": 0.45},
+            "after_filtering": {"total_reads": 900, "q20_rate": 0.99, "q30_rate": 0.97, "gc_content": 0.46},
+        },
+        "filtering_result": {"low_quality_reads": 50},
+        "command": (
+            "fastp --in1 a.fastq.gz --in2 b.fastq.gz --qualified_quality_phred 20 "
+            "--length_required 50 --cut_window_size 4 --cut_mean_quality 20 "
+            "--n_base_limit 5 --unqualified_percent_limit 40 --detect_adapter_for_pe"
+        ),
+    })
+    stats = parse_fastp_stats(fastp_json)
+    assert stats["qualified_quality_phred"] == 20
+    assert stats["length_required"] == 50
+    assert stats["cut_window_size"] == 4
+    assert stats["cut_mean_quality"] == 20
+    assert stats["n_base_limit"] == 5
+    assert stats["unqualified_percent_limit"] == 40
+    assert stats["adapter_detection"] is True
 
 def test_parse_fastp_stats_none_when_missing(tmp_path: Path) -> None:
     assert parse_fastp_stats(tmp_path / "missing.json") is None
@@ -147,6 +176,131 @@ def test_collect_phylogeny_summary_omits_a_tree_figure_that_was_never_rendered(t
     })
     summary = collect_phylogeny_summary(result_json, tree_figure_png = tmp_path / "never_rendered.png")
     assert summary.tree_figure_png is None
+
+def _write_fastqc_zip(zip_path: Path, total_sequences: int = 1000, percent_gc: float = 40.0,
+                      sequence_length: str = "100", verdicts: str = "PASS\tBasic Statistics\tx\n") -> Path:
+    zip_path.parent.mkdir(parents = True, exist_ok = True)
+    data_text = (
+        "##FastQC\t0.13.0\n"
+        ">>Basic Statistics\tpass\n"
+        "#Measure\tValue\n"
+        f"Total Sequences\t{total_sequences}\n"
+        f"Sequence length\t{sequence_length}\n"
+        f"%GC\t{percent_gc}\n"
+        ">>END_MODULE\n"
+    )
+    with zipfile.ZipFile(zip_path, "w") as archive:
+        archive.writestr("x_fastqc/fastqc_data.txt", data_text)
+        archive.writestr("x_fastqc/summary.txt", verdicts)
+        archive.writestr("x_fastqc/Images/per_base_quality.png", b"\x89PNG\r\n\x1a\nfake")
+    return zip_path
+
+def test_collect_read_qc_combines_r1_and_r2(tmp_path: Path) -> None:
+    r1 = _write_fastqc_zip(tmp_path / "r1.zip", total_sequences = 1000, percent_gc = 40.0)
+    r2 = _write_fastqc_zip(tmp_path / "r2.zip", total_sequences = 900, percent_gc = 42.0)
+
+    summary = collect_read_qc(r1, r2, image_output_path = tmp_path / "out.png")
+
+    assert summary is not None
+    assert summary.total_sequences == 1900
+    assert summary.percent_gc == pytest.approx(41.0)
+    assert summary.sequence_length == "100"
+    assert summary.overall_verdict == "PASS"
+    assert summary.representative_image_png == tmp_path / "out.png"
+    assert (tmp_path / "out.png").is_file()
+
+def test_collect_read_qc_overall_verdict_is_worst_of_r1_and_r2(tmp_path: Path) -> None:
+    r1 = _write_fastqc_zip(tmp_path / "r1.zip", verdicts = "PASS\tBasic Statistics\tx\n")
+    r2 = _write_fastqc_zip(tmp_path / "r2.zip", verdicts = "WARN\tPer sequence GC content\tx\n")
+
+    summary = collect_read_qc(r1, r2)
+
+    assert summary.overall_verdict == "WARN"
+
+def test_collect_read_qc_none_when_both_zips_missing(tmp_path: Path) -> None:
+    assert collect_read_qc(tmp_path / "missing_r1.zip", tmp_path / "missing_r2.zip") is None
+
+def test_collect_read_qc_handles_one_missing_zip(tmp_path: Path) -> None:
+    r1 = _write_fastqc_zip(tmp_path / "r1.zip", total_sequences = 500)
+    summary = collect_read_qc(r1, tmp_path / "missing_r2.zip")
+    assert summary is not None
+    assert summary.total_sequences == 500
+
+def test_collect_sample_report_data_enriches_assembly_config_with_seed_selection(tmp_path: Path) -> None:
+    """getorganelle_config.json only ever records the seed FILE path --
+    the real gene/accession/source comes from the separate real
+    seed_selection.json (run_seed_selection.py's own output)."""
+    manifest = tmp_path / "manifest.tsv"
+    manifest.write_text("sample_id\tr1\tr2\nsample1\ta\tb\n")
+    go_config = _write_json(tmp_path / "go_config.json", {"organelle_type": "animal_mt", "seeded": True, "seed_file": "sample1.seed.fasta"})
+    seed_selection = _write_json(tmp_path / "seed_selection.json", {
+        "sample_id": "sample1", "scientific_name": "Danio rerio", "gene": "COXI",
+        "accession": "NC_002333.2", "source": "mitofish", "fallback_used": False,
+    })
+
+    data = collect_sample_report_data(
+        "sample1", manifest, getorganelle_config_json = go_config, seed_selection_json = seed_selection,
+    )
+
+    assert data.assembly_config.seed_gene == "COXI"
+    assert data.assembly_config.seed_accession == "NC_002333.2"
+    assert data.assembly_config.seed_source == "mitofish"
+    assert data.assembly_config.seed_fallback_reason is None
+
+def test_collect_sample_report_data_records_seed_fallback_reason_when_unseeded(tmp_path: Path) -> None:
+    manifest = tmp_path / "manifest.tsv"
+    manifest.write_text("sample_id\tr1\tr2\nsample1\ta\tb\n")
+    go_config = _write_json(tmp_path / "go_config.json", {"organelle_type": "animal_mt", "seeded": False, "seed_file": None})
+    seed_selection = _write_json(tmp_path / "seed_selection.json", {
+        "sample_id": "sample1", "scientific_name": "Unknownus fishicus", "gene": "COXI",
+        "accession": "GETORGANELLE_DEFAULT", "source": "fallback_default_database",
+        "fallback_used": True, "fallback_reason": "no_fetchable_mitofish_match",
+    })
+
+    data = collect_sample_report_data(
+        "sample1", manifest, getorganelle_config_json = go_config, seed_selection_json = seed_selection,
+    )
+
+    assert data.assembly_config.seed_accession is None
+    assert data.assembly_config.seed_fallback_reason == "no_fetchable_mitofish_match"
+
+def test_collect_rescue_summary_reads_every_real_attempt(tmp_path: Path) -> None:
+    """Regression (Emil's direct ask, 2026-10-28): the methods section
+    needs every real rescue attempt, not only the one that succeeded
+    -- a real failed/skipped attempt (e.g. gargammel_fragmented's own
+    attempt 1 producing "missing" instead of a better result, and
+    attempt 2 never running because of it) must still be reported."""
+    rescue_dir = tmp_path / "07-assembly_rescue" / "sample1"
+    attempt_1 = rescue_dir / "attempt_1"
+    attempt_1.mkdir(parents = True)
+    _write_json(attempt_1 / "sample1.rescue_mapping.json", {
+        "sample_id": "sample1", "attempted": True,
+        "reason": "status 'fragmented' triggers rescue; attempt 1 of 2",
+    })
+    _write_json(attempt_1 / "reassembly" / "sample1.assembly_status.json", {
+        "sample_id": "sample1", "status": "missing", "success": False, "profile_name": "reduced_coverage",
+    })
+    attempt_2 = rescue_dir / "attempt_2"
+    attempt_2.mkdir(parents = True)
+    _write_json(attempt_2 / "sample1.rescue_mapping.json", {
+        "sample_id": "sample1", "attempted": False,
+        "reason": "status 'missing' is not in trigger_statuses ['fragmented', 'partial']",
+    })
+
+    attempts = collect_rescue_summary(rescue_dir)
+
+    assert len(attempts) == 2
+    assert attempts[0].attempt == 1
+    assert attempts[0].attempted is True
+    assert attempts[0].profile_name == "reduced_coverage"
+    assert attempts[0].status == "missing"
+    assert attempts[1].attempt == 2
+    assert attempts[1].attempted is False
+    assert attempts[1].profile_name is None
+
+def test_collect_rescue_summary_empty_when_no_rescue_dir(tmp_path: Path) -> None:
+    assert collect_rescue_summary(None) == ()
+    assert collect_rescue_summary(tmp_path / "does_not_exist") == ()
 
 def test_collect_run_report_data_joins_samples(tmp_path: Path) -> None:
     manifest = tmp_path / "manifest.tsv"

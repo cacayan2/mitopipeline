@@ -2,20 +2,59 @@
 methods.py
 
 Generates a paper-style "Methods" paragraph (Emil's own explicit
-request) describing the real tools, settings, and rescue history
-actually used for one sample -- built live from the same resolved
-config JSON and statistics every other report section reads, never
-boilerplate text standing in for what actually ran.
+request) describing the real tools, settings, databases, and rescue
+history actually used for one sample -- built live from the same
+resolved config JSON and statistics every other report section
+reads, never boilerplate text standing in for what actually ran.
+Concise by design (a handful of sentences), but covers every real
+stage: trimming/QC, assembly (including every real rescue attempt),
+identification, annotation, visualization, phylogeny, and validation.
 """
 
 # Imports
 from mitopipeline.utils.reporting.models import SampleReportData
 
+def _trimming_sentence(report_data: SampleReportData) -> str:
+    """Describes the real fastp settings used and the real FastQC verdicts recorded at each stage."""
+    from mitopipeline.utils.reporting.markdown_report import format_percent, humanize_enum
+
+    stats = report_data.fastp_stats
+    if stats is None:
+        return "Read trimming and quality filtering via fastp was not configured for this run."
+
+    settings = []
+    if "qualified_quality_phred" in stats:
+        settings.append(f"minimum base quality Q{stats['qualified_quality_phred']}")
+    if "length_required" in stats:
+        settings.append(f"minimum length {stats['length_required']}bp")
+    if stats.get("adapter_detection"):
+        settings.append("automatic paired-end adapter detection")
+    settings_clause = f" ({'; '.join(settings)})" if settings else ""
+
+    sentence = (
+        f"Raw reads were quality-trimmed with fastp{settings_clause}, retaining "
+        f"{format_percent(stats['read_retention_rate'], fraction = True)} of input reads."
+    )
+
+    qc_clauses = [
+        f"{label} {humanize_enum(qc.overall_verdict).lower()}"
+        for label, qc in (
+            ("raw", report_data.raw_read_qc),
+            ("trimmed", report_data.trimmed_read_qc),
+            ("recruited", report_data.recruited_read_qc),
+        )
+        if qc is not None
+    ]
+    if qc_clauses:
+        sentence += f" FastQC quality control was performed at each stage ({', '.join(qc_clauses)})."
+
+    return sentence
+
 def _assembly_sentence(report_data: SampleReportData) -> str:
-    """Describes the real GetOrganelle invocation and whether rescue was needed."""
+    """Describes the real GetOrganelle invocation, the real seed used (or why not), and every real rescue attempt made."""
     # Deferred import avoids a circular import: markdown_report.py
     # itself imports render_methods_text from this module.
-    from mitopipeline.utils.reporting.markdown_report import basename_code
+    from mitopipeline.utils.reporting.markdown_report import basename_code, humanize_enum
 
     config = report_data.assembly_config
     assembly = report_data.assembly
@@ -23,16 +62,43 @@ def _assembly_sentence(report_data: SampleReportData) -> str:
     if config is None:
         return "Mitochondrial genome assembly was attempted with GetOrganelle, though its resolved configuration was not recorded for this run."
 
-    seed_clause = (
-        f"seeded with a reference locus ({basename_code(config.seed_file)})" if config.seeded
-        else "run unseeded, against GetOrganelle's own default reference database"
-    )
+    if config.seeded and config.seed_gene and config.seed_accession and config.seed_source == "mitofish":
+        seed_clause = f"seeded with a real MitoFish reference locus ({config.seed_gene}, accession `{config.seed_accession}`)"
+    elif config.seeded and config.seed_file:
+        seed_clause = f"seeded with a reference locus ({basename_code(config.seed_file)})"
+    elif config.seed_fallback_reason:
+        seed_clause = (
+            f"run unseeded, against GetOrganelle's own default reference database "
+            f"(no usable MitoFish seed: {humanize_enum(config.seed_fallback_reason).lower()})"
+        )
+    else:
+        seed_clause = "run unseeded, against GetOrganelle's own default reference database"
+
     sentence = (
         f"Mitochondrial genome assembly was performed with GetOrganelle "
         f"(organelle type `{config.organelle_type}`), {seed_clause}."
     )
 
-    if assembly is not None and assembly.source_attempt > 0:
+    attempts = report_data.rescue_attempts
+    if attempts and any(a.attempted for a in attempts):
+        descriptions = []
+        for a in attempts:
+            if a.attempted:
+                outcome = f"produced a {humanize_enum(a.status).lower()} result" if a.status else "did not complete"
+                profile_clause = f" (profile `{a.profile_name}`)" if a.profile_name else ""
+                descriptions.append(f"attempt {a.attempt}{profile_clause} {outcome}")
+            else:
+                descriptions.append(f"attempt {a.attempt} was not run ({a.reason})")
+        sentence += (
+            " The primary attempt did not yield a usable circular or fragmented genome, triggering rescue "
+            "reassembly (mapping recruited reads with minimap2/samtools before re-running GetOrganelle): "
+            f"{'; '.join(descriptions)}."
+        )
+        if assembly is not None and assembly.source_attempt > 0:
+            sentence += f" Rescue attempt {assembly.source_attempt} was selected."
+        elif assembly is not None:
+            sentence += " None improved on the primary result, so the primary assembly was retained."
+    elif assembly is not None and assembly.source_attempt > 0:
         sentence += (
             f" The primary assembly attempt did not yield a usable genome; a rescue reassembly "
             f"(attempt {assembly.source_attempt}, mapping recruited reads with minimap2/samtools before "
@@ -87,9 +153,14 @@ def _annotation_sentence(report_data: SampleReportData) -> str:
             return "Gene annotation via MITOS2 was skipped: this sample had no selected assembly to annotate."
         return "Gene annotation via MITOS2 was not configured for this run."
 
+    assembly_config = report_data.assembly_config
+    biomarker_clause = ""
+    if assembly_config is not None and assembly_config.seed_gene and assembly_config.seed_source == "mitofish":
+        biomarker_clause = f", MitoFish biomarker {assembly_config.seed_gene}"
+
     sentence = (
         f"Gene annotation was performed with MITOS2 "
-        f"(genetic code {config.genetic_code}, reference set `{config.refseqver}`)."
+        f"(genetic code {config.genetic_code}{biomarker_clause}, reference set `{config.refseqver}`)."
     )
     if annotation is not None:
         sentence += f" {annotation.core_gene_count} of the 13 core animal mitochondrial protein-coding genes were identified"
@@ -98,6 +169,26 @@ def _annotation_sentence(report_data: SampleReportData) -> str:
         else:
             sentence += "."
     return sentence
+
+def _visualization_sentence(report_data: SampleReportData) -> str:
+    """Notes whether an annotated circular genome map was rendered."""
+    if report_data.visualization_png is None:
+        return ""
+    return " An annotated circular genome map was rendered from the real MITOS2 gene coordinates."
+
+def _phylogeny_sentence(report_data: SampleReportData) -> str:
+    """Describes the real phylogenetic placement, or why one wasn't built."""
+    phylogeny = report_data.phylogeny
+    if phylogeny is None:
+        return ""
+    if not phylogeny.success:
+        return f" Phylogenetic placement was not completed: {phylogeny.reason}"
+    model_clause = f" under the `{phylogeny.model}` substitution model" if phylogeny.model else ""
+    tip_clause = f" ({phylogeny.tip_count} total tips)" if phylogeny.tip_count is not None else ""
+    return (
+        f" A maximum-likelihood phylogeny was inferred with IQ-TREE{model_clause}, placing the assembled "
+        f"genome among its own top BLAST reference matches{tip_clause}."
+    )
 
 def _validation_sentence(report_data: SampleReportData) -> str:
     """Describes the real biological validation outcome."""
@@ -112,7 +203,10 @@ def _validation_sentence(report_data: SampleReportData) -> str:
 
 def render_methods_text(report_data: SampleReportData) -> str:
     """
-    Builds the full live methods paragraph for one sample.
+    Builds the full live methods paragraph for one sample -- concise,
+    but covering every real stage the pipeline ran: trimming/QC,
+    assembly (including every real rescue attempt), identification,
+    annotation, visualization, phylogeny, and validation.
 
     Args:
         report_data (SampleReportData): The assembled report data.
@@ -121,9 +215,13 @@ def render_methods_text(report_data: SampleReportData) -> str:
         str: The methods paragraph, as plain prose.
     """
     sentences = [
+        _trimming_sentence(report_data),
         _assembly_sentence(report_data),
         _identification_sentence(report_data),
         _annotation_sentence(report_data),
     ]
-    text = " ".join(sentences) + _validation_sentence(report_data)
+    text = " ".join(s for s in sentences if s)
+    text += _visualization_sentence(report_data)
+    text += _phylogeny_sentence(report_data)
+    text += _validation_sentence(report_data)
     return text

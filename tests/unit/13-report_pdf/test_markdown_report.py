@@ -21,12 +21,14 @@ from mitopipeline.utils.reporting.markdown_report import (
     humanize_list,
     markdown_table,
     pluralize,
+    render_aggregated_data_section,
     render_phylogeny_section,
+    render_read_qc_section,
     render_sample_report,
     status_badge,
     wrap_cell_text,
 )
-from mitopipeline.utils.reporting.models import PhylogenySummary, SampleReportData
+from mitopipeline.utils.reporting.models import PhylogenySummary, ReadQCSummary, SampleReportData
 from mitopipeline.utils.statistics.models import AnnotationStatistics, AssemblyStatistics, BlastStatistics
 
 def _empty_sample(sample_id: str = "sample1") -> SampleReportData:
@@ -202,6 +204,107 @@ def test_render_phylogeny_section_shows_the_real_tip_count_and_model(tmp_path: P
 def test_render_sample_report_includes_a_phylogeny_section(tmp_path: Path) -> None:
     text = render_sample_report(_empty_sample(), tmp_path / "sample1.report.md")
     assert "## Phylogenetic Context" in text
+
+def test_render_read_qc_section_shows_not_available_when_missing() -> None:
+    lines = render_read_qc_section(_empty_sample())
+    assert "_FastQC quality control was not available._" in lines
+
+def test_render_read_qc_section_shows_real_stats_per_readset(tmp_path: Path) -> None:
+    sample = SampleReportData(
+        sample_id = "sample1", metadata = {}, fastp_stats = None,
+        assembly = None, blast = None, annotation = None, overall_verdict = None,
+        raw_read_qc = ReadQCSummary(total_sequences = 25014, percent_gc = 40.0, sequence_length = "100", overall_verdict = "PASS"),
+        trimmed_read_qc = ReadQCSummary(total_sequences = 25014, percent_gc = 40.0, sequence_length = "100", overall_verdict = "WARN"),
+        recruited_read_qc = None,
+    )
+    text = "\n".join(render_read_qc_section(sample))
+    assert "### Raw Reads" in text
+    assert "### Trimmed Reads" in text
+    assert "### Recruited Reads (used for assembly)" in text
+    assert "25,014" in text
+    assert "100 bp" in text
+    assert "40.00%" in text
+    # One passes, one warns -- both badges render, never collapsed to a single value.
+    assert "Not available" in text  # the missing recruited-reads row
+
+def test_render_read_qc_section_embeds_the_representative_figure(tmp_path: Path) -> None:
+    image_path = tmp_path / "raw_per_base_quality.png"
+    image_path.write_bytes(b"fake png bytes")
+    sample = SampleReportData(
+        sample_id = "sample1", metadata = {}, fastp_stats = None,
+        assembly = None, blast = None, annotation = None, overall_verdict = None,
+        raw_read_qc = ReadQCSummary(
+            total_sequences = 100, percent_gc = 40.0, sequence_length = "100",
+            overall_verdict = "PASS", representative_image_png = image_path,
+        ),
+    )
+    text = "\n".join(render_read_qc_section(sample))
+    assert "#figure(" in text
+    assert str(image_path) in text
+
+def test_render_sample_report_includes_the_read_qc_section(tmp_path: Path) -> None:
+    text = render_sample_report(_empty_sample(), tmp_path / "sample1.report.md")
+    assert "## Read Quality Control" in text
+
+def test_render_aggregated_data_section_shows_not_available_when_missing(tmp_path: Path) -> None:
+    lines = render_aggregated_data_section(_empty_sample(), tmp_path / "sample1.report.md")
+    assert "_Aggregated data was not available for this run._" in lines
+
+def test_render_aggregated_data_section_links_real_existing_files(tmp_path: Path) -> None:
+    aggregated_dir = tmp_path / "aggregated_data"
+    assembly = aggregated_dir / "assemblies" / "sample1.assembly.fasta"
+    assembly.parent.mkdir(parents = True)
+    assembly.write_text(">sample1\nACGT\n")
+    gff = aggregated_dir / "annotations" / "gff" / "sample1.annotation.gff"
+    gff.parent.mkdir(parents = True)
+    gff.write_text("##gff-version 3\n")
+
+    sample = SampleReportData(
+        sample_id = "sample1", metadata = {}, fastp_stats = None,
+        assembly = None, blast = None, annotation = None, overall_verdict = None,
+        aggregated_data_dir = aggregated_dir,
+    )
+    text = "\n".join(render_aggregated_data_section(sample, tmp_path / "sample1.report.md"))
+    assert "Assembly FASTA" in text
+    assert "Annotation GFF" in text
+    # Files that don't exist (no annotation map/phylogeny for this sample) are simply omitted, not broken links.
+    assert "Annotated genome map" not in text
+
+def test_render_aggregated_data_section_links_real_archival_materials(tmp_path: Path) -> None:
+    aggregated_dir = tmp_path / "aggregated_data"
+    archival = aggregated_dir / "archival"
+    (archival).mkdir(parents = True)
+    (archival / "sra_metadata.tsv").write_text("sample_name\tstatus\nsample1\tREADY\n")
+    (archival / "biosample_metadata.tsv").write_text("sample_name\tstatus\nsample1\tREADY\n")
+    (archival / "submission_checklist.md").write_text("# checklist\n")
+    genbank_dir = archival / "genbank" / "sample1"
+    genbank_dir.mkdir(parents = True)
+    (genbank_dir / "sample1.fasta").write_text(">sample1\nACGT\n")
+    (genbank_dir / "sample1.gff").write_text("##gff-version 3\n")
+
+    sample = SampleReportData(
+        sample_id = "sample1", metadata = {}, fastp_stats = None,
+        assembly = None, blast = None, annotation = None, overall_verdict = None,
+        aggregated_data_dir = aggregated_dir,
+    )
+    text = "\n".join(render_aggregated_data_section(sample, tmp_path / "sample1.report.md"))
+    assert "SRA metadata table" in text
+    assert "BioSample metadata table" in text
+    assert "GenBank assembly FASTA" in text
+    assert "GenBank annotation GFF" in text
+    assert "Submission checklist" in text
+    # Files that don't exist (no readiness report/checksums produced in this fixture) are simply omitted.
+    assert "Submission readiness report" not in text
+    assert "MD5 checksums" not in text
+
+def test_render_aggregated_data_section_handles_a_sample_with_nothing_aggregated(tmp_path: Path) -> None:
+    sample = SampleReportData(
+        sample_id = "sample_bare", metadata = {}, fastp_stats = None,
+        assembly = None, blast = None, annotation = None, overall_verdict = None,
+        aggregated_data_dir = tmp_path / "aggregated_data",
+    )
+    lines = render_aggregated_data_section(sample, tmp_path / "sample_bare.report.md")
+    assert "_No aggregated files were available for this sample._" in lines
 
 def test_render_sample_report_includes_methods_section_exactly_once(tmp_path: Path) -> None:
     text = render_sample_report(_empty_sample(), tmp_path / "sample1.report.md")

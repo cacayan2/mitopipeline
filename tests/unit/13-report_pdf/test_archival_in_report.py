@@ -75,6 +75,24 @@ def test_render_archival_section_shows_real_status() -> None:
     assert "Collection date" in text
     assert "**Ready for submission review:**" in text
 
+def test_render_archival_section_attaches_a_hint_per_missing_field() -> None:
+    archival = ArchivalSummary(
+        sra_review_status = "MANUAL_REVIEW_REQUIRED", sra_missing_fields = "instrument_model",
+        biosample_review_status = "MANUAL_REVIEW_REQUIRED", biosample_missing_fields = "collection_date;geo_loc_name",
+        genbank_review_status = "READY",
+    )
+    text = "\n".join(render_archival_section(_empty_sample(archival = archival)))
+    assert "**How to complete:**" in text
+    assert "`instrument_model`: " in text
+    assert "Illumina NovaSeq 6000" in text
+    assert "`collection_date`: " in text
+    assert "`geo_loc_name`: " in text
+
+def test_render_archival_section_omits_how_to_complete_when_everything_is_ready() -> None:
+    archival = ArchivalSummary(sra_review_status = "READY", biosample_review_status = "READY", genbank_review_status = "READY")
+    text = "\n".join(render_archival_section(_empty_sample(archival = archival)))
+    assert "**How to complete:**" not in text
+
 def test_sample_report_includes_archival_section(tmp_path: Path) -> None:
     text = render_sample_report(_empty_sample(), tmp_path / "sample1.report.md")
     assert "## NCBI Archival Readiness" in text

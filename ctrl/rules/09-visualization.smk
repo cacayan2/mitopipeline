@@ -17,6 +17,14 @@ def _selected_fasta(selection_path: Path) -> str:
     selection = json.loads(selection_path.read_text())
     return selection.get("fasta_path", "") if selection.get("selected") else ""
 
+def _annotation_gff(sample: str) -> str:
+    """Reads a sample's own real MITOS2 annotation GFF path from its real mitos2_annotation_result.json -- never a hardcoded filename, since Mitos2Runner.postprocess_outputs() renames runmitos.py's own fixed "result.gff" to a sample-prefixed name."""
+    result_path = JOB_DIR / "08b-annotation" / sample / f"{sample}.mitos2_annotation_result.json"
+    if not result_path.is_file():
+        return ""
+    result = json.loads(result_path.read_text())
+    return result.get("gff_path", "") if result.get("success") else ""
+
 rule visualization:
     input:
         selection = str(JOB_DIR / "06-contig_selection" / "{sample}" / "{sample}.contig_selection.json"),
@@ -27,7 +35,7 @@ rule visualization:
         done = str(JOB_DIR / "09-visualization" / "{sample}" / "{sample}.visualization.done")
     params:
         fasta_path = lambda wc, input: _selected_fasta(input.selection),
-        gff_path = str(JOB_DIR / "08b-annotation" / "{sample}" / "result.gff"),
+        gff_path = lambda wc: _annotation_gff(wc.sample),
         dpi = config["stage_options"]["annotation_viz"]["dpi"],
         output_dir = str(JOB_DIR / "09-visualization" / "{sample}"),
         log_file = str(JOB_DIR / "logs" / "09-visualization" / "{sample}.log"),
