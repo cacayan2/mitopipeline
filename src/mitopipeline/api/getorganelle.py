@@ -94,7 +94,15 @@ class GetOrganelleRunner(BaseTool):
         self.threads = int(threads)
         self.standardized_fasta = self.output_dir / "data.fasta"
         self.standardized_gfa = self.output_dir / "graph.gfa"
-        self.recruited_reads_fastqc_dir = self.output_dir / "recruited_reads_fastqc"
+        # Resolved to an absolute path: FastQCRunner below is invoked
+        # with this attempt's own output_dir as ITS working_dir (the
+        # subprocess's cwd), so a relative recruited_reads_fastqc_dir
+        # string passed as --outdir gets resolved a second time
+        # against that already-nested cwd -- confirmed directly as the
+        # real cause of every recruited-reads FastQC run failing in
+        # 18ms with exit code 2 ("outdir does not exist"), silently,
+        # on every real pipeline run so far.
+        self.recruited_reads_fastqc_dir = (self.output_dir / "recruited_reads_fastqc").resolve()
         self.recruited_reads_qc_record_path = self.output_dir / f"{sample.sample_id}.recruited_reads_qc.json"
 
         # The classification discover_assembly_artifacts() produced,

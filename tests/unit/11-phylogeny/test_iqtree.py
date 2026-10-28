@@ -34,6 +34,20 @@ def test_build_command_includes_real_flags(tmp_path: Path) -> None:
     assert "--alrt" in command and command[command.index("--alrt") + 1] == "1000"
     assert "--prefix" in command and command[command.index("--prefix") + 1] == str(runner.output_prefix)
 
+def test_build_command_includes_redo(tmp_path: Path) -> None:
+    """
+    Regression: without -redo, a second real run against the exact
+    same alignment and --prefix failed in milliseconds because
+    IQ-TREE refused to overwrite its own prior checkpoint/output
+    files -- confirmed directly (the first run genuinely succeeded;
+    a second run moments later, same inputs, same prefix, exited 2).
+    This pipeline always wants a fresh, deterministic result from the
+    given alignment, never a resumed/cached one.
+    """
+    runner = _make_runner(tmp_path)
+    command = runner.build_command()
+    assert "-redo" in command
+
 def test_treefile_path_is_derived_from_prefix(tmp_path: Path) -> None:
     runner = _make_runner(tmp_path)
     assert runner.treefile == Path(f"{runner.output_prefix}.treefile")

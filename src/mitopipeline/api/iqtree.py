@@ -139,6 +139,16 @@ class IqtreeRunner(BaseTool):
             "-T", str(self.threads),
             "--seed", str(self.random_seed),
             "--prefix", str(self.output_prefix),
+            # Without this, IQ-TREE refuses to run at all when its own
+            # prior checkpoint/output files already exist under the
+            # same --prefix (exits in milliseconds with no useful
+            # error beyond its own exit code) -- confirmed directly: a
+            # second real run against the exact same alignment, same
+            # prefix, failed this way even though the first run had
+            # genuinely succeeded moments earlier. This pipeline always
+            # wants a fresh, deterministic result from the given
+            # alignment, never a resumed/cached one.
+            "-redo",
         ]
 
     def validate_outputs(self) -> None:

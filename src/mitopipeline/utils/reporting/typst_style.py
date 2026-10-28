@@ -23,6 +23,7 @@ STATUS_BADGE_STYLES: dict[str, tuple[str, str]] = {
     "READY": ("#d4edda", "#155724"),
     "REVIEW": ("#fff3cd", "#856404"),
     "MANUAL_REVIEW_REQUIRED": ("#fff3cd", "#856404"),
+    "WARN": ("#fff3cd", "#856404"),
     "FAIL": ("#f8d7da", "#721c24"),
     "NOT ASSESSED": ("#e2e3e5", "#383d41"),
 }
