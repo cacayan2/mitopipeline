@@ -11,14 +11,18 @@ section) -- never re-deriving a statistic a typed artifact already has.
 # Imports
 import csv
 import json
+from datetime import datetime
 from logging import Logger
 from pathlib import Path
 from mitopipeline.utils.fastqc.parse import extract_fastqc_image, parse_fastqc_zip
+from mitopipeline.models.pipeline_job.pipeline_job import aggregate_job_history
+from mitopipeline.utils.reporting.compute_metrics import collect_compute_summary, collect_machine_info
 from mitopipeline.utils.reporting.models import (
     AnnotationConfigSummary,
     ArchivalSummary,
     AssemblyConfigSummary,
     BlastConfigSummary,
+    JobMetadataSummary,
     PhylogenySummary,
     ReadQCSummary,
     RescueAttemptSummary,
@@ -207,6 +211,8 @@ def collect_sample_report_data(sample_id: str, runtime_manifest_path: str | Path
                                 read_qc_image_dir: str | Path | None = None,
                                 aggregated_data_dir: str | Path | None = None,
                                 rescue_dir: str | Path | None = None,
+                                metrics_dir: str | Path | None = None,
+                                log_dir: str | Path | None = None,
                                 logger: Logger | None = None) -> SampleReportData:
     """
     Assembles one sample's report data from its real result JSON.
@@ -237,6 +243,8 @@ def collect_sample_report_data(sample_id: str, runtime_manifest_path: str | Path
         read_qc_image_dir (str | Path | None): Where to extract each read-set's own representative FastQC chart. None skips image extraction.
         aggregated_data_dir (str | Path | None): The run's own consolidated aggregated_data/ directory, written by run_data_aggregation.py, or None if unavailable.
         rescue_dir (str | Path | None): This sample's own real 07-assembly_rescue/{sample} directory, or None if unavailable.
+        metrics_dir (str | Path | None): The job's own metrics/ directory, filtered to this sample's own real compute-metrics records, or None if unavailable.
+        log_dir (str | Path | None): The job's own logs/ directory, for linking to this sample's own real per-stage log files, or None if unavailable.
         logger (Logger | None): Logger to use. Defaults to None.
 
     Returns:
@@ -324,6 +332,10 @@ def collect_sample_report_data(sample_id: str, runtime_manifest_path: str | Path
         raw_read_qc = raw_read_qc, trimmed_read_qc = trimmed_read_qc, recruited_read_qc = recruited_read_qc,
         aggregated_data_dir = Path(aggregated_data_dir) if aggregated_data_dir else None,
         rescue_attempts = collect_rescue_summary(rescue_dir),
+        compute_summary = collect_compute_summary(Path(metrics_dir), sample_id = sample_id) if metrics_dir else (),
+        log_dir = Path(log_dir) if log_dir else None,
+        metrics_dir = Path(metrics_dir) if metrics_dir else None,
+        machine_info = collect_machine_info(),
     )
 
 def collect_phylogeny_summary(iqtree_result_json: str | Path | None, model: str | None = None,
@@ -443,7 +455,67 @@ def collect_rescue_summary(rescue_dir: str | Path | None) -> tuple[RescueAttempt
         ))
     return tuple(attempts)
 
-def collect_run_report_data(job_id: str, generated_at: str, samples: list[SampleReportData]) -> RunReportData:
+def collect_job_metadata(current_metadata_json: str | Path | None, historical_metadata_json: str | Path | None,
+                          job_id: str) -> "JobMetadataSummary | None":
+    """
+    Reads this job's own real lifecycle metadata -- the current
+    attempt's own status/runtime from current_metadata.json, plus a
+    cumulative summary across every real attempt this job_id has ever
+    had from historical_metadata.json. Never derived from a live
+    PipelineJob instance, which has real side effects (creates
+    directories, writes a new "created" entry) a read-only report must
+    never trigger.
+
+    The report-generation rule itself runs as part of the same
+    Snakemake DAG it's reporting on, so current_metadata.json's own
+    terminal "completed"/"failed" entry -- written only after the
+    whole run (including this very report) finishes -- can never be
+    visible yet; its own "status" will structurally always still read
+    "created" with the original runtime_seconds=0.0 placeholder. Real
+    elapsed time (now minus the recorded start_time) is substituted
+    in that case, so the report shows an honest "how long has this
+    taken so far" instead of a stale, confusing zero.
+
+    Args:
+        current_metadata_json (str | Path | None): The job's own current_metadata.json, or None if unavailable.
+        historical_metadata_json (str | Path | None): The job's own historical_metadata.json, or None if unavailable.
+        job_id (str): The job id.
+
+    Returns:
+        JobMetadataSummary | None: The assembled summary, or None when neither real source is available.
+    """
+    current = _read_json(Path(current_metadata_json)) if current_metadata_json else None
+    history = (
+        aggregate_job_history(Path(historical_metadata_json), job_id)
+        if historical_metadata_json and Path(historical_metadata_json).is_file() else None
+    )
+    if current is None and history is None:
+        return None
+    history = history or {}
+
+    runtime_seconds = current.get("runtime_seconds") if current else None
+    if current is not None and current.get("status") == "created" and current.get("start_time"):
+        try:
+            elapsed = (datetime.now() - datetime.fromisoformat(current["start_time"])).total_seconds()
+            runtime_seconds = max(0.0, elapsed)
+        except ValueError:
+            pass
+
+    return JobMetadataSummary(
+        status = current.get("status") if current else None,
+        start_time = current.get("start_time") if current else None,
+        runtime_seconds = runtime_seconds,
+        sample_count = current.get("sample_count") if current else None,
+        attempt_count = history.get("attempt_count", 0),
+        cumulative_runtime_seconds = history.get("cumulative_runtime_seconds", 0.0),
+        incomplete_attempts = history.get("incomplete_attempts", 0),
+    )
+
+def collect_run_report_data(job_id: str, generated_at: str, samples: list[SampleReportData],
+                             job_dir: str | Path | None = None,
+                             current_metadata_json: str | Path | None = None,
+                             historical_metadata_json: str | Path | None = None,
+                             global_log_file: str | Path | None = None) -> RunReportData:
     """
     Assembles the run-level report data from every sample's own
     already-collected report data (each one carrying its own real
@@ -453,8 +525,19 @@ def collect_run_report_data(job_id: str, generated_at: str, samples: list[Sample
         job_id (str): The pipeline job id.
         generated_at (str): An ISO-8601 UTC timestamp.
         samples (list[SampleReportData]): Every sample's report data, in manifest order.
+        job_dir (str | Path | None): The job's own output root, used to locate metrics/ for a batch-wide compute summary and to link to logs/metrics directly.
+        current_metadata_json (str | Path | None): The job's own current_metadata.json, or None if unavailable.
+        historical_metadata_json (str | Path | None): The job's own historical_metadata.json, or None if unavailable.
+        global_log_file (str | Path | None): The job's own shared global log file, or None if unavailable.
 
     Returns:
         RunReportData: The assembled run-level report data.
     """
-    return RunReportData(job_id = job_id, generated_at = generated_at, samples = tuple(samples))
+    return RunReportData(
+        job_id = job_id, generated_at = generated_at, samples = tuple(samples),
+        job_metadata = collect_job_metadata(current_metadata_json, historical_metadata_json, job_id),
+        compute_summary = collect_compute_summary(Path(job_dir) / "metrics") if job_dir else (),
+        job_dir = Path(job_dir) if job_dir else None,
+        global_log_file = Path(global_log_file) if global_log_file else None,
+        machine_info = collect_machine_info(),
+    )

@@ -13,6 +13,62 @@ import logging
 import uuid
 from mitopipeline.logging.logger_factory import make_logger
 
+def aggregate_job_history(history_file: Path, job_id: str) -> dict:
+    """
+    Summarizes a job's historical_metadata.json across every time it
+    has been launched with the same job_id, covering a job resumed/
+    retried several times before finally completing: total attempts,
+    cumulative runtime across all of them, and a per-status breakdown.
+    A module-level function (not a PipelineJob method) so a report
+    generator can read it without instantiating a PipelineJob, which
+    has real side effects (creates directories, writes a new "created"
+    metadata entry) a read-only report must never trigger.
+
+    An empty or unreadable history is reported as zero attempts rather
+    than raising -- a report generator should get a quiet, honest
+    "nothing here yet", not a crash, over a job that simply hasn't
+    failed or been retried before.
+
+    Args:
+        history_file (Path): The job's own historical_metadata.json.
+        job_id (str): The job id.
+
+    Returns:
+        dict: {"job_id", "attempt_count", "cumulative_runtime_seconds", "status_counts" (a dict of status -> count), "last_status" (the most recent attempt's status, or None), "incomplete_attempts"}.
+    """
+    try:
+        historical_data = json.loads(Path(history_file).read_text(encoding = "utf-8"))
+    except (OSError, json.JSONDecodeError):
+        historical_data = []
+
+    # Every real launch writes a "created" entry AND, once
+    # run_snakemake finishes, exactly one terminal "completed" or
+    # "failed" entry -- "created" is a lifecycle marker, not an
+    # outcome, so it's excluded here to avoid double-counting one
+    # attempt as two. (A "created" with no matching terminal entry
+    # after it means the process itself died mid-run, e.g. a power
+    # loss -- counted separately below rather than silently ignored.)
+    terminal = [entry for entry in historical_data if entry.get("status") in ("completed", "failed")]
+    created_count = sum(1 for entry in historical_data if entry.get("status") == "created")
+
+    status_counts: dict[str, int] = {}
+    cumulative_runtime_seconds = 0.0
+    for entry in terminal:
+        status = entry["status"]
+        status_counts[status] = status_counts.get(status, 0) + 1
+        cumulative_runtime_seconds += float(entry.get("runtime_seconds") or 0.0)
+
+    return {
+        "job_id": job_id,
+        "attempt_count": len(terminal),
+        "cumulative_runtime_seconds": cumulative_runtime_seconds,
+        "status_counts": status_counts,
+        "last_status": terminal[-1]["status"] if terminal else None,
+        # Started but never reached a terminal status (process died
+        # mid-run) -- a real gap a report should be able to flag.
+        "incomplete_attempts": max(0, created_count - len(terminal)),
+    }
+
 class PipelineJob:
     """
     Class which manages the lifecycle and job metadata for a single pipeline run.
@@ -345,36 +401,4 @@ class PipelineJob:
         Returns:
             dict: {"job_id", "attempt_count", "cumulative_runtime_seconds", "status_counts" (a dict of status -> count), "last_status" (the most recent attempt's status, or None)}.
         """
-        history_file = self.job_dir / "historical_metadata.json"
-        try:
-            historical_data = json.loads(history_file.read_text(encoding = "utf-8"))
-        except (OSError, json.JSONDecodeError):
-            historical_data = []
-
-        # Every real launch writes a "created" entry AND, once
-        # run_snakemake finishes, exactly one terminal "completed" or
-        # "failed" entry -- "created" is a lifecycle marker, not an
-        # outcome, so it's excluded here to avoid double-counting one
-        # attempt as two. (A "created" with no matching terminal entry
-        # after it means the process itself died mid-run, e.g. a power
-        # loss -- counted separately below rather than silently ignored.)
-        terminal = [entry for entry in historical_data if entry.get("status") in ("completed", "failed")]
-        created_count = sum(1 for entry in historical_data if entry.get("status") == "created")
-
-        status_counts: dict[str, int] = {}
-        cumulative_runtime_seconds = 0.0
-        for entry in terminal:
-            status = entry["status"]
-            status_counts[status] = status_counts.get(status, 0) + 1
-            cumulative_runtime_seconds += float(entry.get("runtime_seconds") or 0.0)
-
-        return {
-            "job_id": self.job_id,
-            "attempt_count": len(terminal),
-            "cumulative_runtime_seconds": cumulative_runtime_seconds,
-            "status_counts": status_counts,
-            "last_status": terminal[-1]["status"] if terminal else None,
-            # Started but never reached a terminal status (process died
-            # mid-run) -- a real gap a report should be able to flag.
-            "incomplete_attempts": max(0, created_count - len(terminal)),
-        }
+        return aggregate_job_history(self.job_dir / "historical_metadata.json", self.job_id)

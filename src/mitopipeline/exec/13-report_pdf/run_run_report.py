@@ -78,7 +78,12 @@ def main() -> int:
         for sample_id in args.sample_id
     ]
     generated_at = datetime.now(timezone.utc).strftime("%d %b %Y, %H:%M UTC")
-    run_data = collect_run_report_data(args.job_id, generated_at, samples)
+    run_data = collect_run_report_data(
+        args.job_id, generated_at, samples, job_dir = args.job_dir,
+        current_metadata_json = args.job_dir / "current_metadata.json",
+        historical_metadata_json = args.job_dir / "historical_metadata.json",
+        global_log_file = args.global_log_file,
+    )
 
     markdown_path = args.output_dir / f"{args.job_id}.run_report.md"
     write_run_report(run_data, markdown_path)

@@ -26,6 +26,11 @@ STATUS_BADGE_STYLES: dict[str, tuple[str, str]] = {
     "WARN": ("#fff3cd", "#856404"),
     "FAIL": ("#f8d7da", "#721c24"),
     "NOT ASSESSED": ("#e2e3e5", "#383d41"),
+    # Real PipelineJob lifecycle statuses (current_metadata.json's own "status" field).
+    "COMPLETED": ("#d4edda", "#155724"),
+    "FAILED": ("#f8d7da", "#721c24"),
+    "CREATED": ("#e2e3e5", "#383d41"),
+    "RUNNING": ("#fff3cd", "#856404"),
 }
 
 def render_typst_preamble(sample_id: str | None = None) -> str:

@@ -9,6 +9,7 @@ an earlier stage already wrote, never re-derived or fabricated.
 # Imports
 from dataclasses import dataclass, field
 from pathlib import Path
+from mitopipeline.utils.reporting.compute_metrics import MachineInfo, StageComputeSummary
 from mitopipeline.utils.statistics.models import AnnotationStatistics, AssemblyStatistics, BlastStatistics
 
 @dataclass(frozen = True, slots = True)
@@ -168,6 +169,10 @@ class SampleReportData:
     recruited_read_qc: ReadQCSummary | None = None
     aggregated_data_dir: Path | None = None
     rescue_attempts: tuple[RescueAttemptSummary, ...] = field(default_factory = tuple)
+    compute_summary: tuple[StageComputeSummary, ...] = field(default_factory = tuple)
+    log_dir: Path | None = None
+    metrics_dir: Path | None = None
+    machine_info: MachineInfo | None = None
 
     @property
     def rescued(self) -> bool:
@@ -198,6 +203,30 @@ class PhylogenySummary:
     tree_figure_png: Path | None = None
 
 @dataclass(frozen = True, slots = True)
+class JobMetadataSummary:
+    """
+    This job's own real lifecycle metadata, read from PipelineJob's
+    own current_metadata.json/historical_metadata.json -- never
+    re-derived or guessed.
+
+    Attributes:
+        status (str | None): The most recent completed/failed attempt's own real status, or None if unavailable.
+        start_time (str | None): The current attempt's own real start timestamp, or None.
+        runtime_seconds (float | None): The current attempt's own real wall-clock runtime, or None.
+        sample_count (int | None): The current attempt's own real sample count, or None.
+        attempt_count (int): How many real terminal (completed/failed) attempts this job_id has ever had.
+        cumulative_runtime_seconds (float): Summed real runtime across every terminal attempt.
+        incomplete_attempts (int): Attempts that started but never reached a terminal status (e.g. the process died mid-run).
+    """
+    status: str | None = None
+    start_time: str | None = None
+    runtime_seconds: float | None = None
+    sample_count: int | None = None
+    attempt_count: int = 0
+    cumulative_runtime_seconds: float = 0.0
+    incomplete_attempts: int = 0
+
+@dataclass(frozen = True, slots = True)
 class RunReportData:
     """
     Everything #360's run-level report needs -- every sample's own
@@ -209,10 +238,19 @@ class RunReportData:
         job_id (str): The pipeline job id.
         generated_at (str): An ISO-8601 UTC timestamp for when this report was generated.
         samples (tuple[SampleReportData, ...]): Every sample's own report data, in manifest order.
+        job_metadata (JobMetadataSummary | None): This job's own real lifecycle metadata, or None if unavailable.
+        compute_summary (tuple[StageComputeSummary, ...]): The real batch-wide compute cost per stage, across every sample.
+        job_dir (Path | None): The job's own output root, for linking to logs/metrics directly.
+        global_log_file (Path | None): The job's own shared global log file, or None.
     """
     job_id: str
     generated_at: str
     samples: tuple[SampleReportData, ...]
+    job_metadata: JobMetadataSummary | None = None
+    compute_summary: tuple[StageComputeSummary, ...] = field(default_factory = tuple)
+    job_dir: Path | None = None
+    global_log_file: Path | None = None
+    machine_info: MachineInfo | None = None
 
     @property
     def verdict_counts(self) -> dict[str, int]:

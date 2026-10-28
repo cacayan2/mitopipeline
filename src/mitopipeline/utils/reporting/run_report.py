@@ -14,11 +14,14 @@ from mitopipeline.utils.reporting.markdown_report import (
     basename_code,
     file_link,
     format_bp,
+    format_duration,
     format_integer,
+    format_memory_mb,
     format_percent,
     humanize_enum,
     markdown_table,
     pluralize,
+    render_machine_info_rows,
     status_badge,
     wrap_cell_text,
 )
@@ -37,6 +40,69 @@ def render_run_overview_section(run_data: RunReportData) -> list[str]:
         ["Not assessed", status_badge("NOT ASSESSED") + f" {format_integer(counts.get('not assessed', 0))}"],
     ]
     return ["## Run Overview", "", markdown_table(["Field", "Value"], rows), ""]
+
+def render_job_metadata_section(run_data: RunReportData) -> list[str]:
+    """Renders this job's own real lifecycle metadata, compute environment, batch-wide per-stage resource cost, and exactly where to find the underlying logs/metrics -- all of it already being recorded on every real run, surfaced here rather than left unread."""
+    lines = ["## Job Execution Metadata", ""]
+
+    meta = run_data.job_metadata
+    if meta is not None:
+        # This report is itself one of the last rules in the same
+        # Snakemake run it's describing, so current_metadata.json's
+        # own terminal "completed"/"failed" entry -- written only
+        # after the whole run finishes -- is never visible yet; its
+        # status structurally always still reads "created" here. Shown
+        # honestly as "Running" with a real elapsed-so-far duration
+        # (collect_job_metadata() already substitutes this for the
+        # stale runtime_seconds=0.0 placeholder), not a misleading
+        # "Created" badge implying nothing happened.
+        still_running = meta.status == "created"
+        status_display = "Running" if still_running else (meta.status.upper() if meta.status else None)
+        run_length_label = "Elapsed so far (job was still running when this report was generated)" if still_running else "Run length"
+        rows = [
+            ["Status", status_badge(status_display) if status_display else "Not available"],
+            ["Started", meta.start_time or "Not available"],
+            [run_length_label, format_duration(meta.runtime_seconds) if meta.runtime_seconds is not None else "Not available"],
+            ["Samples processed", format_integer(meta.sample_count) if meta.sample_count is not None else "Not available"],
+            ["Total attempts (all time)", format_integer(meta.attempt_count)],
+            ["Cumulative runtime (all attempts)", format_duration(meta.cumulative_runtime_seconds)],
+            ["Incomplete attempts", format_integer(meta.incomplete_attempts)],
+        ]
+        lines += [markdown_table(["Field", "Value"], rows), ""]
+    else:
+        lines += ["_Job lifecycle metadata was not available for this run._", ""]
+
+    info = run_data.machine_info
+    if info is not None:
+        lines += ["### Compute Environment", "", markdown_table(["Field", "Value"], render_machine_info_rows(info)), ""]
+
+    if run_data.compute_summary:
+        rows = [
+            [
+                basename_code(s.stage), s.tools or "—", format_integer(s.invocation_count),
+                format_duration(s.total_runtime_seconds), format_duration(s.total_cpu_seconds),
+                format_memory_mb(s.peak_memory_mb),
+            ]
+            for s in run_data.compute_summary
+        ]
+        lines += [
+            "### Per-Stage Compute Summary (every sample)", "",
+            markdown_table(["Stage", "Tool(s)", "Invocations", "Total Runtime", "Total CPU Time", "Peak Memory"], rows), "",
+        ]
+
+    access_lines = []
+    if run_data.job_dir is not None:
+        access_lines.append(f"- **Job output root:** `{run_data.job_dir}`")
+    if run_data.global_log_file is not None:
+        access_lines.append(f"- **Shared global log:** `{run_data.global_log_file}`")
+    if run_data.job_dir is not None:
+        access_lines.append(f"- **Per-sample/per-stage logs:** `{run_data.job_dir}/logs/<stage>/<sample>.log`")
+        access_lines.append(f"- **Raw compute metrics:** `{run_data.job_dir}/metrics/<stage>/<sample>/` (one real JSON record per tool invocation)")
+        access_lines.append(f"- **Job status history:** `{run_data.job_dir}/current_metadata.json`, `{run_data.job_dir}/historical_metadata.json`")
+    if access_lines:
+        lines += ["**Accessing the underlying data:**", "", *access_lines, ""]
+
+    return lines
 
 def render_sample_results_table_section(run_data: RunReportData) -> list[str]:
     """Renders a compact per-sample results table: assembly status, length, contig count, GC, core gene count, BLAST identity, verdict."""
@@ -127,6 +193,7 @@ def render_run_report(run_data: RunReportData, report_path: str | Path) -> str:
             sample_count_label = pluralize(len(run_data.samples), "sample"), generated_at = run_data.generated_at,
         ),
         *render_run_overview_section(run_data),
+        *render_job_metadata_section(run_data),
         *render_sample_results_table_section(run_data),
         *render_sample_status_section(run_data, report_path),
         *render_archival_summary_section(run_data),

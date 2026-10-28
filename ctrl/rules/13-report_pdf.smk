@@ -92,6 +92,8 @@ rule sample_report:
         recruited_reads_fastqc_dir = lambda wc, input: _recruited_reads_fastqc_dir(input.selection),
         aggregated_data_dir = str(JOB_DIR / "aggregated_data"),
         rescue_dir = str(JOB_DIR / "07-assembly_rescue" / "{sample}"),
+        metrics_dir = str(JOB_DIR / "metrics"),
+        log_dir = str(JOB_DIR / "logs"),
         pandoc_bin = config["stage_options"]["report_export"]["pandoc"]["bin"],
         pdf_engine = config["stage_options"]["report_export"]["pandoc"]["engine"],
         output_dir = str(JOB_DIR / "13-report_pdf" / "{sample}"),
@@ -132,6 +134,8 @@ rule sample_report:
             --recruited-r2-fastqc-zip "$RECRUITED_FASTQC_DIR/recruited_R2_fastqc.zip" \
             --aggregated-data-dir {params.aggregated_data_dir:q} \
             --rescue-dir {params.rescue_dir:q} \
+            --metrics-dir {params.metrics_dir:q} \
+            --log-dir {params.log_dir:q} \
             --pandoc-bin {params.pandoc_bin:q} \
             --pdf-engine {params.pdf_engine:q} \
             --output-dir {params.output_dir:q} \

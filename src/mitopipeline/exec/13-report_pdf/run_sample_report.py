@@ -50,6 +50,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--recruited-r2-fastqc-zip", type = Path, default = None, help = "The selected attempt's own recruited-reads R2 FastQC zip, written by GetOrganelleRunner.")
     parser.add_argument("--aggregated-data-dir", type = Path, default = None, help = "The run's own consolidated aggregated_data/ directory, written by run_data_aggregation.py.")
     parser.add_argument("--rescue-dir", type = Path, default = None, help = "This sample's own 07-assembly_rescue/ directory, if rescue was configured.")
+    parser.add_argument("--metrics-dir", type = Path, default = None, help = "The job's own metrics/ directory, filtered to this sample's own real compute-metrics records.")
+    parser.add_argument("--log-dir", type = Path, default = None, help = "The job's own logs/ directory, for linking to this sample's own real per-stage log files.")
     parser.add_argument("--pandoc-bin", type = str, default = "pandoc", help = "The pandoc executable name. Defaults to 'pandoc'.")
     parser.add_argument("--pdf-engine", type = str, default = "typst", help = "The PDF engine pandoc should use. Defaults to 'typst'.")
     parser.add_argument("--output-dir", type = Path, required = True, help = "The directory to write this sample's report to.")
@@ -103,6 +105,8 @@ def main() -> int:
         read_qc_image_dir = args.output_dir / "read_qc_images",
         aggregated_data_dir = args.aggregated_data_dir,
         rescue_dir = args.rescue_dir,
+        metrics_dir = args.metrics_dir,
+        log_dir = args.log_dir,
         logger = logger,
     )
 

@@ -201,6 +201,31 @@ def _validation_sentence(report_data: SampleReportData) -> str:
         f"plausibility verdict of {humanize_enum(report_data.overall_verdict)}."
     )
 
+def _environment_sentence(report_data: SampleReportData) -> str:
+    """Describes the real compute environment this sample was processed on (non-identifying specs only)."""
+    info = report_data.machine_info
+    if info is None:
+        return ""
+
+    cpu_clause = f"{info.cpu_model}" if info.cpu_model else f"a {info.architecture} CPU"
+    if info.cpu_physical_cores is not None and info.cpu_logical_threads is not None:
+        cpu_clause += f" ({info.cpu_physical_cores} physical core(s), {info.cpu_logical_threads} logical thread(s)"
+        cpu_clause += f", {info.cpu_clock_mhz:.0f} MHz)" if info.cpu_clock_mhz is not None else ")"
+    memory_clause = f", {info.total_memory_gb} GiB RAM" if info.total_memory_gb is not None else ""
+    if info.memory_type or info.memory_speed_mhz is not None:
+        memory_clause += " (" + " ".join(filter(None, [
+            info.memory_type, f"{info.memory_speed_mhz} MHz" if info.memory_speed_mhz is not None else None,
+        ])) + ")"
+    gpu_clause = (
+        f" A {info.gpu_model} GPU was present but is not utilized by any part of this pipeline "
+        f"(reported for reproducibility and any future GPU-accelerated tooling)."
+        if info.gpu_model else ""
+    )
+    return (
+        f" Computation was performed on a {info.os_name} {info.architecture} host running {cpu_clause}{memory_clause}, "
+        f"Python {info.python_version}.{gpu_clause}"
+    )
+
 def render_methods_text(report_data: SampleReportData) -> str:
     """
     Builds the full live methods paragraph for one sample -- concise,
@@ -224,4 +249,5 @@ def render_methods_text(report_data: SampleReportData) -> str:
     text += _visualization_sentence(report_data)
     text += _phylogeny_sentence(report_data)
     text += _validation_sentence(report_data)
+    text += _environment_sentence(report_data)
     return text

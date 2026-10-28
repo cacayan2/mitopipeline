@@ -14,6 +14,8 @@ from mitopipeline.utils.reporting.markdown_report import (
     escape_markdown_cell,
     escape_markdown_text,
     file_link,
+    format_duration,
+    format_memory_mb,
     format_number_in_text,
     format_scientific_name,
     humanize_enum,
@@ -22,6 +24,7 @@ from mitopipeline.utils.reporting.markdown_report import (
     markdown_table,
     pluralize,
     render_aggregated_data_section,
+    render_compute_resources_section,
     render_phylogeny_section,
     render_read_qc_section,
     render_sample_report,
@@ -296,6 +299,57 @@ def test_render_aggregated_data_section_links_real_archival_materials(tmp_path: 
     # Files that don't exist (no readiness report/checksums produced in this fixture) are simply omitted.
     assert "Submission readiness report" not in text
     assert "MD5 checksums" not in text
+
+def test_format_duration_drops_leading_zero_units() -> None:
+    assert format_duration(45.2) == "45.2s"
+    assert format_duration(182.1) == "3m 2.1s"
+    assert format_duration(3840.0) == "1h 4m 0.0s"
+
+def test_format_memory_mb_switches_to_gb_above_1024() -> None:
+    assert format_memory_mb(512.3) == "512.3 MB"
+    assert format_memory_mb(2150.4) == "2.10 GB"
+
+def test_render_compute_resources_section_shows_not_available_when_missing() -> None:
+    lines = render_compute_resources_section(_empty_sample())
+    assert "_Compute metrics were not available for this sample._" in lines
+
+def test_render_compute_resources_section_shows_real_per_stage_costs_and_access_paths() -> None:
+    from mitopipeline.utils.reporting.compute_metrics import StageComputeSummary
+    compute = (
+        StageComputeSummary(stage = "08b-annotation", tools = "mitos2", invocation_count = 2,
+                            total_runtime_seconds = 8.0, total_cpu_seconds = 7.5, peak_memory_mb = 150.0),
+    )
+    sample = SampleReportData(
+        sample_id = "sample1", metadata = {}, fastp_stats = None,
+        assembly = None, blast = None, annotation = None, overall_verdict = None,
+        compute_summary = compute, log_dir = Path("/outputs/job1/logs"), metrics_dir = Path("/outputs/job1/metrics"),
+    )
+    text = "\n".join(render_compute_resources_section(sample))
+    assert "08b-annotation" in text
+    assert "mitos2" in text
+    assert "7.5s" in text
+    assert "150.0 MB" in text
+    assert "**Log files:**" in text
+    assert "**Raw compute metrics:**" in text
+
+def test_render_compute_resources_section_includes_the_real_machine_info_table() -> None:
+    from mitopipeline.utils.reporting.compute_metrics import MachineInfo
+    info = MachineInfo(
+        os_name = "Linux", os_release = "6.18.54.1", architecture = "x86_64",
+        cpu_model = "AMD EPYC 7763 64-Core Processor", cpu_physical_cores = 32, cpu_logical_threads = 64,
+        cpu_clock_mhz = 2450.0, total_memory_gb = 128.0, memory_speed_mhz = 3200, memory_type = "DDR4",
+        gpu_model = None, python_version = "3.12.3",
+    )
+    sample = SampleReportData(
+        sample_id = "sample1", metadata = {}, fastp_stats = None,
+        assembly = None, blast = None, annotation = None, overall_verdict = None,
+        machine_info = info,
+    )
+    text = "\n".join(render_compute_resources_section(sample))
+    assert "AMD EPYC 7763 64-Core Processor" in text
+    assert "32 physical / 64 logical (threads)" in text
+    assert "128.0 GiB" in text
+    assert "No GPU detected" in text
 
 def test_render_aggregated_data_section_handles_a_sample_with_nothing_aggregated(tmp_path: Path) -> None:
     sample = SampleReportData(

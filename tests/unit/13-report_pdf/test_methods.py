@@ -8,6 +8,7 @@ rescue history reflected only when it actually happened.
 
 # Imports
 from mitopipeline.utils.reporting.methods import render_methods_text
+from mitopipeline.utils.reporting.compute_metrics import MachineInfo
 from mitopipeline.utils.reporting.models import (
     AnnotationConfigSummary,
     AssemblyConfigSummary,
@@ -159,3 +160,41 @@ def test_methods_text_renders_seed_file_as_basename_not_full_path() -> None:
     text = render_methods_text(sample)
     assert "`12S_rRNA.fasta`" in text
     assert "/home/" not in text
+
+def _machine_info(**overrides) -> MachineInfo:
+    defaults = dict(
+        os_name = "Linux", os_release = "6.18.54.1", architecture = "x86_64",
+        cpu_model = "Intel(R) Xeon(R) Platinum 8259CL CPU @ 2.50GHz",
+        cpu_physical_cores = 4, cpu_logical_threads = 8, cpu_clock_mhz = 2500.0,
+        total_memory_gb = 16.0, memory_speed_mhz = 3200, memory_type = "DDR4",
+        gpu_model = None, python_version = "3.12.3",
+    )
+    defaults.update(overrides)
+    return MachineInfo(**defaults)
+
+def test_methods_text_describes_the_real_compute_environment() -> None:
+    sample = _sample(machine_info = _machine_info())
+    text = render_methods_text(sample)
+    assert "Linux x86_64" in text
+    assert "Intel(R) Xeon(R) Platinum 8259CL CPU @ 2.50GHz" in text
+    assert "4 physical core(s), 8 logical thread(s)" in text
+    assert "2500 MHz" in text
+    assert "16.0 GiB RAM" in text
+    assert "DDR4" in text
+    assert "3200 MHz" in text
+    assert "Python 3.12.3" in text
+
+def test_methods_text_mentions_gpu_with_not_utilized_disclaimer_when_present() -> None:
+    sample = _sample(machine_info = _machine_info(gpu_model = "NVIDIA GeForce RTX 3080"))
+    text = render_methods_text(sample)
+    assert "NVIDIA GeForce RTX 3080" in text
+    assert "not utilized by any part of this pipeline" in text
+
+def test_methods_text_omits_gpu_clause_when_no_gpu_detected() -> None:
+    sample = _sample(machine_info = _machine_info(gpu_model = None))
+    text = render_methods_text(sample)
+    assert "GPU" not in text
+
+def test_methods_text_omits_environment_sentence_when_machine_info_unavailable() -> None:
+    text = render_methods_text(_sample())
+    assert "Computation was performed on" not in text

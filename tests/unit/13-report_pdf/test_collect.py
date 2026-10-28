@@ -13,6 +13,7 @@ import zipfile
 from pathlib import Path
 import pytest
 from mitopipeline.utils.reporting.collect import (
+    collect_job_metadata,
     collect_phylogeny_summary,
     collect_read_qc,
     collect_rescue_summary,
@@ -309,3 +310,51 @@ def test_collect_run_report_data_joins_samples(tmp_path: Path) -> None:
     run_data = collect_run_report_data("job1", "2026-10-27T00:00:00Z", [sample])
     assert run_data.job_id == "job1"
     assert len(run_data.samples) == 1
+
+def test_collect_job_metadata_merges_current_and_historical(tmp_path: Path) -> None:
+    current = _write_json(tmp_path / "current_metadata.json", {
+        "status": "completed", "start_time": "2026-10-28T09:28:39", "runtime_seconds": 217.6, "sample_count": 3,
+    })
+    historical = tmp_path / "historical_metadata.json"
+    historical.write_text(json.dumps([
+        {"status": "created", "runtime_seconds": 0.0},
+        {"status": "completed", "runtime_seconds": 217.6},
+        {"status": "created", "runtime_seconds": 0.0},
+        {"status": "failed", "runtime_seconds": 5.2},
+    ]))
+
+    meta = collect_job_metadata(current, historical, "job1")
+
+    assert meta.status == "completed"
+    assert meta.runtime_seconds == 217.6
+    assert meta.sample_count == 3
+    assert meta.attempt_count == 2
+    assert round(meta.cumulative_runtime_seconds, 1) == 222.8
+    assert meta.incomplete_attempts == 0
+
+def test_collect_job_metadata_none_when_nothing_available(tmp_path: Path) -> None:
+    assert collect_job_metadata(None, None, "job1") is None
+    assert collect_job_metadata(tmp_path / "missing.json", tmp_path / "also_missing.json", "job1") is None
+
+def test_collect_job_metadata_handles_current_only(tmp_path: Path) -> None:
+    current = _write_json(tmp_path / "current_metadata.json", {"status": "completed", "runtime_seconds": 10.0})
+    meta = collect_job_metadata(current, None, "job1")
+    assert meta.status == "completed"
+    assert meta.attempt_count == 0
+
+def test_collect_job_metadata_substitutes_real_elapsed_time_for_a_still_running_job(tmp_path: Path) -> None:
+    """Regression: the report-generation rule runs as part of the same
+    Snakemake DAG it's reporting on, so current_metadata.json's own
+    status is always still "created" (with the original
+    runtime_seconds=0.0 placeholder) at the moment this is read --
+    the terminal "completed" entry is written only after the whole
+    run, including this report, finishes. A real elapsed-so-far
+    duration must be substituted, not a stale zero."""
+    from datetime import datetime, timedelta
+    start_time = (datetime.now() - timedelta(seconds = 30)).isoformat()
+    current = _write_json(tmp_path / "current_metadata.json", {
+        "status": "created", "start_time": start_time, "runtime_seconds": 0.0,
+    })
+    meta = collect_job_metadata(current, None, "job1")
+    assert meta.status == "created"
+    assert meta.runtime_seconds >= 29.0

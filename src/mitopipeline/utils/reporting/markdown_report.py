@@ -13,6 +13,7 @@ import re
 from datetime import datetime, timezone
 from pathlib import Path
 from mitopipeline.utils.archival.field_hints import RERUN_NOTE, field_hint
+from mitopipeline.utils.reporting.compute_metrics import MachineInfo
 from mitopipeline.utils.reporting.methods import render_methods_text
 from mitopipeline.utils.reporting.models import SampleReportData
 from mitopipeline.utils.reporting.typst_style import (
@@ -188,6 +189,24 @@ def format_percent(value: float, fraction: bool = False) -> str:
     """Formats a percentage value; fraction=True scales a 0-1 ratio to a percentage first."""
     if fraction: value *= 100.0
     return f"{value:.2f}%"
+
+def format_duration(seconds: float) -> str:
+    """Formats a real runtime duration as "Hh Mm Ss", dropping any leading all-zero unit (e.g. "45.2s", "3m 2.1s", "1h 4m 0.0s")."""
+    seconds = float(seconds)
+    hours, remainder = divmod(seconds, 3600)
+    minutes, remainder_seconds = divmod(remainder, 60)
+    if hours >= 1:
+        return f"{int(hours)}h {int(minutes)}m {remainder_seconds:.1f}s"
+    if minutes >= 1:
+        return f"{int(minutes)}m {remainder_seconds:.1f}s"
+    return f"{remainder_seconds:.1f}s"
+
+def format_memory_mb(megabytes: float) -> str:
+    """Formats a real peak-memory value in MB, switching to GB above 1024 MB (e.g. "512.3 MB", "2.10 GB")."""
+    megabytes = float(megabytes)
+    if megabytes >= 1024:
+        return f"{megabytes / 1024:.2f} GB"
+    return f"{megabytes:.1f} MB"
 
 def format_number_in_text(text: str) -> str:
     """
@@ -459,6 +478,78 @@ def render_validation_section(report_data: SampleReportData) -> list[str]:
         lines += [markdown_table(["Check", "Verdict", "Reason"], rows), ""]
     return lines
 
+def render_machine_info_rows(info: MachineInfo) -> list[list[str]]:
+    """
+    Builds the real machine-spec table rows shared by both the
+    per-sample and run-level reports -- deliberately only
+    non-identifying specs (no hostname/username/IP). A GPU row always
+    appears when one was detected, carrying a fixed disclaimer that
+    this pipeline doesn't use it (recorded for reproducibility and any
+    future GPU-accelerated tooling, not because anything here runs on
+    it today).
+
+    Args:
+        info (MachineInfo): The real collected machine specs.
+
+    Returns:
+        list[list[str]]: One [field, value] row per spec.
+    """
+    cpu_cores_value = "Not available"
+    if info.cpu_physical_cores is not None or info.cpu_logical_threads is not None:
+        physical = format_integer(info.cpu_physical_cores) if info.cpu_physical_cores is not None else "?"
+        logical = format_integer(info.cpu_logical_threads) if info.cpu_logical_threads is not None else "?"
+        cpu_cores_value = f"{physical} physical / {logical} logical (threads)"
+
+    memory_spec_value = "Not available"
+    if info.memory_type or info.memory_speed_mhz is not None:
+        memory_spec_value = " ".join(filter(None, [
+            info.memory_type, f"{info.memory_speed_mhz} MHz" if info.memory_speed_mhz is not None else None,
+        ]))
+
+    rows = [
+        ["Operating system", f"{info.os_name} {info.os_release}"],
+        ["Architecture", info.architecture],
+        ["CPU model", info.cpu_model or "Not available"],
+        ["CPU cores (physical / logical)", cpu_cores_value],
+        ["CPU clock speed", f"{info.cpu_clock_mhz:.0f} MHz" if info.cpu_clock_mhz is not None else "Not available"],
+        ["Total RAM", f"{info.total_memory_gb} GiB" if info.total_memory_gb is not None else "Not available"],
+        ["RAM speed / type", memory_spec_value],
+        [
+            "GPU",
+            f"{info.gpu_model} (not utilized by any part of this pipeline; reported for reproducibility and any future GPU-accelerated tooling)"
+            if info.gpu_model else "No GPU detected",
+        ],
+        ["Python version", info.python_version],
+    ]
+    return rows
+
+def render_compute_resources_section(report_data: SampleReportData) -> list[str]:
+    """Renders this sample's own real compute environment and per-stage compute cost, plus exactly where to find the underlying raw metrics/log files."""
+    lines = ["## Compute Resources", ""]
+    if report_data.machine_info is not None:
+        lines += ["### Compute Environment", "", markdown_table(["Field", "Value"], render_machine_info_rows(report_data.machine_info)), ""]
+    if not report_data.compute_summary:
+        return [*lines, "_Compute metrics were not available for this sample._", ""]
+
+    rows = [
+        [
+            basename_code(s.stage), s.tools or "—", format_integer(s.invocation_count),
+            format_duration(s.total_runtime_seconds), format_duration(s.total_cpu_seconds),
+            format_memory_mb(s.peak_memory_mb),
+        ]
+        for s in report_data.compute_summary
+    ]
+    lines += [markdown_table(["Stage", "Tool(s)", "Invocations", "Runtime", "CPU time", "Peak memory"], rows), ""]
+
+    access_lines = []
+    if report_data.log_dir is not None:
+        access_lines.append(f"- **Log files:** `{report_data.log_dir}/<stage>/{report_data.sample_id}.log` (one per real stage this sample went through)")
+    if report_data.metrics_dir is not None:
+        access_lines.append(f"- **Raw compute metrics:** `{report_data.metrics_dir}/<stage>/{report_data.sample_id}/` (one real JSON record per tool invocation -- runtime, CPU, peak memory)")
+    if access_lines:
+        lines += ["**Accessing the underlying data:**", "", *access_lines, ""]
+    return lines
+
 def render_archival_section(report_data: SampleReportData) -> list[str]:
     """Renders this sample's real NCBI archival preparation status (#367-376)."""
     lines = ["## NCBI Archival Readiness", ""]
@@ -551,6 +642,7 @@ def render_sample_report(report_data: SampleReportData, report_path: str | Path)
         *render_visualization_section(report_data, report_path),
         *render_phylogeny_section(report_data, report_path),
         *render_archival_section(report_data),
+        *render_compute_resources_section(report_data),
         *render_methods_section(report_data),
     ]
     return "\n".join(lines)
