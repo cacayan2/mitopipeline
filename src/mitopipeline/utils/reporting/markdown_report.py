@@ -380,6 +380,10 @@ def render_read_qc_section(report_data: SampleReportData) -> list[str]:
             rows.append(["GC content", format_percent(qc.percent_gc)])
         rows.append(["FastQC verdict", status_badge(qc.overall_verdict)])
         lines += [markdown_table(["Metric", "Value"], rows), ""]
+        if qc.failed_modules:
+            lines += [f"Failed: {escape_markdown_cell(', '.join(qc.failed_modules))}", ""]
+        if qc.warned_modules:
+            lines += [f"Warned: {escape_markdown_cell(', '.join(qc.warned_modules))}", ""]
 
         if qc.representative_image_png is not None and Path(qc.representative_image_png).exists():
             image_path = str(Path(qc.representative_image_png).resolve())

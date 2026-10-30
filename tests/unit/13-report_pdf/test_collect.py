@@ -217,6 +217,27 @@ def test_collect_read_qc_overall_verdict_is_worst_of_r1_and_r2(tmp_path: Path) -
     summary = collect_read_qc(r1, r2)
 
     assert summary.overall_verdict == "WARN"
+    assert summary.failed_modules == ()
+    assert summary.warned_modules == ("Per sequence GC content",)
+
+def test_collect_read_qc_reports_failed_and_warned_module_names(tmp_path: Path) -> None:
+    r1 = _write_fastqc_zip(
+        tmp_path / "r1.zip",
+        verdicts = "PASS\tBasic Statistics\tx\nFAIL\tPer base sequence quality\tx\nWARN\tAdapter Content\tx\n",
+    )
+    r2 = _write_fastqc_zip(
+        tmp_path / "r2.zip",
+        verdicts = "WARN\tPer base sequence quality\tx\nFAIL\tSequence Duplication Levels\tx\n",
+    )
+
+    summary = collect_read_qc(r1, r2)
+
+    assert summary.overall_verdict == "FAIL"
+    # "Per base sequence quality" FAILs on R1 and only WARNs on R2 --
+    # the worse of the two (FAIL) must win, not whichever read is
+    # processed last.
+    assert summary.failed_modules == ("Per base sequence quality", "Sequence Duplication Levels")
+    assert summary.warned_modules == ("Adapter Content",)
 
 def test_collect_read_qc_none_when_both_zips_missing(tmp_path: Path) -> None:
     assert collect_read_qc(tmp_path / "missing_r1.zip", tmp_path / "missing_r2.zip") is None

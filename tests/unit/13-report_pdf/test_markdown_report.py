@@ -230,6 +230,26 @@ def test_render_read_qc_section_shows_real_stats_per_readset(tmp_path: Path) -> 
     # One passes, one warns -- both badges render, never collapsed to a single value.
     assert "Not available" in text  # the missing recruited-reads row
 
+def test_render_read_qc_section_shows_fail_and_warn_reasons() -> None:
+    sample = SampleReportData(
+        sample_id = "sample1", metadata = {}, fastp_stats = None,
+        assembly = None, blast = None, annotation = None, overall_verdict = None,
+        raw_read_qc = ReadQCSummary(
+            total_sequences = 25014, percent_gc = 40.0, sequence_length = "100", overall_verdict = "FAIL",
+            failed_modules = ("Per base sequence quality",), warned_modules = ("Adapter Content",),
+        ),
+        trimmed_read_qc = ReadQCSummary(
+            total_sequences = 25014, percent_gc = 40.0, sequence_length = "100", overall_verdict = "PASS",
+        ),
+        recruited_read_qc = None,
+    )
+    text = "\n".join(render_read_qc_section(sample))
+    assert "Failed: Per base sequence quality" in text
+    assert "Warned: Adapter Content" in text
+    # A clean PASS row never grows a reasons line with nothing to report.
+    assert text.count("Failed:") == 1
+    assert text.count("Warned:") == 1
+
 def test_render_read_qc_section_embeds_the_representative_figure(tmp_path: Path) -> None:
     image_path = tmp_path / "raw_per_base_quality.png"
     image_path.write_bytes(b"fake png bytes")

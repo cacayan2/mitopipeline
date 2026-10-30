@@ -396,13 +396,28 @@ def collect_read_qc(r1_zip: str | Path | None, r2_zip: str | Path | None,
     verdicts = [s.overall_verdict for s in (r1_summary, r2_summary) if s is not None]
     overall_verdict = max(verdicts, key = lambda v: verdict_rank.get(v, 0)) if verdicts else "PASS"
 
+    # Combines R1's and R2's own per-module calls into the single
+    # worst verdict per module name, so a module that FAILs on R1 but
+    # only WARNs on R2 is correctly reported as a FAIL reason, not
+    # silently dropped by whichever read happened second.
+    worst_module_verdict: dict[str, str] = {}
+    for summary in (r1_summary, r2_summary):
+        if summary is None:
+            continue
+        for module, verdict in summary.module_verdicts.items():
+            if verdict_rank.get(verdict, 0) > verdict_rank.get(worst_module_verdict.get(module, "PASS"), 0):
+                worst_module_verdict[module] = verdict
+    failed_modules = tuple(sorted(m for m, v in worst_module_verdict.items() if v == "FAIL"))
+    warned_modules = tuple(sorted(m for m, v in worst_module_verdict.items() if v == "WARN"))
+
     image_path = None
     if r1_zip is not None and image_output_path is not None:
         image_path = extract_fastqc_image(r1_zip, "per_base_quality.png", image_output_path, logger = logger)
 
     return ReadQCSummary(
         total_sequences = total_sequences, percent_gc = percent_gc, sequence_length = sequence_length,
-        overall_verdict = overall_verdict, representative_image_png = image_path,
+        overall_verdict = overall_verdict, failed_modules = failed_modules, warned_modules = warned_modules,
+        representative_image_png = image_path,
     )
 
 def _attempt_number(attempt_dir_name: str) -> int:

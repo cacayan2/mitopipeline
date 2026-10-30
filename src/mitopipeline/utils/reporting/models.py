@@ -114,12 +114,16 @@ class ReadQCSummary:
         percent_gc (float | None): The average of R1's and R2's own real %GC.
         sequence_length (str | None): FastQC's own real sequence-length value (R1/R2 always match in practice).
         overall_verdict (str): The worse of R1's and R2's own overall FastQC verdict (PASS/WARN/FAIL).
+        failed_modules (tuple[str, ...]): FastQC's own module names (from R1 and/or R2) that called FAIL -- empty when overall_verdict is PASS.
+        warned_modules (tuple[str, ...]): FastQC's own module names that called WARN and didn't also FAIL on the other read -- empty when overall_verdict is PASS.
         representative_image_png (Path | None): R1's own real per-base-quality chart, extracted from its FastQC zip, or None if unavailable.
     """
     total_sequences: int | None
     percent_gc: float | None
     sequence_length: str | None
     overall_verdict: str
+    failed_modules: tuple[str, ...] = ()
+    warned_modules: tuple[str, ...] = ()
     representative_image_png: Path | None = None
 
 @dataclass(frozen = True, slots = True)
