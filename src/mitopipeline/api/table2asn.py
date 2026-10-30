@@ -111,12 +111,20 @@ class Table2AsnRunner(BaseTool):
             list[str]: The command to run table2asn.
         """
         self.output_basename.parent.mkdir(parents = True, exist_ok = True)
+        # Every path must be absolute, not just relative to the real
+        # process cwd: BaseTool.run() executes with cwd=self.working_dir
+        # (the sample's own subdirectory, matching v0.1.0's real
+        # convention), so a relative -o here resolves against THAT,
+        # not the project root -- confirmed directly against a real
+        # Snakemake run, where the rule's own relative JOB_DIR-based
+        # path doubled up underneath working_dir and table2asn failed
+        # with a bare "Error in command-line arguments."
         return [
             self.binary_path,
             "-t", str(self.submission_template_path.resolve()),
             "-i", str(self.fasta_path.resolve()),
             "-f", str(self.feature_table_path.resolve()),
-            "-o", str(self.output_basename.with_suffix(".sqn")),
+            "-o", str(self.output_basename.with_suffix(".sqn").resolve()),
             "-V", "vb",
             "-Z",
         ]

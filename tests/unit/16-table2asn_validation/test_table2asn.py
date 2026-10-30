@@ -35,7 +35,7 @@ def test_build_command_includes_template_fasta_tbl_and_output(tmp_path: Path) ->
     assert "-t" in command and command[command.index("-t") + 1] == str(runner.submission_template_path.resolve())
     assert "-i" in command and command[command.index("-i") + 1] == str(runner.fasta_path.resolve())
     assert "-f" in command and command[command.index("-f") + 1] == str(runner.feature_table_path.resolve())
-    assert "-o" in command and command[command.index("-o") + 1] == str(runner.output_basename.with_suffix(".sqn"))
+    assert "-o" in command and command[command.index("-o") + 1] == str(runner.output_basename.with_suffix(".sqn").resolve())
     assert "-V" in command and command[command.index("-V") + 1] == "vb"
     assert "-Z" in command
 
