@@ -185,7 +185,7 @@ def enabled_targets() -> list[str]:
         targets.extend(sample_target("05c-blast_hits", "{sample}.blast_hits.done"))
     if stage_enabled("06-contig_selection"):
         targets.extend(sample_target("06-contig_selection", "{sample}.contig_selection.done"))
-        # biological_validation (#414) lives in the same rule file and
+        # biological_validation lives in the same rule file and
         # extends this same stage's selection -- requested here too, so
         # `rule all` actually triggers it, not just contig_selection itself.
         targets.extend(sample_target("06-contig_selection", "{sample}.biological_validation.done"))
@@ -217,14 +217,14 @@ def enabled_targets() -> list[str]:
         targets.append(str(JOB_DIR / "aggregated_data" / "data_aggregation.done"))
     if stage_enabled("13-report_pdf"):
         targets.extend(sample_target("13-report_pdf", "{sample}.report_pdf.done"))
-        # The run-level report (#360) is a single job-level artifact
+        # The run-level report is a single job-level artifact
         # aggregating every sample, the same batch-level pattern as
         # #10/#11's own job-level targets above.
         targets.append(str(JOB_DIR / "13-report_pdf" / "run_report.done"))
-    # #367-369's SRA/BioSample metadata tables are genuinely job-level
+    # The SRA/BioSample metadata tables are genuinely job-level
     # artifacts (one table covering every sample, built in a single
     # call, the same real v0.1.0 design) -- job-level targets, not
-    # sample_target()'s per-sample expansion. #370's GenBank
+    # sample_target()'s per-sample expansion. The GenBank
     # submission folder is genuinely per-sample (each one depends
     # only on that sample's own selected assembly/annotation).
     if stage_enabled("14a-sra_archival"):

@@ -3,7 +3,7 @@ iqtree.py
 
 IQ-TREE wrapper for command building and execution -- infers a
 maximum-likelihood phylogeny from an aligned multi-sequence FASTA
-(#347), for a batch-level tree across this run's accepted samples.
+, for a batch-level tree across this run's accepted samples.
 """
 
 # Imports

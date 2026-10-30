@@ -1,7 +1,7 @@
 """
 sra_metadata.py
 
-Builds a reviewable NCBI SRA submission table (#368/#371) from the
+Builds a reviewable NCBI SRA submission table from the
 runtime manifest's own raw FASTQ paths plus the configured sequencing
 defaults -- manifest values always win over defaults, and a field
 neither source supplies is recorded in missing_fields rather than

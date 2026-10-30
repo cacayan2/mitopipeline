@@ -37,9 +37,34 @@ def test_readiness_record_ready_when_every_source_is_ready() -> None:
         sra_row = {"review_status": "READY", "missing_fields": ""},
         biosample_row = {"review_status": "READY", "missing_fields": ""},
         genbank_row = {"review_status": "READY", "missing_files": "", "missing_metadata": ""},
+        table2asn_row = {"status": "PASS"},
     )
     assert record["ready_for_review"] == "True"
     assert record["submission_blockers"] == ""
+
+def test_readiness_record_blocked_when_table2asn_has_not_run() -> None:
+    record = validate_archival_readiness(
+        sample_id = "sample1", organism = "Danio rerio",
+        raw_fastq_ready = True, assembly_ready = True, annotation_ready = True,
+        sra_row = {"review_status": "READY", "missing_fields": ""},
+        biosample_row = {"review_status": "READY", "missing_fields": ""},
+        genbank_row = {"review_status": "READY", "missing_files": "", "missing_metadata": ""},
+        table2asn_row = None,
+    )
+    assert record["ready_for_review"] == "False"
+    assert "table2asn validation has not run" in record["submission_blockers"]
+
+def test_readiness_record_blocked_when_table2asn_fails() -> None:
+    record = validate_archival_readiness(
+        sample_id = "sample1", organism = "Danio rerio",
+        raw_fastq_ready = True, assembly_ready = True, annotation_ready = True,
+        sra_row = {"review_status": "READY", "missing_fields": ""},
+        biosample_row = {"review_status": "READY", "missing_fields": ""},
+        genbank_row = {"review_status": "READY", "missing_files": "", "missing_metadata": ""},
+        table2asn_row = {"status": "FAIL", "blockers": "2 error-level message(s)"},
+    )
+    assert record["table2asn_ready"] == "False"
+    assert "table2asn validation failed" in record["submission_blockers"]
 
 def test_readiness_record_lists_real_blockers_when_not_ready() -> None:
     record = validate_archival_readiness(
@@ -109,7 +134,14 @@ def test_build_archival_validation_from_real_tsv_files(tmp_path: Path) -> None:
         "sample1\tDanio rerio\t/real/path.fasta\t/real/path.gff\tREADY\t\t\n"
     )
 
-    records = build_archival_validation(manifest, sra_tsv, biosample_tsv, genbank_tsv, tmp_path)
+    table2asn_dir = tmp_path / "table2asn"
+    table2asn_dir.mkdir()
+    (table2asn_dir / "sample1.table2asn_validation_result.json").write_text(
+        '{"sample_id": "sample1", "status": "PASS"}')
+
+    records = build_archival_validation(manifest, sra_tsv, biosample_tsv, genbank_tsv, tmp_path,
+                                        table2asn_results_dir = table2asn_dir)
 
     assert len(records) == 1
     assert records[0]["ready_for_review"] == "True"
+    assert records[0]["table2asn_ready"] == "True"

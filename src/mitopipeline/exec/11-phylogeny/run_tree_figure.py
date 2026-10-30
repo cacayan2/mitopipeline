@@ -1,7 +1,7 @@
 """
 run_tree_figure.py
 
-Execution layer for rendering IQ-TREE's own real tree (#436's output)
+Execution layer for rendering IQ-TREE's own real tree output
 as a labeled PNG figure for the run-level report. Job-level, batch-
 scoped -- the same scope as run_iqtree.py itself, not per-sample.
 

@@ -1,8 +1,8 @@
 """
 11-phylogeny.smk
 
-Aligns each sample's own real phylogenetic dataset with MAFFT (#348)
-and infers a maximum-likelihood phylogeny with IQ-TREE (#436) --
+Aligns each sample's own real phylogenetic dataset with MAFFT
+and infers a maximum-likelihood phylogeny with IQ-TREE --
 restored to v0.1.0's per-sample design: a sample's own tree (its
 assembled genome plus its own live-fetched BLAST references) never
 depends on how many other samples are in the same run.

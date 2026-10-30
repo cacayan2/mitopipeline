@@ -1,8 +1,8 @@
 """
 14b-biosample_archival.smk
 
-Builds the run's real BioSample submission metadata table (#369/
-#372) -- job-level, one table covering every sample.
+Builds the run's real BioSample submission metadata table --
+job-level, one table covering every sample.
 """
 
 # Imports

@@ -4,9 +4,9 @@ run_getorganelle_config.py
 Execution layer that resolves one sample's GetOrganelle assembly
 configuration deterministically -- organelle type, seed/no-seed input,
 and the output directory the assembly stage will write to -- and
-records it as a JSON manifest the assembly exec (#421) reads next.
+records it as a JSON manifest the assembly exec reads next.
 
-Doesn't run GetOrganelle itself; that's the assembly stage's job (#421).
+Doesn't run GetOrganelle itself; that's the assembly stage's own job.
 This step exists so the seed/no-seed decision and the output paths are
 pinned down and logged BEFORE a (slow) assembly attempt starts, not
 discovered as a side effect of it.
@@ -31,7 +31,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--sample-id", type = str, required = True, help = "The sample id.")
     parser.add_argument("--organelle-type", type = str, required = True, help = "The GetOrganelle organelle type to assemble (e.g. animal_mt).")
     parser.add_argument("--seed-file", type = Path, default = None, help = "A resolved seed FASTA for this sample (omit for an unseeded, fallback-database run).")
-    parser.add_argument("--assembly-output-dir", type = Path, required = True, help = "The directory the assembly stage (#421) will write this sample's output to.")
+    parser.add_argument("--assembly-output-dir", type = Path, required = True, help = "The directory the assembly stage will write this sample's output to.")
     parser.add_argument("--output-dir", type = Path, required = True, help = "The directory to write this config step's own output (the resolved-config JSON and .done marker) to.")
     parser.add_argument("--log-file", type = Path, required = True, help = "The path to the log file.")
     parser.add_argument("--global-log-file", type = Path, required = True, help = "The path to the global log file.")

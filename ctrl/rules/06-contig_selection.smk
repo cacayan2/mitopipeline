@@ -3,7 +3,7 @@
 
 Selects one sample's final mitochondrial contig across the primary
 assembly and every rescue attempt, then runs biological validation
-(#414) against every attempt considered -- identically, primary and
+against every attempt considered -- identically, primary and
 rescue alike -- wiring BLAST/MITOS2 evidence onto whichever attempt
 was actually selected.
 """

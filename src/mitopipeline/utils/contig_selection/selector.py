@@ -10,7 +10,7 @@ circular/fragmented classification) plus sequence length -- it does
 NOT yet incorporate independent BLAST evidence the way v0.1.0's
 assess_mitochondrial_assembly() did (taxon-aware length bounds,
 per-contig BLAST support). That richer, evidence-based refinement
-needs the BLAST reference-retrieval and exec stages (#401, #405a-c)
+needs the BLAST reference-retrieval and exec stages
 wired first, which aren't built yet in v0.2.0 -- tracked as a known
 follow-on, not faked here.
 """

@@ -1,10 +1,10 @@
 """
 run_biological_validation.py
 
-Execution layer for biological validation gates (#414): runs the same
+Execution layer for biological validation gates: runs the same
 PASS/REVIEW/FAIL checks (gates.validate_assembly) against every
 assembly attempt considered for a sample -- the primary attempt and
-every rescue attempt, identically -- and records which one #402's
+every rescue attempt, identically -- and records which one contig selection's
 contig_selection actually chose. BLAST and MITOS2 evidence only ever
 apply to the selected attempt, since those downstream stages only
 ever run once, on whichever candidate contig_selection picked.
@@ -34,7 +34,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--attempt-dir", type = Path, required = True, action = "append",
                         help = "An assembly attempt's output directory, same order as passed to run_contig_selection.py (first = primary).")
     parser.add_argument("--contig-selection-json", type = Path, required = True,
-                        help = "The selection JSON written by run_contig_selection.py (#402) -- tells this step which attempt was selected.")
+                        help = "The selection JSON written by run_contig_selection.py -- tells this step which attempt was selected.")
     parser.add_argument("--min-length", type = int, required = True, help = "The configured minimum complete-genome length (taxon-aware or default).")
     parser.add_argument("--max-length", type = int, required = True, help = "The configured maximum complete-genome length (taxon-aware or default).")
     parser.add_argument("--seed-file", type = str, default = None, help = "The seed file used for the selected attempt, if any (provenance only).")

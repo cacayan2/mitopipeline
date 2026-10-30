@@ -117,7 +117,7 @@ def aggregate_sample_data(sample_id: str, output_root: str | Path,
         annotation_gff (str | Path | None): The sample's own real MITOS2 annotation GFF.
         phylogeny_newick (str | Path | None): The sample's own real Newick tree.
         phylogeny_image_png (str | Path | None): The sample's own real tree figure PNG.
-        genbank_submission_dir (str | Path | None): The sample's own real GenBank submission folder (from #14c), copied whole so it stays a self-contained, submission-ready package.
+        genbank_submission_dir (str | Path | None): The sample's own real GenBank submission folder, copied whole so it stays a self-contained, submission-ready package.
         logger (Logger | None): Logger to use. Defaults to None.
 
     Returns:
@@ -171,12 +171,12 @@ def aggregate_archival_data(output_root: str | Path,
 
     Args:
         output_root (str | Path): The aggregated_data/ directory itself.
-        sra_metadata_tsv (str | Path | None): The run's own real SRA metadata table (from #14a).
-        biosample_metadata_tsv (str | Path | None): The run's own real BioSample metadata table (from #14b).
-        genbank_metadata_tsv (str | Path | None): The run's own real combined GenBank metadata table (from #15).
-        archival_validation_tsv (str | Path | None): The run's own real per-sample submission-readiness report (from #15).
-        submission_checklist_md (str | Path | None): The run's own real human-readable submission checklist (from #15).
-        checksums_tsv (str | Path | None): The run's own real MD5 checksum manifest (from #15).
+        sra_metadata_tsv (str | Path | None): The run's own real SRA metadata table.
+        biosample_metadata_tsv (str | Path | None): The run's own real BioSample metadata table.
+        genbank_metadata_tsv (str | Path | None): The run's own real combined GenBank metadata table.
+        archival_validation_tsv (str | Path | None): The run's own real per-sample submission-readiness report.
+        submission_checklist_md (str | Path | None): The run's own real human-readable submission checklist.
+        checksums_tsv (str | Path | None): The run's own real MD5 checksum manifest.
         logger (Logger | None): Logger to use. Defaults to None.
 
     Returns:

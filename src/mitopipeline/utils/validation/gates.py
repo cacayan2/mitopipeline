@@ -2,7 +2,7 @@
 gates.py
 
 Biological validation gates for a selected mitochondrial assembly
-(#414): a set of independent, individually-reasoned checks -- FASTA
+: a set of independent, individually-reasoned checks -- FASTA
 integrity, taxon-aware length bounds, circularization evidence,
 ambiguous-base content, fragment status, BLAST identity/coverage,
 conflicting-taxa/contamination signal, and (when annotation is

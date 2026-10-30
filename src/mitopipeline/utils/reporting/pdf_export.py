@@ -3,7 +3,7 @@ pdf_export.py
 
 Exports a Markdown report (already carrying its own embedded Typst
 preamble/title-page/callout blocks, see typst_style.py) to PDF via
-pandoc with Typst as the PDF engine (#361/#442) -- both confirmed
+pandoc with Typst as the PDF engine -- both confirmed
 already installed on the real execution host.
 """
 

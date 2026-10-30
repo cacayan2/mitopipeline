@@ -1,8 +1,8 @@
 """
 run_mafft_alignment.py
 
-Execution layer for MAFFT alignment (#348): runs the combined,
-batch-level FASTA (#344) through MafftRunner (BaseTool), then
+Execution layer for MAFFT alignment: runs the combined,
+batch-level FASTA through MafftRunner (BaseTool), then
 validates the aligned output actually carries the same sequences
 (by count and id) as the input before the tree stage ever sees it --
 MAFFT reordering or losing a record would otherwise go unnoticed
@@ -27,7 +27,7 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description = "Aligns the combined phylogeny FASTA with MAFFT and validates the result.")
 
     parser.add_argument("--run-id", type = str, required = True, help = "A label for this batch-level run, for logging context.")
-    parser.add_argument("--input-fasta", type = Path, required = True, help = "The combined, unaligned FASTA (#344's output).")
+    parser.add_argument("--input-fasta", type = Path, required = True, help = "The combined, unaligned FASTA (the dataset-combination step's own output).")
     parser.add_argument("--output-fasta", type = Path, required = True, help = "The path to write the aligned FASTA to.")
     parser.add_argument("--strategy", type = str, default = "auto", help = "MAFFT's alignment strategy.")
     parser.add_argument("--threads", type = int, required = True, help = "The number of threads to use.")

@@ -2,7 +2,7 @@
 models.py
 
 Data required to render one sample's report and one run's report
-(#358-361, #441-443) -- each field traces back to a real result JSON
+-- each field traces back to a real result JSON
 an earlier stage already wrote, never re-derived or fabricated.
 """
 
@@ -16,7 +16,7 @@ from mitopipeline.utils.statistics.models import AnnotationStatistics, AssemblyS
 class AssemblyConfigSummary:
     """
     The real, deterministic GetOrganelle settings used for this
-    sample's selected attempt -- read from #04a's own resolved
+    sample's selected attempt -- read from the GetOrganelle config stage's own resolved
     config, the live source the methods section cites rather than
     hardcoding tool names/settings as boilerplate.
 
@@ -41,7 +41,7 @@ class AssemblyConfigSummary:
 class RescueAttemptSummary:
     """
     One real rescue attempt's own outcome for this sample -- read
-    from #07's own real rescue_mapping.json (whether the attempt even
+    from the assembly-rescue stage's own real rescue_mapping.json (whether the attempt even
     ran) and, if it did, the reassembly's own real assembly_status.json
     (what GetOrganelle actually produced). Recorded whether or not the
     attempt was ultimately selected, so the methods section can report
@@ -75,7 +75,7 @@ class AnnotationConfigSummary:
 @dataclass(frozen = True, slots = True)
 class ArchivalSummary:
     """
-    One sample's real NCBI archival preparation status (#367-376),
+    One sample's real NCBI archival preparation status,
     read from the same SRA/BioSample/GenBank tables a human reviewer
     would open before uploading through the NCBI Submission Portal --
     this pipeline never submits directly.
@@ -129,7 +129,7 @@ class ReadQCSummary:
 @dataclass(frozen = True, slots = True)
 class SampleReportData:
     """
-    Everything #358's per-sample report (and the live methods
+    Everything the per-sample report (and the live methods
     section) needs for one sample, assembled from real result JSON.
 
     Attributes:
@@ -233,7 +233,7 @@ class JobMetadataSummary:
 @dataclass(frozen = True, slots = True)
 class RunReportData:
     """
-    Everything #360's run-level report needs -- every sample's own
+    Everything the run-level report needs -- every sample's own
     report data (each one carrying its own real phylogenetic outcome,
     restoring v0.1.0's per-sample design; there is no batch-level
     phylogeny artifact anymore).

@@ -1,10 +1,10 @@
 """
 run_blast.py
 
-Execution layer for BLAST identification (#429): runs BLAST through
-BlastRunner (BaseTool) against the resolved configuration #428 wrote,
+Execution layer for BLAST identification: runs BLAST through
+BlastRunner (BaseTool) against the resolved configuration the config stage wrote,
 then records a result JSON (hit count, runtime, success) -- the
-record #401/#430's hit-selection and retrieval stages read next.
+record the hit-selection and retrieval stages read next.
 
 Zero hits is a valid, non-failure outcome (BlastRunner.validate_outputs
 itself only rejects a missing output file, never an empty one) -- this
@@ -45,7 +45,7 @@ def parse_args() -> argparse.Namespace:
 def _write_result(output_dir: Path, sample_id: str, success: bool, hit_count: int | None,
                    output_file: Path | None, reason: str) -> None:
     """
-    Records this sample's BLAST outcome for #430/#401 to read, without
+    Records this sample's BLAST outcome for the hit-selection and retrieval stages to read, without
     re-deriving it (and without re-parsing the TSV just to know whether
     it ran).
 

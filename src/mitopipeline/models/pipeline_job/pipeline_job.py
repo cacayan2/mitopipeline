@@ -162,7 +162,7 @@ class PipelineJob:
             self.job_dir / "14a-sra_archival",
             self.job_dir / "14b-biosample_archival",
             self.job_dir / "15-archival_validation",
-            self.job_dir / "16-table2asn_v"
+            self.job_dir / "16-table2asn_validation"
         ]
 
         # Setting up all the directories required for logging of the pipeline.
@@ -184,7 +184,7 @@ class PipelineJob:
             self.job_dir / "logs" / "13-report_pdf",
             self.job_dir / "logs" / "14-archival",
             self.job_dir / "logs" / "15-archival_validation",
-            self.job_dir / "logs" / "16-table2asn_v"
+            self.job_dir / "logs" / "16-table2asn_validation"
         ]
 
         # Creating the output directories.

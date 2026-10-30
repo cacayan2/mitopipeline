@@ -1,7 +1,7 @@
 """
 run_iqtree.py
 
-Execution layer for IQ-TREE phylogenetic inference (#436): runs
+Execution layer for IQ-TREE phylogenetic inference: runs
 MAFFT's aligned output through IqtreeRunner (BaseTool), then
 validates the real Newick tree it produces -- it parses, and its tip
 count matches the alignment's own sequence count -- before anything
@@ -26,7 +26,7 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description = "Infers a maximum-likelihood phylogeny with IQ-TREE and validates the result.")
 
     parser.add_argument("--run-id", type = str, required = True, help = "A label for this batch-level run, for logging context.")
-    parser.add_argument("--alignment", type = Path, required = True, help = "The aligned FASTA (MAFFT's own output, #348).")
+    parser.add_argument("--alignment", type = Path, required = True, help = "The aligned FASTA (MAFFT's own output).")
     parser.add_argument("--output-prefix", type = Path, required = True, help = "The prefix IQ-TREE writes its own output under.")
     parser.add_argument("--output-newick", type = Path, required = True, help = "A stable, normalized copy of IQ-TREE's own real treefile.")
     parser.add_argument("--sequence-type", type = str, default = "DNA", help = "IQ-TREE's -st value.")

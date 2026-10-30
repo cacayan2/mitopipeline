@@ -1,7 +1,7 @@
 """
 extract.py
 
-Extracts per-sample statistics (#353-356) from the real result JSON
+Extracts per-sample statistics from the real result JSON
 each earlier stage already wrote -- assembly from contig_selection's
 own selection record, BLAST from the ranked top-hit TSV plus the
 biological validation gate's own verdict, MITOS2 annotation from its
@@ -141,7 +141,7 @@ def extract_annotation_statistics(sample_id: str, annotation_result_json: str | 
     """
     Extracts annotation statistics from MITOS2's own result JSON --
     total gene count directly, core-gene coverage/gaps computed
-    against CORE_ANIMAL_MT_PROTEIN_GENES (#414's own reference set).
+    against CORE_ANIMAL_MT_PROTEIN_GENES, the biological validation gate's own reference set.
 
     Args:
         sample_id (str): The sample id.
@@ -171,7 +171,7 @@ def merge_sample_statistics(sample_id: str, assembly: AssemblyStatistics | None,
                              annotation: AnnotationStatistics | None) -> SampleStatistics:
     """
     Joins one sample's assembly/BLAST/annotation statistics into a
-    single record (#356). Any stage that didn't produce a usable
+    single record. Any stage that didn't produce a usable
     result stays None -- never backfilled with a fabricated value.
 
     Args:

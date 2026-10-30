@@ -1,7 +1,7 @@
 """
 run_seed_selection.py
 
-Execution layer for seed selection (#394/#396/#412/#419's own logic,
+Execution layer for seed selection (the seed-selection module's own logic,
 never wired to a CLI until now): selects one sample's mitochondrial
 seed sequence via select_seed() and records the outcome -- the
 provenance (locus, accession, fallback reason) the assembly stage's

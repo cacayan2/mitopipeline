@@ -230,7 +230,7 @@ class GetOrganelleRunner(BaseTool):
         clean, usable sequence, not just trusting the final
         assembly's own quality.
 
-        Always writes a RecruitedReadsQCRecord (#413) -- including
+        Always writes a RecruitedReadsQCRecord -- including
         the absent/empty/malformed cases -- so a caller never has to
         re-derive what happened from log lines alone; this is a
         supplementary QC artifact, not a correctness gate on the
@@ -541,7 +541,7 @@ def discover_assembly_artifacts(output_dir: Path, logger: Logger) -> AssemblyArt
 class RecruitedReadsQCRecord:
     """
     The outcome of recruited-reads QC for one GetOrganelle attempt
-    (#413) -- the structured artifact contract a caller reads instead
+    -- the structured artifact contract a caller reads instead
     of re-deriving read counts/pairing/provenance from log lines.
 
     Attributes:

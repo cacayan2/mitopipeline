@@ -27,7 +27,7 @@ VALID_BLAST_MODES = {"local", "remote"}
 
 # The full set of tabular columns this wrapper always requests, so a
 # BLAST run's output matches exactly what blast_hits.parse_blast_tsv
-# (#400) expects to parse -- the bare "-outfmt 6" default only yields
+# the real BLAST hit parser expects to parse -- the bare "-outfmt 6" default only yields
 # the first 12 of these, silently dropping qcovs/staxids/sscinames/
 # stitle and breaking the parser on every row (caught porting this
 # from v0.1.0, which built this whole 16-column list but never passed

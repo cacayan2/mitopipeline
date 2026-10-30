@@ -30,12 +30,7 @@ stages:
   biosample_archival: true
   mitogenome_archival: true
   archival_validation: true
-  # table2asn_validation is left off: its own rule file
-  # (ctrl/rules/16-table2asn_validation.smk) is a deliberate
-  # placeholder with no real rules defined yet (not just
-  # unconfigured), and it needs a real NCBI-issued .sbt submission
-  # template this config has no legitimate value for.
-  table2asn_validation: false
+  table2asn_validation: true
 
 stage_options:
   qc.raw:
@@ -255,5 +250,10 @@ stage_options:
       annotation_method: MITOS2
       file_mode: copy
     table2asn:
-      executable: table2asn
-      submission_template: /absolute/path/to/template.sbt
+      # Resolved relative to the project root, same convention as
+      # blast.reference_fasta -- auto-installed on first use
+      # (table2asn_binary.py) rather than assumed pre-installed.
+      binary_path: resources/bin/table2asn
+      submission_template: resources/archival/submission_template.sbt
+      topology: circular
+      genome_location: mitochondrion

@@ -1,8 +1,8 @@
 """
 run_mitogenome_metadata.py
 
-Execution layer for GenBank submission-folder preparation (#370/
-#373): collects one sample's real selected assembly and MITOS2
+Execution layer for GenBank submission-folder preparation:
+collects one sample's real selected assembly and MITOS2
 annotation into its own accession-independent folder. Per-sample --
 each folder depends only on that sample's own real artifacts.
 """

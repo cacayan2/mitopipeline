@@ -3,7 +3,7 @@ mitos2.py
 
 MITOS2 (runmitos.py) wrapper for command building and execution --
 annotates one assembled mitogenome FASTA with its gene features
-(#409), so later stages (feature parsing, biological validation
+, so later stages (feature parsing, biological validation
 gates) have a structured annotation to read.
 """
 

@@ -1,7 +1,7 @@
 """
 14c-mitogenome_archival.smk
 
-Prepares one sample's real GenBank submission folder (#370/#373) --
+Prepares one sample's real GenBank submission folder --
 per-sample, since each one depends only on that sample's own
 selected assembly and MITOS2 annotation.
 """

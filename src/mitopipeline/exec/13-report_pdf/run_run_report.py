@@ -1,7 +1,7 @@
 """
 run_run_report.py
 
-Execution layer for the run-level report (#360/#441/#443): collects
+Execution layer for the run-level report: collects
 every sample's own report data -- each one carrying its own real
 phylogenetic outcome (restoring v0.1.0's per-sample design) -- renders
 the run-level Markdown report, and exports it to PDF.

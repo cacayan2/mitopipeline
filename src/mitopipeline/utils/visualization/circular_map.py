@@ -2,7 +2,7 @@
 circular_map.py
 
 Normalizes MITOS2 gene features and renders a circular mitochondrial
-genome map (#349-352): splits a feature crossing the circular origin
+genome map: splits a feature crossing the circular origin
 -- represented by MITOS2 with an end coordinate beyond the linear
 FASTA length, confirmed against MITOS2's own real gffstr() -- into
 two drawable segments, then draws every protein-coding gene, tRNA,
@@ -39,7 +39,7 @@ FEATURE_COLORS: dict[str, str] = {
 class DrawableFeature:
     """
     One gene feature tagged with the drawable category it was parsed
-    under, since GeneFeature itself (#410) carries no such
+    under, since GeneFeature itself carries no such
     distinction -- it is purely a drawing-time concern.
 
     Attributes:
@@ -144,7 +144,7 @@ def build_circular_map_data(sample_id: str, gff_path: str | Path, fasta_path: st
     """
     Builds normalized data for one sample's circular mitochondrial
     genome map -- every real protein-coding gene, tRNA, and rRNA
-    (#410's own parser, called once per drawable type), with any
+    (the shared gene-feature parser, called once per drawable type), with any
     origin-crossing feature split into its drawable segments. A GFF
     with no drawable features at all (e.g. a failed annotation) is
     valid, empty input, not an error.

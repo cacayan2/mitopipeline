@@ -2,7 +2,7 @@
 run_circular_coverage.py
 
 Execution layer for circular-genome BLAST coverage correction
-(#414's own "blast_identity" check): for a circular assembly only,
+(the biological validation gate's own "blast_identity" check): for a circular assembly only,
 re-runs BLAST against a doubled copy of the selected genome so an
 origin-spanning match reads as one unbroken HSP, then records the
 real coverage against the true, undoubled genome length --
@@ -31,7 +31,7 @@ def parse_args() -> argparse.Namespace:
 
     parser.add_argument("--sample-id", type = str, required = True, help = "The sample id.")
     parser.add_argument("--contig-selection-json", type = Path, required = True, help = "The selection JSON written by run_contig_selection.py -- this step only ever runs for a circular selected attempt.")
-    parser.add_argument("--database", type = str, required = True, help = "The BLAST database name (same one #05a-blast_config resolved).")
+    parser.add_argument("--database", type = str, required = True, help = "The BLAST database name (same one the BLAST config stage resolved).")
     parser.add_argument("--mode", type = str, default = "local", choices = ["local", "remote"], help = "BLAST mode. Defaults to local.")
     parser.add_argument("--working-dir", type = Path, required = True, help = "The working directory.")
     parser.add_argument("--threads", type = int, default = 4, help = "The number of threads to use.")

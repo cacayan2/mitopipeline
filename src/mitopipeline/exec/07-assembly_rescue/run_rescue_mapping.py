@@ -1,14 +1,14 @@
 """
 run_rescue_mapping.py
 
-Execution layer connecting the rescue trigger (#405) to the proven
-minimap2 -> samtools sort -> index -> fastq chain (#423/#424/#425):
+Execution layer connecting the rescue trigger to the proven
+minimap2 -> samtools sort -> index -> fastq chain:
 decides whether this sample's current assembly classification actually
 warrants a rescue attempt, and if so, runs the real chain and records
-the rescued paired reads #406's reassembly stage will consume next.
+the rescued paired reads the reassembly stage will consume next.
 
 Doesn't decide HOW to reassemble (which getorganelle_profiles entry,
-what k-mer/coverage) -- that's #406's job, reading this step's own
+what k-mer/coverage) -- that's the reassembly stage's job, reading this step's own
 output. This step's only job is: should rescue even happen, and if so,
 produce the rescued reads.
 """
@@ -36,9 +36,9 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--r1", type = Path, required = True, help = "The trimmed R1 reads to map for rescue.")
     parser.add_argument("--r2", type = Path, required = True, help = "The trimmed R2 reads to map for rescue.")
     parser.add_argument("--reference-fasta", type = Path, required = True,
-                        help = "The reference to map against -- the sample's own best assembly candidate so far (#402's selection).")
+                        help = "The reference to map against -- the sample's own best assembly candidate so far (contig selection's own choice).")
     parser.add_argument("--status", type = str, required = True,
-                        help = "The current assembly classification (e.g. from #402's contig_selection.json) -- circular, fragmented, partial, or missing.")
+                        help = "The current assembly classification (e.g. from contig_selection.json) -- circular, fragmented, partial, or missing.")
     parser.add_argument("--attempt", type = int, required = True, help = "How many rescue attempts have already been made for this sample (0-indexed).")
     parser.add_argument("--trigger-statuses", type = str, default = "fragmented,partial",
                         help = "Comma-separated statuses that warrant rescue (config.yaml's assembly_rescue.trigger_statuses).")
@@ -56,7 +56,7 @@ def parse_args() -> argparse.Namespace:
 def _write_decision(output_dir: Path, sample_id: str, attempted: bool, reason: str,
                      rescued_r1: Path | None = None, rescued_r2: Path | None = None) -> None:
     """
-    Records this sample's rescue-mapping outcome for #406 to read,
+    Records this sample's rescue-mapping outcome for the reassembly stage to read,
     without re-deriving the decision itself.
 
     Args:

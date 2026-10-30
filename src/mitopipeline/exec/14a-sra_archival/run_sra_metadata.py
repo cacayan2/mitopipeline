@@ -1,7 +1,7 @@
 """
 run_sra_metadata.py
 
-Execution layer for SRA metadata preparation (#368/#371): builds one
+Execution layer for SRA metadata preparation: builds one
 reviewable SRA submission row per raw sequencing sample from the
 runtime manifest and the configured sequencing defaults. Job-level --
 one table covers every sample in the run.

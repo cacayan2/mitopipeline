@@ -2,8 +2,8 @@
 mafft.py
 
 MAFFT wrapper for command building and execution -- aligns a combined
-multi-sequence FASTA (#344/#345's combined dataset) for downstream
-phylogenetic inference (#346).
+multi-sequence FASTA (the pipeline's own combined dataset) for downstream
+phylogenetic inference.
 """
 
 # Imports

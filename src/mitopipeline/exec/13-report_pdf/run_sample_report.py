@@ -1,7 +1,7 @@
 """
 run_sample_report.py
 
-Execution layer for the per-sample report (#358/#359/#361): collects
+Execution layer for the per-sample report: collects
 one sample's real result JSON into a SampleReportData, renders the
 Markdown report (including the live methods section), and exports it
 to PDF. A missing PDF export (pandoc/typst unavailable) never blocks

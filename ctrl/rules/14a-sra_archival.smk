@@ -1,7 +1,7 @@
 """
 14a-sra_archival.smk
 
-Builds the run's real SRA submission metadata table (#368/#371) --
+Builds the run's real SRA submission metadata table --
 job-level, one table covering every sample.
 """
 

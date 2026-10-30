@@ -3,7 +3,7 @@ samtools.py
 
 samtools wrapper for command building and execution -- turns
 minimap2's rescue-mapping SAM into a sorted, indexed BAM, then extracts
-the reads that actually mapped as rescued paired FASTQ (#424/#425).
+the reads that actually mapped as rescued paired FASTQ.
 
 One wrapper, three operations (sort/index/fastq), not three separate
 classes: they share the same sample-scoped output paths and chain in a

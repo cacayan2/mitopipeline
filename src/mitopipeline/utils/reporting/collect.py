@@ -1,9 +1,9 @@
 """
 collect.py
 
-Assembles report data (#358-361) from the real result JSON every
-earlier stage already wrote -- #356's own merged statistics, #414's
-biological validation record, #349-352's visualization result, and
+Assembles report data from the real result JSON every
+earlier stage already wrote -- the merged statistics record, the
+biological validation record, the circular genome map's visualization result, and
 each stage's own resolved configuration (for the live methods
 section) -- never re-deriving a statistic a typed artifact already has.
 """

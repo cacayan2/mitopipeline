@@ -1,9 +1,9 @@
 """
 markdown_report.py
 
-Renders one sample's real statistics (#356), biological validation
-verdict (#414), and circular genome map (#349-352) as a per-sample
-Markdown report (#358/#359), including a live methods paragraph
+Renders one sample's real statistics, biological validation
+verdict, and circular genome map as a per-sample
+Markdown report, including a live methods paragraph
 (methods.py) describing the actual tools/settings/rescue history used.
 """
 
@@ -466,7 +466,7 @@ def render_callout(text: str) -> str:
     return f'`#block(fill: rgb("#f2f2f2"), inset: 8pt, radius: 4pt, width: 100%)[{escape_markdown_text(text)}]`{{=typst}}'
 
 def render_validation_section(report_data: SampleReportData) -> list[str]:
-    """Renders the biological validation gate's own verdict (#414)."""
+    """Renders the biological validation gate's own verdict."""
     lines = ["## Biological Validation", ""]
     if report_data.overall_verdict is None:
         if report_data.assembly is None:
@@ -555,7 +555,7 @@ def render_compute_resources_section(report_data: SampleReportData) -> list[str]
     return lines
 
 def render_archival_section(report_data: SampleReportData) -> list[str]:
-    """Renders this sample's real NCBI archival preparation status (#367-376)."""
+    """Renders this sample's real NCBI archival preparation status."""
     lines = ["## NCBI Archival Readiness", ""]
     archival = report_data.archival
     if archival is None:

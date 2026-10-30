@@ -1,7 +1,7 @@
 """
 run_biosample_metadata.py
 
-Execution layer for BioSample metadata preparation (#369/#372):
+Execution layer for BioSample metadata preparation:
 builds one reviewable BioSample submission row per biological sample
 from the runtime manifest and the configured biological defaults.
 Job-level -- one table covers every sample in the run.

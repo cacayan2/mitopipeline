@@ -2,7 +2,7 @@
 run_archival_validation.py
 
 Execution layer for cross-record archival validation and packaging
-(#374/#375/#450): combines every sample's own GenBank record into one
+: combines every sample's own GenBank record into one
 table, cross-checks sample identifiers across SRA/BioSample/GenBank,
 builds the per-sample submission-readiness report, computes real MD5
 checksums over every real archival file, and writes the submission
@@ -14,6 +14,7 @@ import argparse
 import json
 from pathlib import Path
 from mitopipeline.logging.logger_factory import make_logger
+from mitopipeline.utils.archival.bioproject_metadata import build_bioproject_metadata, write_bioproject_metadata
 from mitopipeline.utils.archival.genbank_metadata import write_genbank_metadata
 from mitopipeline.utils.archival.models import GENBANK_COLUMNS
 from mitopipeline.utils.archival.package import build_checksum_manifest, write_checksum_manifest, write_submission_checklist
@@ -33,7 +34,10 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--sra-metadata-tsv", type = Path, required = True, help = "The SRA metadata table written by run_sra_metadata.py.")
     parser.add_argument("--biosample-metadata-tsv", type = Path, required = True, help = "The BioSample metadata table written by run_biosample_metadata.py.")
     parser.add_argument("--genbank-records-dir", type = Path, required = True, help = "The directory containing every sample's own *.genbank_record.json.")
+    parser.add_argument("--table2asn-results-dir", type = Path, default = None, help = "The directory containing every sample's own *.table2asn_validation_result.json.")
     parser.add_argument("--job-dir", type = Path, required = True, help = "The pipeline job's own output directory, used as the checksum manifest's base directory.")
+    parser.add_argument("--publication", type = str, default = "", help = "A real citation for this project, if one exists. Defaults to none on file.")
+    parser.add_argument("--funding", type = str, default = "", help = "Real funding/grant information, if any is on file. Defaults to none on file.")
     parser.add_argument("--output-dir", type = Path, required = True, help = "The directory to write the validation/packaging outputs to.")
     parser.add_argument("--log-file", type = Path, required = True, help = "The path to the log file.")
     parser.add_argument("--global-log-file", type = Path, required = True, help = "The path to the global log file.")
@@ -65,16 +69,28 @@ def main() -> int:
     genbank_metadata_tsv = args.output_dir / "genbank_metadata.tsv"
     write_genbank_metadata(genbank_records, genbank_metadata_tsv, logger = logger)
 
+    sample_organisms = {record["sample_id"]: record["organism"] for record in genbank_records if record.get("sample_id")}
+    bioproject = build_bioproject_metadata(sample_organisms, publication = args.publication,
+                                            funding = args.funding, logger = logger)
+    write_bioproject_metadata(bioproject, args.output_dir / "bioproject_metadata.json", logger = logger)
+
     validation_records = build_archival_validation(
         args.runtime_manifest, args.sra_metadata_tsv, args.biosample_metadata_tsv,
-        genbank_metadata_tsv, args.job_dir, logger = logger,
+        genbank_metadata_tsv, args.job_dir, table2asn_results_dir = args.table2asn_results_dir, logger = logger,
     )
     write_archival_validation(validation_records, args.output_dir / "archival_validation.tsv", logger = logger)
 
-    real_files = [args.sra_metadata_tsv, args.biosample_metadata_tsv, genbank_metadata_tsv]
+    real_files = [args.sra_metadata_tsv, args.biosample_metadata_tsv, genbank_metadata_tsv,
+                  args.output_dir / "bioproject_metadata.json"]
     for record in genbank_records:
         if record.get("assembly_fasta"): real_files.append(Path(record["assembly_fasta"]))
         if record.get("annotation_gff"): real_files.append(Path(record["annotation_gff"]))
+        if record.get("annotation_tbl"): real_files.append(Path(record["annotation_tbl"]))
+    if args.table2asn_results_dir is not None and args.table2asn_results_dir.is_dir():
+        for result_path in sorted(args.table2asn_results_dir.glob("*.table2asn_validation_result.json")):
+            result = json.loads(result_path.read_text(encoding = "utf-8"))
+            for key in ("sqn_file", "validation_file", "discrepancy_file"):
+                if result.get(key): real_files.append(Path(result[key]))
 
     checksum_records = build_checksum_manifest(real_files, base_directory = args.job_dir)
     write_checksum_manifest(checksum_records, args.output_dir / "md5_checksums.tsv", logger = logger)

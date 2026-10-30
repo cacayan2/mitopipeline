@@ -3,7 +3,7 @@ genbank_metadata.py
 
 Collects one accepted sample's real selected assembly and MITOS2
 annotation into an accession-independent GenBank submission folder
-(#370/#373) -- reading contig_selection's own real selection record
+-- reading contig_selection's own real selection record
 and MITOS2's own real GFF rather than assuming a fixed path, since
 v0.2.0's selected attempt may be the primary or any rescue attempt.
 """
@@ -14,6 +14,7 @@ import json
 import shutil
 from logging import Logger
 from pathlib import Path
+from mitopipeline.utils.archival.genbank_feature_table import build_sample_feature_table
 from mitopipeline.utils.archival.models import GENBANK_COLUMNS, GENBANK_REQUIRED_FIELDS, MANUAL_REVIEW_REQUIRED, READY
 
 def _safe_folder_name(value: str) -> str:
@@ -106,12 +107,33 @@ def build_genbank_submission(sample_id: str, organism: str, contig_selection_jso
     else:
         missing_files.append("annotation_gff")
 
+    # Builds the real NCBI 5-column feature table (.tbl) -- MITOS2
+    # itself never produces one (confirmed directly against a real
+    # annotation run: GFF3/BED/FASTA only), so this is the genuine
+    # missing piece between "annotated" and "GenBank-ready," not an
+    # optional extra.
+    annotation_tbl = ""
+    feature_table_warnings: list[str] = []
+    if assembly_fasta and annotation_gff:
+        tbl_destination = submission_folder / f"{sample_id}.tbl"
+        try:
+            feature_table_warnings = build_sample_feature_table(
+                sample_id, annotation_gff, assembly_fasta, organism, tbl_destination, logger = logger,
+            )
+            annotation_tbl = str(tbl_destination)
+        except (OSError, ValueError) as error:
+            feature_table_warnings = [f"feature table generation failed: {error}"]
+            missing_files.append("annotation_tbl")
+    else:
+        missing_files.append("annotation_tbl")
+
     record = {
         "sample_id": sample_id,
         "organism": organism,
         "submission_folder": str(submission_folder),
         "assembly_fasta": assembly_fasta,
         "annotation_gff": annotation_gff,
+        "annotation_tbl": annotation_tbl,
         "sequence_length_bp": sequence_length_bp,
         "molecule_type": manifest_row.get("molecule_type", "").strip() or str(defaults.get("molecule_type", "DNA")),
         "genome_location": manifest_row.get("genome_location", "").strip() or str(defaults.get("genome_location", "mitochondrion")),
@@ -125,7 +147,14 @@ def build_genbank_submission(sample_id: str, organism: str, contig_selection_jso
     missing_metadata = [field for field in GENBANK_REQUIRED_FIELDS if not record.get(field)]
     record["missing_files"] = ";".join(sorted(set(missing_files)))
     record["missing_metadata"] = ";".join(sorted(set(missing_metadata)))
-    record["review_status"] = READY if not (missing_files or missing_metadata) else MANUAL_REVIEW_REQUIRED
+    record["feature_table_warnings"] = ";".join(feature_table_warnings)
+    # A real feature-table warning (an unrecognized gene, a premature
+    # internal stop codon under the vertebrate mitochondrial genetic
+    # code) is a genuine annotation concern a human should look at
+    # before submission, same as a missing file or field -- never
+    # silently marked READY alongside it.
+    record["review_status"] = (READY if not (missing_files or missing_metadata or feature_table_warnings)
+                               else MANUAL_REVIEW_REQUIRED)
 
     if logger is not None:
         logger.info(f"{{{sample_id}}} GenBank submission folder: {record['review_status']}"

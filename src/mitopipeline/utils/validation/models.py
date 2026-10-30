@@ -2,7 +2,7 @@
 models.py
 
 Data models for biological validation of a selected mitochondrial
-assembly (#414): typed PASS/REVIEW/FAIL verdicts with reason codes,
+assembly: typed PASS/REVIEW/FAIL verdicts with reason codes,
 never a bare "the tool exited 0" standing in for biological validity.
 """
 

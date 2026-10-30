@@ -2,7 +2,7 @@
 package.py
 
 Packages the real SRA/BioSample/GenBank archival tables plus the
-validation report into one submission-ready directory (#375),
+validation report into one submission-ready directory,
 matching the layout the project's own NCBI archival requirements
 research proposed -- reproducible MD5 checksums over every real file
 collected, and a human-readable submission_checklist.md summarizing
@@ -93,6 +93,7 @@ def render_submission_checklist(validation_records: list[dict[str, str]], job_id
             ("SRA metadata", record["sra_ready"]),
             ("BioSample metadata", record["biosample_ready"]),
             ("GenBank submission folder", record["genbank_ready"]),
+            ("table2asn validation", record.get("table2asn_ready", "False")),
         ]
         for label, ready in checks:
             lines.append(f"- [{'x' if ready == 'True' else ' '}] {label}")

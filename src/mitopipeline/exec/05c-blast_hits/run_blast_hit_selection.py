@@ -1,11 +1,11 @@
 """
 run_blast_hit_selection.py
 
-Execution layer for BLAST hit ranking/selection (#430's own logic,
+Execution layer for BLAST hit ranking/selection (the hit-ranking module's own logic,
 never wired to a CLI until now): ranks a sample's raw tabular BLAST
 output, selects the top hits, and writes them as the top-hit TSV
-run_blast_reference_retrieval.py (#401) and run_biological_validation.py
-(#414) both read next.
+run_blast_reference_retrieval.py and run_biological_validation.py
+both read next.
 """
 
 # Imports

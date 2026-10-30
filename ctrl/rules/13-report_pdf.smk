@@ -1,10 +1,10 @@
 """
 13-report_pdf.smk
 
-Renders each sample's own Markdown + PDF report (#358/#359/#361,
+Renders each sample's own Markdown + PDF report,
 including that sample's own real phylogenetic tree, restored to
 v0.1.0's per-sample design), then the run-level Markdown + PDF report
-(#360/#441/#443) aggregating every sample.
+aggregating every sample.
 """
 
 def _recruited_reads_fastqc_dir(selection_path: Path) -> str:

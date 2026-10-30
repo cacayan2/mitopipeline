@@ -1,7 +1,7 @@
 """
 models.py
 
-Typed, per-sample statistics records (#353-356) -- each extracted
+Typed, per-sample statistics records -- each extracted
 from the same real result JSON a prior stage already wrote, never
 re-derived from raw tool output a second time.
 """
@@ -12,7 +12,7 @@ from dataclasses import asdict, dataclass, field
 @dataclass(frozen = True, slots = True)
 class AssemblyStatistics:
     """
-    Statistics for one sample's selected assembly (#353).
+    Statistics for one sample's selected assembly.
 
     Attributes:
         sample_id (str): The sample id.
@@ -39,7 +39,7 @@ class AssemblyStatistics:
 @dataclass(frozen = True, slots = True)
 class BlastStatistics:
     """
-    Statistics for one sample's top BLAST hit (#354).
+    Statistics for one sample's top BLAST hit.
 
     Attributes:
         sample_id (str): The sample id.
@@ -64,7 +64,7 @@ class BlastStatistics:
 @dataclass(frozen = True, slots = True)
 class AnnotationStatistics:
     """
-    Statistics for one sample's MITOS2 annotation (#355).
+    Statistics for one sample's MITOS2 annotation.
 
     Attributes:
         sample_id (str): The sample id.
@@ -87,7 +87,7 @@ class AnnotationStatistics:
 @dataclass(frozen = True, slots = True)
 class SampleStatistics:
     """
-    One sample's merged statistics record (#356), joined by sample_id.
+    One sample's merged statistics record, joined by sample_id.
     Any stage that didn't run, or found nothing usable, is None here
     -- never a fabricated zero standing in for "never measured."
 

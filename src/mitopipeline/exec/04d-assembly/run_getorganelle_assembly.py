@@ -1,13 +1,13 @@
 """
 run_getorganelle_assembly.py
 
-Execution layer for GetOrganelle assembly (#421): runs the tool through
+Execution layer for GetOrganelle assembly: runs the tool through
 GetOrganelleRunner (BaseTool), then classifies the result with
 discover_assembly_artifacts() and records a status JSON alongside the
 standardized assembly output -- the runtime/failure record the next
-stage (and eventual rescue decision, #405) reads.
+stage (and eventual rescue decision) reads.
 
-Reads the resolved configuration #420 wrote (organelle type, seed/
+Reads the resolved configuration the config stage wrote (organelle type, seed/
 no-seed, output dir) rather than re-deriving it, so the two stages
 never disagree about what this sample's assembly run was configured to do.
 """
@@ -32,7 +32,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--sample-id", type = str, required = True, help = "The sample id.")
     parser.add_argument("--r1", type = str, required = True, help = "The path to the trimmed R1 fastq file.")
     parser.add_argument("--r2", type = str, required = True, help = "The path to the trimmed R2 fastq file.")
-    parser.add_argument("--config-json", type = Path, required = True, help = "The resolved GetOrganelle configuration JSON written by run_getorganelle_config.py (#420).")
+    parser.add_argument("--config-json", type = Path, required = True, help = "The resolved GetOrganelle configuration JSON written by run_getorganelle_config.py.")
     parser.add_argument("--working-dir", type = Path, required = True, help = "The path to the working directory.")
     parser.add_argument("--log-file", type = Path, required = True, help = "The path to the log file.")
     parser.add_argument("--global-log-file", type = Path, required = True, help = "The path to the global log file.")
@@ -166,7 +166,7 @@ def _prior_success(output_dir: Path, sample_id: str) -> str | None:
 def _write_status(output_dir: Path, sample_id: str, status: str, success: bool) -> None:
     """
     Records this sample's assembly classification alongside its
-    standardized output, for the rescue trigger (#405) and any later
+    standardized output, for the rescue trigger and any later
     stage to read without re-deriving it.
 
     Args:

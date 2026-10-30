@@ -3,7 +3,7 @@ blastdbcmd.py
 
 blastdbcmd wrapper for command building and execution -- retrieves
 one selected BLAST hit's reference FASTA from a local BLAST database
-by accession (#401), so later stages (contig validation, annotation
+by accession, so later stages (contig validation, annotation
 cross-checks) have the actual reference sequence on disk, not just
 its tabular hit row.
 """

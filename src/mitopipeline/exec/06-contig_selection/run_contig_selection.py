@@ -2,14 +2,14 @@
 run_contig_selection.py
 
 Execution layer that selects one sample's final mitochondrial contig
-across one or more GetOrganelle assembly attempts (#402): reads each
+across one or more GetOrganelle assembly attempts: reads each
 attempt's recorded status (the `.assembly_status.json` run_getorganelle_
 assembly.py writes) and its standardized output (`data.fasta`/
 `graph.gfa`, same directory), then records the winning selection as a
 JSON manifest.
 
 Doesn't run GetOrganelle or rescue itself -- those are earlier stages'
-jobs (#420/#421, #405-#408). This step exists so later stages (BLAST,
+jobs. This step exists so later stages (BLAST,
 annotation, reporting) read one deterministic, already-decided answer
 instead of re-deriving "which attempt won" themselves.
 """

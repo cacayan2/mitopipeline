@@ -2,11 +2,11 @@
 run_circular_map.py
 
 Execution layer for circular mitochondrial genome map rendering
-(#439): parses the selected assembly attempt's own GFF/FASTA and
-renders its circular genome map PNG (#349-352). A rendering failure
+: parses the selected assembly attempt's own GFF/FASTA and
+renders its circular genome map PNG. A rendering failure
 for one sample -- a malformed GFF, an unreadable FASTA, an empty
 annotation -- is recorded as this sample's own failed result, never
-raised uncaught, so it never takes down any other sample's run (#440).
+raised uncaught, so it never takes down any other sample's run.
 """
 
 # Imports

@@ -1,7 +1,7 @@
 """
 tree_figure.py
 
-Renders IQ-TREE's own real Newick output (#436) as a labeled PNG
+Renders IQ-TREE's own real Newick output as a labeled PNG
 figure, optionally midpoint-rooted -- a tree with no inherent root
 (IQ-TREE's own unrooted maximum-likelihood output) is otherwise drawn
 arbitrarily rooted at whichever tip happened to come first in the

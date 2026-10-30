@@ -1,14 +1,14 @@
 """
 run_rescue_reassembly.py
 
-Execution layer for assembly rescue's reassembly step (#406): takes
-the rescued reads #426's mapping chain produced and re-runs
+Execution layer for assembly rescue's reassembly step: takes
+the rescued reads the rescue-mapping chain produced and re-runs
 GetOrganelle through the SAME GetOrganelleRunner (BaseTool) the
-primary attempt uses (#421), but with this attempt's own
+primary attempt uses, but with this attempt's own
 getorganelle_profiles entry (config.yaml's documented retry
 mechanism -- a different kmer/target_coverage/max_rounds each
 attempt) and its own output directory, so repeated attempts never
-collide and #402's contig selection can rank every attempt afterward.
+collide and contig selection can rank every attempt afterward.
 
 Mirrors run_getorganelle_assembly.py's own run/classify/record
 lifecycle deliberately -- this IS that same lifecycle, just fed
@@ -34,8 +34,8 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description = "Re-runs GetOrganelle on rescued reads with one getorganelle_profiles entry's tuning, and classifies the result.")
 
     parser.add_argument("--sample-id", type = str, required = True, help = "The sample id.")
-    parser.add_argument("--r1", type = Path, required = True, help = "The rescued R1 reads (#426's output).")
-    parser.add_argument("--r2", type = Path, required = True, help = "The rescued R2 reads (#426's output).")
+    parser.add_argument("--r1", type = Path, required = True, help = "The rescued R1 reads (the rescue-mapping step's own output).")
+    parser.add_argument("--r2", type = Path, required = True, help = "The rescued R2 reads (the rescue-mapping step's own output).")
     parser.add_argument("--organelle-type", type = str, default = "animal_mt", help = "The GetOrganelle organelle type.")
     parser.add_argument("--profile-name", type = str, required = True, help = "This attempt's getorganelle_profiles entry name (config.yaml), for logging/provenance only.")
     parser.add_argument("--kmer", type = str, default = None, help = "This profile's -k value (e.g. '21,33,55,85,115').")
@@ -124,7 +124,7 @@ def main() -> int:
 def _write_status(output_dir: Path, sample_id: str, status: str, success: bool, profile_name: str) -> None:
     """
     Records this rescue attempt's classification, same shape as the
-    primary attempt's (plus which profile produced it), for #402's
+    primary attempt's (plus which profile produced it), for contig selection's
     cross-attempt contig selection to read without re-deriving it.
 
     Args:

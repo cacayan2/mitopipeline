@@ -3,7 +3,7 @@ minimap2.py
 
 minimap2 wrapper for command building and execution -- maps a sample's
 reads against a reference FASTA during assembly rescue, so samtools can
-sort/index/extract the reads that actually mapped (#423/#424/#425).
+sort/index/extract the reads that actually mapped.
 """
 
 # Imports

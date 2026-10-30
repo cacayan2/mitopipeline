@@ -1,7 +1,7 @@
 """
 biosample_metadata.py
 
-Builds a reviewable NCBI BioSample submission table (#369/#372) from
+Builds a reviewable NCBI BioSample submission table from
 the runtime manifest's own sample metadata plus configured
 defaults -- real investigator-supplied biological fields (collection
 date, locality) are never fabricated; a missing one is recorded in

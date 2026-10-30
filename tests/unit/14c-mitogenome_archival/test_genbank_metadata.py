@@ -46,6 +46,50 @@ def test_full_submission_folder_from_real_selection_and_annotation(tmp_path: Pat
     assert record["topology"] == "circular"
     assert "sample1_Danio_rerio" in record["submission_folder"]
 
+def test_full_submission_folder_builds_a_real_feature_table(tmp_path: Path) -> None:
+    fasta = tmp_path / "data.fasta"
+    fasta.write_text(">s\n" + "ACGT" * 4149 + "\n")
+    gff = tmp_path / "result.gff"
+    gff.write_text(
+        "##gff-version 3\n"
+        "s\tmitos\tgene\t1\t600\t.\t+\t.\tID=gene_cox2;Name=cox2;gene_id=cox2\n"
+    )
+    selection_json = _write_json(tmp_path / "selection.json", {
+        "selected": True, "status": "circular", "fasta_path": str(fasta), "length_bp": 16596,
+    })
+    annotation_json = _write_json(tmp_path / "annotation.json", {"success": True, "gff_path": str(gff)})
+    output_dir = tmp_path / "genbank"
+
+    record = build_genbank_submission("sample1", "Danio rerio", selection_json, annotation_json, output_dir, defaults = DEFAULTS)
+
+    assert record["review_status"] == "READY"
+    assert Path(record["annotation_tbl"]).is_file()
+    assert "1\t600\tCDS" in Path(record["annotation_tbl"]).read_text().splitlines()
+    assert record["feature_table_warnings"] == ""
+
+
+def test_unrecognized_gene_in_feature_table_forces_manual_review(tmp_path: Path) -> None:
+    fasta = tmp_path / "data.fasta"
+    fasta.write_text(">s\n" + "ACGT" * 4149 + "\n")
+    gff = tmp_path / "result.gff"
+    gff.write_text(
+        "##gff-version 3\n"
+        "s\tmitos\tgene\t1\t600\t.\t+\t.\tID=gene_mystery;Name=mystery;gene_id=mystery\n"
+    )
+    selection_json = _write_json(tmp_path / "selection.json", {
+        "selected": True, "status": "circular", "fasta_path": str(fasta), "length_bp": 16596,
+    })
+    annotation_json = _write_json(tmp_path / "annotation.json", {"success": True, "gff_path": str(gff)})
+    output_dir = tmp_path / "genbank"
+
+    record = build_genbank_submission("sample1", "Danio rerio", selection_json, annotation_json, output_dir, defaults = DEFAULTS)
+
+    # A real feature-table warning is a genuine annotation concern --
+    # it must force manual review even when every file/field is present.
+    assert record["review_status"] == "MANUAL_REVIEW_REQUIRED"
+    assert "mystery" in record["feature_table_warnings"]
+
+
 def test_missing_selection_is_tracked_not_fabricated(tmp_path: Path) -> None:
     selection_json = _write_json(tmp_path / "selection.json", {"selected": False})
     annotation_json = tmp_path / "does_not_exist.json"

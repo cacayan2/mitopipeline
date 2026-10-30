@@ -3,7 +3,7 @@ run_blast_config.py
 
 Execution layer that resolves one sample's BLAST configuration
 deterministically -- query FASTA, database, output format, and the
-output path the BLAST exec stage (#429) will write to -- and records
+output path the BLAST exec stage will write to -- and records
 it as a JSON manifest that stage reads next.
 
 Doesn't run BLAST itself; that's the exec stage's job. This step

@@ -4,7 +4,7 @@ run_mitos2_config.py
 Execution layer that resolves one sample's MITOS2 configuration
 deterministically -- the selected FASTA to annotate, genetic code,
 taxonomy reference (refdir/refseqver), and the output directory the
-annotation exec stage (#432) will write to -- and records it as a
+annotation exec stage will write to -- and records it as a
 JSON manifest that stage reads next.
 
 Doesn't run MITOS2 itself; that's the annotation stage's job. This
@@ -29,7 +29,7 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description = "Resolves one sample's MITOS2 configuration.")
 
     parser.add_argument("--sample-id", type = str, required = True, help = "The sample id.")
-    parser.add_argument("--input-fasta", type = Path, required = True, help = "The selected mitogenome FASTA to annotate (#402's contig selection).")
+    parser.add_argument("--input-fasta", type = Path, required = True, help = "The selected mitogenome FASTA to annotate (contig selection's own output).")
     parser.add_argument("--genetic-code", type = int, required = True, help = "The genetic code to use.")
     parser.add_argument("--refdir", type = Path, required = True, help = "The base directory containing the MITOS2 reference data.")
     parser.add_argument("--refseqver", type = str, required = True, help = "The reference data version, a subdirectory of refdir.")

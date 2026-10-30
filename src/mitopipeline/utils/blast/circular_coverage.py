@@ -1,7 +1,7 @@
 """
 circular_coverage.py
 
-Corrects BLAST query coverage for a circular assembly (#414's own
+Corrects BLAST query coverage for a circular assembly (the biological validation gate's own
 "blast_identity" check): linear BLAST can only report a contiguous
 match, so a circular genome whose rotation differs from its
 reference's own rotation shows an origin-spanning match as two

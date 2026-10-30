@@ -2,7 +2,7 @@
 run_blast_reference_retrieval.py
 
 Execution layer for retrieving the selected BLAST hit's reference
-FASTA (#401): reads the top-hit TSV blast_hits.write_top_blast_hits()
+FASTA: reads the top-hit TSV blast_hits.write_top_blast_hits()
 already wrote, retrieves rank 1's accession from the local BLAST
 database with BlastDbCmdRunner (BaseTool), and records the result
 (or an explicit, non-crashing failure for an accession the database

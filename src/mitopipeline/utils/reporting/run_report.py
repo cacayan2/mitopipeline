@@ -1,8 +1,8 @@
 """
 run_report.py
 
-Renders the run-level Markdown report (#360/#441): aggregates every
-sample's own biological validation verdict (PASS/REVIEW/FAIL, #414's
+Renders the run-level Markdown report: aggregates every
+sample's own biological validation verdict (PASS/REVIEW/FAIL, the
 own typed outcome -- not a generic tool-exit-code "success/failure"
 binary). Each sample's own real phylogenetic tree (restoring v0.1.0's
 per-sample design) lives in that sample's own report, not here.
@@ -150,7 +150,7 @@ def render_sample_status_section(run_data: RunReportData, report_path: Path) -> 
     return ["## Sample Status", "", markdown_table(["Sample", "Verdict", "Rescued", "Report"], rows), ""]
 
 def render_archival_summary_section(run_data: RunReportData) -> list[str]:
-    """Renders the run-level NCBI archival preparation summary (#367-376)."""
+    """Renders the run-level NCBI archival preparation summary."""
     lines = ["## NCBI Archival Summary", ""]
     samples_with_archival = [s for s in run_data.samples if s.archival is not None]
     if not samples_with_archival:

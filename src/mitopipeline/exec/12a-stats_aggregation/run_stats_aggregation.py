@@ -1,7 +1,7 @@
 """
 run_stats_aggregation.py
 
-Execution layer for per-sample statistics aggregation (#353-356):
+Execution layer for per-sample statistics aggregation:
 extracts assembly/BLAST/annotation statistics from the real result
 JSON each earlier stage already wrote, merges them by sample_id, and
 records the result -- the reporting stage reads this next rather

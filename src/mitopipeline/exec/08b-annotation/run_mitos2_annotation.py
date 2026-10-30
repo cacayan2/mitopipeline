@@ -1,9 +1,9 @@
 """
 run_mitos2_annotation.py
 
-Execution layer for MITOS2 annotation (#432): runs MITOS2 through
-Mitos2Runner (BaseTool) against the resolved configuration #431 wrote,
-parses the real gene features out of its own result.gff (#410), and
+Execution layer for MITOS2 annotation: runs MITOS2 through
+Mitos2Runner (BaseTool) against the resolved configuration the config stage wrote,
+parses the real gene features out of its own result.gff, and
 records a result JSON -- the feature count and gene list downstream
 statistics/reporting stages read next.
 """

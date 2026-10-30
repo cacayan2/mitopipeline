@@ -9,7 +9,7 @@ failure -- any failure (unknown organism, no clean match at any locus,
 corrupt/unreachable database) is reported as a typed fallback result
 instead, so the caller can proceed with GetOrganelle's own default
 database for the organelle type (see api/getorganelle.py's "no seed"
-run, #393) rather than the whole pipeline crashing over one sample.
+run) rather than the whole pipeline crashing over one sample.
 """
 
 # Imports

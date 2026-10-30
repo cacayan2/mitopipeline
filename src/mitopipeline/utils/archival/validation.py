@@ -1,9 +1,9 @@
 """
 validation.py
 
-Cross-checks the three real archival tables (#374) -- SRA, BioSample,
+Cross-checks the three real archival tables -- SRA, BioSample,
 GenBank -- for sample-identifier consistency, and produces one
-submission-readiness record per sample (#450's own packaging
+submission-readiness record per sample (the packaging step's own
 validation reads this next) -- a genuine "Submission Blockers"
 report, matching the project's own NCBI archival requirements
 research, not a rubber-stamped pass.
@@ -11,9 +11,25 @@ research, not a rubber-stamped pass.
 
 # Imports
 import csv
+import json
 from logging import Logger
 from pathlib import Path
 from mitopipeline.utils.archival.models import READY, VALIDATION_COLUMNS
+
+def _read_table2asn_results(results_dir: Path | None) -> dict[str, dict[str, str]]:
+    """Reads every real *.table2asn_validation_result.json under results_dir, indexed by sample_id. {} when results_dir is None/absent."""
+    if results_dir is None or not Path(results_dir).is_dir():
+        return {}
+    results: dict[str, dict[str, str]] = {}
+    for path in sorted(Path(results_dir).glob("*.table2asn_validation_result.json")):
+        try:
+            record = json.loads(path.read_text(encoding = "utf-8"))
+        except (OSError, json.JSONDecodeError):
+            continue
+        sample_id = record.get("sample_id")
+        if sample_id:
+            results[sample_id] = record
+    return results
 
 def _read_tsv_by_sample(path: Path, key_column: str) -> dict[str, dict[str, str]]:
     """Reads a TSV, indexed by its own key_column, or {} when absent."""
@@ -49,7 +65,8 @@ def validate_cross_record_identifiers(sra_rows: dict[str, dict], biosample_rows:
 
 def validate_archival_readiness(sample_id: str, organism: str, raw_fastq_ready: bool, assembly_ready: bool,
                                  annotation_ready: bool, sra_row: dict[str, str] | None,
-                                 biosample_row: dict[str, str] | None, genbank_row: dict[str, str] | None) -> dict[str, str]:
+                                 biosample_row: dict[str, str] | None, genbank_row: dict[str, str] | None,
+                                 table2asn_row: dict[str, str] | None = None) -> dict[str, str]:
     """
     Builds one sample's submission-readiness record from every real
     archival table's own review_status, plus the real upstream
@@ -64,6 +81,7 @@ def validate_archival_readiness(sample_id: str, organism: str, raw_fastq_ready: 
         sra_row (dict[str, str] | None): This sample's own SRA record, or None if absent.
         biosample_row (dict[str, str] | None): This sample's own BioSample record, or None if absent.
         genbank_row (dict[str, str] | None): This sample's own GenBank record, or None if absent.
+        table2asn_row (dict[str, str] | None): This sample's own real table2asn validation result, or None if it hasn't run (e.g. no assembly/feature table yet).
 
     Returns:
         dict[str, str]: The readiness record, in VALIDATION_COLUMNS order.
@@ -71,6 +89,7 @@ def validate_archival_readiness(sample_id: str, organism: str, raw_fastq_ready: 
     sra_ready = sra_row is not None and sra_row.get("review_status") == READY
     biosample_ready = biosample_row is not None and biosample_row.get("review_status") == READY
     genbank_ready = genbank_row is not None and genbank_row.get("review_status") == READY
+    table2asn_ready = table2asn_row is not None and table2asn_row.get("status") == "PASS"
 
     # A missing GenBank assembly/annotation file and its corresponding
     # required-metadata field (both sourced from genbank_metadata.py's
@@ -91,6 +110,9 @@ def validate_archival_readiness(sample_id: str, organism: str, raw_fastq_ready: 
     elif not biosample_ready: blockers.append(f"BioSample fields need review: {biosample_row.get('missing_fields', '')}")
     if genbank_row is None: blockers.append("no GenBank record")
     elif not genbank_ready: blockers.append(f"GenBank needs review: {';'.join(genbank_missing_fields)}")
+    if table2asn_row is None: blockers.append("table2asn validation has not run")
+    elif table2asn_row.get("status") == "SKIPPED": blockers.append(f"table2asn validation skipped: {table2asn_row.get('blockers', '')}")
+    elif not table2asn_ready: blockers.append(f"table2asn validation failed: {table2asn_row.get('blockers', '')}")
 
     ready_for_review = not blockers
 
@@ -99,7 +121,7 @@ def validate_archival_readiness(sample_id: str, organism: str, raw_fastq_ready: 
         "raw_fastq_ready": str(raw_fastq_ready), "assembly_ready": str(assembly_ready),
         "annotation_ready": str(annotation_ready), "sra_ready": str(sra_ready),
         "biosample_ready": str(biosample_ready), "genbank_ready": str(genbank_ready),
-        "ready_for_review": str(ready_for_review),
+        "table2asn_ready": str(table2asn_ready), "ready_for_review": str(ready_for_review),
         "missing_files": ";".join(f for f in [
             "" if raw_fastq_ready else "raw_fastq", "" if assembly_ready else "assembly",
             "" if annotation_ready else "annotation",
@@ -118,6 +140,7 @@ def validate_archival_readiness(sample_id: str, organism: str, raw_fastq_ready: 
 
 def build_archival_validation(runtime_manifest_path: str | Path, sra_tsv: str | Path, biosample_tsv: str | Path,
                                genbank_tsv: str | Path, job_directory: str | Path,
+                               table2asn_results_dir: str | Path | None = None,
                                logger: Logger | None = None) -> list[dict[str, str]]:
     """
     Builds the full cross-sample archival readiness report.
@@ -128,6 +151,7 @@ def build_archival_validation(runtime_manifest_path: str | Path, sra_tsv: str | 
         biosample_tsv (str | Path): The BioSample metadata table written by run_biosample_metadata.py.
         genbank_tsv (str | Path): The GenBank metadata table written by run_mitogenome_metadata.py.
         job_directory (str | Path): The pipeline job's own output directory, used to check raw FASTQ/assembly/annotation presence directly.
+        table2asn_results_dir (str | Path | None): The directory containing every sample's own *.table2asn_validation_result.json, or None to skip this check.
         logger (Logger | None): Logger to use. Defaults to None.
 
     Returns:
@@ -137,6 +161,7 @@ def build_archival_validation(runtime_manifest_path: str | Path, sra_tsv: str | 
     sra_rows = _read_tsv_by_sample(Path(sra_tsv), "sample_name")
     biosample_rows = _read_tsv_by_sample(Path(biosample_tsv), "sample_name")
     genbank_rows = _read_tsv_by_sample(Path(genbank_tsv), "sample_id")
+    table2asn_rows = _read_table2asn_results(table2asn_results_dir)
 
     inconsistencies = validate_cross_record_identifiers(sra_rows, biosample_rows, genbank_rows)
     if logger is not None:
@@ -160,6 +185,7 @@ def build_archival_validation(runtime_manifest_path: str | Path, sra_tsv: str | 
                 assembly_ready = bool(genbank_row) and bool(genbank_row.get("assembly_fasta")),
                 annotation_ready = bool(genbank_row) and bool(genbank_row.get("annotation_gff")),
                 sra_row = sra_row, biosample_row = biosample_row, genbank_row = genbank_row,
+                table2asn_row = table2asn_rows.get(sample_id),
             )
             records.append(record)
 
