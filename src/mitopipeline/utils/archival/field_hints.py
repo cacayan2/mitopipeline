@@ -40,6 +40,7 @@ FIELD_HINTS: dict[str, str] = {
     "sample_id": "Taken from the manifest's own `sample_id` column.",
     "assembly_fasta": "This sample's own selected mitochondrial assembly. Missing means the assembly stage did not produce a usable genome for this sample -- see its own Assembly Results section, not a config value to set.",
     "annotation_gff": "This sample's own MITOS2 annotation. Missing means annotation did not run or did not succeed for this sample -- see its own Annotation Results section, not a config value to set.",
+    "annotation_tbl": "This sample's own real NCBI 5-column feature table, built from its MITOS2 annotation. Missing means the annotation GFF and/or assembly FASTA weren't both available to build it from -- not a config value to set.",
     "molecule_type": "e.g. `DNA`. Add a `molecule_type` manifest column (per sample), or set `stage_options.archival.biosample.molecule_type`.",
     "genome_location": "e.g. `mitochondrion`. Add a `genome_location` manifest column (per sample), or set `stage_options.archival.biosample.genome_location`.",
     "topology": "`circular` or `linear` -- always derived automatically from this sample's own real assembly status, never a manifest column or config value to set.",
