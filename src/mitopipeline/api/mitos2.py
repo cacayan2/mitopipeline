@@ -11,6 +11,7 @@ gates) have a structured annotation to read.
 from __future__ import annotations
 from logging import Logger
 from pathlib import Path
+import shutil
 import sys
 from mitopipeline.models.base_tool.base_tool import BaseTool
 
@@ -160,7 +161,18 @@ class Mitos2Runner(BaseTool):
         # exist (confirmed against the installed source: it calls
         # parser.error("no such directory %s") when it doesn't) --
         # so the output directory is created here, not left for the
-        # tool itself.
+        # tool itself. Any contents already in it (from a prior run
+        # against this same sample) are cleared first: runmitos.py
+        # writes its own scratch files directly into -o (e.g.
+        # sequence.fas-N, blast/, mitfi-global/) with no flag to
+        # request a clean run (unlike IQ-TREE's -redo), and a scratch
+        # file left over from an earlier run genuinely crashes the
+        # next one -- confirmed directly: a leftover mitfi-global/
+        # *.cmout from a prior successful run made the next run's
+        # mitfi_import.jar throw StringIndexOutOfBoundsException and
+        # exit 1, even though nothing about the real input had changed.
+        if self.output_dir.is_dir():
+            shutil.rmtree(self.output_dir)
         self.output_dir.mkdir(parents = True, exist_ok = True)
 
         command = [

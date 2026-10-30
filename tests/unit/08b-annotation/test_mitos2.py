@@ -48,6 +48,23 @@ def test_build_command_creates_the_output_directory(tmp_path: Path) -> None:
     runner.build_command()
     assert runner.output_dir.is_dir()
 
+def test_build_command_clears_a_preexisting_output_directory(tmp_path: Path) -> None:
+    # A stale scratch file from a prior run against this same sample
+    # (e.g. mitfi-global/*.cmout) genuinely crashes the next run --
+    # confirmed directly against the real tool. build_command() must
+    # wipe the directory before recreating it, not just mkdir over it.
+    runner = _make_runner(tmp_path)
+    runner.output_dir.mkdir(parents = True)
+    (runner.output_dir / "mitfi-global").mkdir()
+    (runner.output_dir / "mitfi-global" / "stale.cmout").write_text("stale")
+    (runner.output_dir / "sequence.fas-1234").write_text("stale")
+    (runner.output_dir / "SAMPLE_01.annotation.gff").write_text("stale prior result")
+
+    runner.build_command()
+
+    assert runner.output_dir.is_dir()
+    assert list(runner.output_dir.iterdir()) == []
+
 def test_default_treats_sequence_as_circular(tmp_path: Path) -> None:
     # runmitos.py's own default is circular=True; --linear is the
     # flag that flips it to False. Never passing --linear means
