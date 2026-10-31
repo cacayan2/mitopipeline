@@ -296,14 +296,18 @@ def test_render_aggregated_data_section_links_real_existing_files(tmp_path: Path
 def test_render_aggregated_data_section_links_real_archival_materials(tmp_path: Path) -> None:
     aggregated_dir = tmp_path / "aggregated_data"
     archival = aggregated_dir / "archival"
-    (archival).mkdir(parents = True)
-    (archival / "sra_metadata.tsv").write_text("sample_name\tstatus\nsample1\tREADY\n")
-    (archival / "biosample_metadata.tsv").write_text("sample_name\tstatus\nsample1\tREADY\n")
+    (archival / "sra").mkdir(parents = True)
+    (archival / "sra" / "sra_metadata.tsv").write_text("sample_name\tstatus\nsample1\tREADY\n")
+    (archival / "biosample").mkdir(parents = True)
+    (archival / "biosample" / "biosample_metadata.tsv").write_text("sample_name\tstatus\nsample1\tREADY\n")
+    (archival / "bioproject").mkdir(parents = True)
+    (archival / "bioproject" / "bioproject_metadata.json").write_text('{"title": "test"}')
     (archival / "submission_checklist.md").write_text("# checklist\n")
     genbank_dir = archival / "genbank" / "sample1"
     genbank_dir.mkdir(parents = True)
     (genbank_dir / "sample1.fasta").write_text(">sample1\nACGT\n")
     (genbank_dir / "sample1.gff").write_text("##gff-version 3\n")
+    (genbank_dir / "sample1.sqn").write_text("fake sqn")
 
     sample = SampleReportData(
         sample_id = "sample1", metadata = {}, fastp_stats = None,
@@ -313,10 +317,14 @@ def test_render_aggregated_data_section_links_real_archival_materials(tmp_path: 
     text = "\n".join(render_aggregated_data_section(sample, tmp_path / "sample1.report.md"))
     assert "SRA metadata table" in text
     assert "BioSample metadata table" in text
+    assert "BioProject metadata record" in text
     assert "GenBank assembly FASTA" in text
     assert "GenBank annotation GFF" in text
+    assert "table2asn submission file (.sqn)" in text
     assert "Submission checklist" in text
-    # Files that don't exist (no readiness report/checksums produced in this fixture) are simply omitted.
+    # Files that don't exist (no .tbl/.val/.dr/.gbf/readiness-report/checksums produced in this fixture) are simply omitted.
+    assert "GenBank feature table" not in text
+    assert "table2asn validation report" not in text
     assert "Submission readiness report" not in text
     assert "MD5 checksums" not in text
 

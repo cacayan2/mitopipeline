@@ -16,7 +16,10 @@ from pathlib import Path
 import subprocess
 import sys
 import pytest
-from mitopipeline.launcher.pipeline_launcher import _configured_job_id, _job_configuration, load_config, parse_args, run_snakemake
+from mitopipeline.launcher.pipeline_launcher import (
+    _configured_job_id, _job_configuration, _rerender_run_report_with_final_status,
+    load_config, parse_args, run_snakemake,
+)
 
 def test_loads_a_real_yaml_config_without_a_job(tmp_path: Path) -> None:
     config_path = tmp_path / "config.yaml"
@@ -109,3 +112,92 @@ def test_run_snakemake_resolves_the_binary_against_sys_executable(tmp_path: Path
     # without this flag -- an unattended launcher must resume on its
     # own, not require a manual --cleanup-metadata/--rerun-incomplete step.
     assert "--rerun-incomplete" in command
+
+class _FakeJob:
+    """A minimal stand-in exposing only what _rerender_run_report_with_final_status() actually touches -- never a real PipelineJob, which creates real directories and log files as a side effect of construction."""
+    def __init__(self, job_dir: Path) -> None:
+        self.job_dir = job_dir
+        self.job_id = "job1"
+        self.job_logger = logging.getLogger("test_rerender")
+
+class _FakeSample:
+    def __init__(self, sample_id: str) -> None:
+        self.sample_id = sample_id
+
+def test_rerender_run_report_is_a_noop_when_reporting_never_ran(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Regression guard: a run with reporting disabled (or a run that
+    failed before ever reaching it) must not attempt to re-invoke a
+    report-rendering script against a report that was never rendered
+    in the first place."""
+    calls: list = []
+    monkeypatch.setattr(subprocess, "run", lambda *a, **k: calls.append((a, k)))
+
+    job = _FakeJob(tmp_path / "job")
+    _rerender_run_report_with_final_status({}, job, tmp_path / "manifest.tsv", [_FakeSample("s1")])
+
+    assert calls == []
+
+def test_rerender_run_report_invokes_the_real_exec_script_with_the_right_arguments(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Regression: the Snakemake rule that first renders the run-level
+    report runs mid-DAG, before this launcher's own mark_completed()/
+    mark_failed() call -- so its own first pass can only show the
+    job's mid-run status, never the real terminal one. This second
+    pass, invoked once current_metadata.json carries the real final
+    status, must call the same real exec script with the same real
+    arguments the Snakemake rule itself would use."""
+    job_dir = tmp_path / "job"
+    report_dir = job_dir / "13-report_pdf"
+    report_dir.mkdir(parents = True)
+    (report_dir / "run_report.done").touch()
+
+    captured: dict = {}
+    def _fake_run(command, **kwargs):
+        captured["command"] = command
+        return subprocess.CompletedProcess(args = command, returncode = 0, stdout = "", stderr = "")
+    monkeypatch.setattr(subprocess, "run", _fake_run)
+
+    config = {
+        "stage_options": {
+            "report_export": {"pandoc": {"bin": "pandoc", "engine": "/usr/local/bin/typst"}},
+            "phylogeny": {"iqtree": {"model": "MFP"}},
+        },
+    }
+    job = _FakeJob(job_dir)
+    samples = [_FakeSample("sample_a"), _FakeSample("sample_b")]
+    runtime_manifest = tmp_path / "runtime_manifest.tsv"
+
+    _rerender_run_report_with_final_status(config, job, runtime_manifest, samples)
+
+    command = captured["command"]
+    assert command[0] == sys.executable
+    assert "run_run_report.py" in command[1]
+    assert command[command.index("--job-id") + 1] == "job1"
+    assert command.count("--sample-id") == 2
+    assert "sample_a" in command and "sample_b" in command
+    assert command[command.index("--runtime-manifest") + 1] == str(runtime_manifest)
+    assert command[command.index("--job-dir") + 1] == str(job_dir)
+    assert command[command.index("--pandoc-bin") + 1] == "pandoc"
+    assert command[command.index("--pdf-engine") + 1] == "/usr/local/bin/typst"
+    assert command[command.index("--phylogeny-model") + 1] == "MFP"
+    assert command[command.index("--output-dir") + 1] == str(report_dir)
+
+def test_rerender_run_report_omits_phylogeny_model_when_not_configured(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    job_dir = tmp_path / "job"
+    report_dir = job_dir / "13-report_pdf"
+    report_dir.mkdir(parents = True)
+    (report_dir / "run_report.done").touch()
+
+    captured: dict = {}
+    def _fake_run(command, **kwargs):
+        captured["command"] = command
+        return subprocess.CompletedProcess(args = command, returncode = 0, stdout = "", stderr = "")
+    monkeypatch.setattr(subprocess, "run", _fake_run)
+
+    job = _FakeJob(job_dir)
+    _rerender_run_report_with_final_status({}, job, tmp_path / "manifest.tsv", [_FakeSample("s1")])
+
+    assert "--phylogeny-model" not in captured["command"]

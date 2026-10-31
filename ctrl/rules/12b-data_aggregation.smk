@@ -8,14 +8,16 @@ phylogenies/ -- a job-level step covering every sample in one call,
 the same pattern run_report.py's own aggregation already uses.
 
 Also consolidates the run's real NCBI archival materials into
-archival/ (Emil's own direct follow-up ask), which means this stage
-now genuinely depends on the archival stages (#14a-#15) completing
-first -- despite its "12b" numeric prefix placing it earlier in the
-stage listing than "14a"/"15". That numbering reflects when this
-step was first built (assembly/annotation/phylogeny consolidation,
-before archival existed), not its real position in the DAG today;
-left as-is rather than re-renumbered, since Snakemake schedules off
-real declared dependencies, not directory-name order.
+archival/ (Emil's own direct follow-up ask), one real subfolder per
+metadata type -- sra/, biosample/, bioproject/, genbank/ -- which
+means this stage now genuinely depends on the archival stages
+(#14a-#16) completing first -- despite its "12b" numeric prefix
+placing it earlier in the stage listing than "14a"/"15"/"16". That
+numbering reflects when this step was first built (assembly/
+annotation/phylogeny consolidation, before archival existed), not
+its real position in the DAG today; left as-is rather than
+re-renumbered, since Snakemake schedules off real declared
+dependencies, not directory-name order.
 """
 
 def _data_aggregation_inputs(wildcards):
@@ -45,6 +47,14 @@ def _data_aggregation_inputs(wildcards):
         inputs["mitogenome_archival_done"] = expand(
             str(JOB_DIR / "14c-mitogenome_archival" / "{sample}" / "{sample}.mitogenome_archival.done"), sample = SAMPLES
         )
+    # 16-table2asn_validation is read directly too (this exec script's
+    # own _table2asn_files() pulls each sample's real .sqn/.val/.stats/
+    # .dr/.gbf paths from its result JSON), so it needs the same real
+    # dependency edge as 14a/14b/14c above, not just a transitive one.
+    if stage_enabled("16-table2asn_validation"):
+        inputs["table2asn_validation_done"] = expand(
+            str(JOB_DIR / "16-table2asn_validation" / "{sample}" / "{sample}.table2asn_validation.done"), sample = SAMPLES
+        )
     # archival_validation is the real source of the submission
     # checklist/readiness report/checksums this step copies in, and
     # itself already depends on 14a/14b/14c -- declaring it alone
@@ -71,6 +81,7 @@ rule data_aggregation:
         output_dir = str(JOB_DIR / "aggregated_data"),
         sra_metadata_tsv = str(JOB_DIR / "14a-sra_archival" / "sra_metadata.tsv") if stage_enabled("14a-sra_archival") else "",
         biosample_metadata_tsv = str(JOB_DIR / "14b-biosample_archival" / "biosample_metadata.tsv") if stage_enabled("14b-biosample_archival") else "",
+        bioproject_metadata_json = str(JOB_DIR / "15-archival_validation" / "bioproject_metadata.json") if stage_enabled("15-archival_validation") else "",
         genbank_metadata_tsv = str(JOB_DIR / "15-archival_validation" / "genbank_metadata.tsv") if stage_enabled("15-archival_validation") else "",
         archival_validation_tsv = str(JOB_DIR / "15-archival_validation" / "archival_validation.tsv") if stage_enabled("15-archival_validation") else "",
         submission_checklist_md = str(JOB_DIR / "15-archival_validation" / "submission_checklist.md") if stage_enabled("15-archival_validation") else "",
@@ -88,6 +99,9 @@ rule data_aggregation:
         fi
         if [ -n "{params.biosample_metadata_tsv}" ]; then
             ARCHIVAL_ARGS="$ARCHIVAL_ARGS --biosample-metadata-tsv {params.biosample_metadata_tsv:q}"
+        fi
+        if [ -n "{params.bioproject_metadata_json}" ]; then
+            ARCHIVAL_ARGS="$ARCHIVAL_ARGS --bioproject-metadata-json {params.bioproject_metadata_json:q}"
         fi
         if [ -n "{params.genbank_metadata_tsv}" ]; then
             ARCHIVAL_ARGS="$ARCHIVAL_ARGS --genbank-metadata-tsv {params.genbank_metadata_tsv:q}"

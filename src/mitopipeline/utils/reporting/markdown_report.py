@@ -314,12 +314,19 @@ def render_aggregated_data_section(report_data: SampleReportData, report_path: P
     else:
         lines += ["_No aggregated files were available for this sample._", ""]
 
+    genbank_dir = aggregated_dir / "archival" / "genbank" / sample_id
     archival_links = [
         link for link in [
-            file_link("SRA metadata table", aggregated_dir / "archival" / "sra_metadata.tsv", report_path),
-            file_link("BioSample metadata table", aggregated_dir / "archival" / "biosample_metadata.tsv", report_path),
-            file_link("GenBank assembly FASTA", aggregated_dir / "archival" / "genbank" / sample_id / f"{sample_id}.fasta", report_path),
-            file_link("GenBank annotation GFF", aggregated_dir / "archival" / "genbank" / sample_id / f"{sample_id}.gff", report_path),
+            file_link("SRA metadata table", aggregated_dir / "archival" / "sra" / "sra_metadata.tsv", report_path),
+            file_link("BioSample metadata table", aggregated_dir / "archival" / "biosample" / "biosample_metadata.tsv", report_path),
+            file_link("BioProject metadata record", aggregated_dir / "archival" / "bioproject" / "bioproject_metadata.json", report_path),
+            file_link("GenBank assembly FASTA", genbank_dir / f"{sample_id}.fasta", report_path),
+            file_link("GenBank annotation GFF", genbank_dir / f"{sample_id}.gff", report_path),
+            file_link("GenBank feature table", genbank_dir / f"{sample_id}.tbl", report_path),
+            file_link("table2asn submission file (.sqn)", genbank_dir / f"{sample_id}.sqn", report_path),
+            file_link("table2asn validation report (.val)", genbank_dir / f"{sample_id}.val", report_path),
+            file_link("table2asn discrepancy report (.dr)", genbank_dir / f"{sample_id}.dr", report_path),
+            file_link("table2asn GenBank flatfile (.gbf)", genbank_dir / f"{sample_id}.gbf", report_path),
             file_link("Submission readiness report", aggregated_dir / "archival" / "archival_validation.tsv", report_path),
             file_link("Submission checklist", aggregated_dir / "archival" / "submission_checklist.md", report_path),
             file_link("MD5 checksums", aggregated_dir / "archival" / "md5_checksums.tsv", report_path),

@@ -93,6 +93,61 @@ def test_aggregate_sample_data_skips_an_empty_genbank_submission_folder(tmp_path
     result = aggregate_sample_data("sample1", tmp_path / "aggregated_data", genbank_submission_dir = empty_folder)
     assert result.genbank_submission_dir_path is None
 
+def test_aggregate_sample_data_copies_table2asn_files_into_the_same_genbank_folder(tmp_path: Path) -> None:
+    sqn = tmp_path / "source" / "sample1.sqn"
+    sqn.parent.mkdir(parents = True)
+    sqn.write_text("fake sqn")
+    val = tmp_path / "source" / "sample1.val"
+    val.write_text("fake val")
+    stats = tmp_path / "source" / "sample1.stats"
+    stats.write_text("fake stats")
+    dr = tmp_path / "source" / "sample1.dr"
+    dr.write_text("fake dr")
+    gbf = tmp_path / "source" / "sample1.gbf"
+    gbf.write_text("fake gbf")
+
+    output_root = tmp_path / "aggregated_data"
+    result = aggregate_sample_data(
+        "sample1", output_root,
+        table2asn_sqn = sqn, table2asn_validation_file = val, table2asn_stats = stats,
+        table2asn_discrepancy = dr, table2asn_genbank_flatfile = gbf,
+    )
+
+    genbank_dir = output_root / "archival" / "genbank" / "sample1"
+    assert result.table2asn_sqn_path == genbank_dir / "sample1.sqn"
+    assert result.table2asn_validation_path == genbank_dir / "sample1.val"
+    assert result.table2asn_stats_path == genbank_dir / "sample1.stats"
+    assert result.table2asn_discrepancy_path == genbank_dir / "sample1.dr"
+    assert result.table2asn_genbank_flatfile_path == genbank_dir / "sample1.gbf"
+    assert result.table2asn_sqn_path.read_text() == "fake sqn"
+
+def test_aggregate_sample_data_lands_table2asn_files_alongside_the_genbank_submission_folder(tmp_path: Path) -> None:
+    """The real intended use: table2asn files end up in the exact same directory as the GenBank submission folder's own copied fasta/gff/tbl, not a second, separate location."""
+    submission_folder = tmp_path / "source" / "sample1_Danio_rerio"
+    submission_folder.mkdir(parents = True)
+    (submission_folder / "sample1.fasta").write_text(">sample1\nACGT\n")
+    (submission_folder / "sample1.tbl").write_text(">Feature sample1\n")
+    sqn = tmp_path / "source" / "sample1.sqn"
+    sqn.write_text("fake sqn")
+
+    output_root = tmp_path / "aggregated_data"
+    result = aggregate_sample_data(
+        "sample1", output_root, genbank_submission_dir = submission_folder, table2asn_sqn = sqn,
+    )
+
+    assert result.genbank_submission_dir_path == result.table2asn_sqn_path.parent
+    assert (result.genbank_submission_dir_path / "sample1.fasta").is_file()
+    assert (result.genbank_submission_dir_path / "sample1.tbl").is_file()
+    assert (result.genbank_submission_dir_path / "sample1.sqn").is_file()
+
+def test_aggregate_sample_data_skips_missing_table2asn_files_gracefully(tmp_path: Path) -> None:
+    result = aggregate_sample_data("sample1", tmp_path / "aggregated_data")
+    assert result.table2asn_sqn_path is None
+    assert result.table2asn_validation_path is None
+    assert result.table2asn_stats_path is None
+    assert result.table2asn_discrepancy_path is None
+    assert result.table2asn_genbank_flatfile_path is None
+
 def test_aggregate_sample_data_isolates_different_samples(tmp_path: Path) -> None:
     fasta_a = tmp_path / "a.fasta"
     fasta_a.write_text(">a\nACGT\n")
@@ -113,6 +168,8 @@ def test_aggregate_archival_data_copies_every_real_job_level_file(tmp_path: Path
     sra.write_text("sample_name\treview_status\nsample1\tREADY\n")
     biosample = tmp_path / "source" / "biosample_metadata.tsv"
     biosample.write_text("sample_name\treview_status\nsample1\tREADY\n")
+    bioproject = tmp_path / "source" / "bioproject_metadata.json"
+    bioproject.write_text('{"title": "test"}')
     genbank_metadata = tmp_path / "source" / "genbank_metadata.tsv"
     genbank_metadata.write_text("sample_name\treview_status\nsample1\tREADY\n")
     validation = tmp_path / "source" / "archival_validation.tsv"
@@ -125,14 +182,17 @@ def test_aggregate_archival_data_copies_every_real_job_level_file(tmp_path: Path
     output_root = tmp_path / "aggregated_data"
     result = aggregate_archival_data(
         output_root, sra_metadata_tsv = sra, biosample_metadata_tsv = biosample,
+        bioproject_metadata_json = bioproject,
         genbank_metadata_tsv = genbank_metadata, archival_validation_tsv = validation,
         submission_checklist_md = checklist, checksums_tsv = checksums,
     )
 
-    assert result.sra_metadata_path == output_root / "archival" / "sra_metadata.tsv"
+    assert result.sra_metadata_path == output_root / "archival" / "sra" / "sra_metadata.tsv"
     assert result.sra_metadata_path.is_file()
-    assert result.biosample_metadata_path == output_root / "archival" / "biosample_metadata.tsv"
-    assert result.genbank_metadata_path == output_root / "archival" / "genbank_metadata.tsv"
+    assert result.biosample_metadata_path == output_root / "archival" / "biosample" / "biosample_metadata.tsv"
+    assert result.bioproject_metadata_path == output_root / "archival" / "bioproject" / "bioproject_metadata.json"
+    assert result.bioproject_metadata_path.is_file()
+    assert result.genbank_metadata_path == output_root / "archival" / "genbank" / "genbank_metadata.tsv"
     assert result.archival_validation_path == output_root / "archival" / "archival_validation.tsv"
     assert result.submission_checklist_path == output_root / "archival" / "submission_checklist.md"
     assert result.checksums_path == output_root / "archival" / "md5_checksums.tsv"
@@ -142,6 +202,7 @@ def test_aggregate_archival_data_skips_missing_inputs_gracefully(tmp_path: Path)
     result = aggregate_archival_data(tmp_path / "aggregated_data")
     assert result.sra_metadata_path is None
     assert result.biosample_metadata_path is None
+    assert result.bioproject_metadata_path is None
     assert result.genbank_metadata_path is None
     assert result.archival_validation_path is None
     assert result.submission_checklist_path is None

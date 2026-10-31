@@ -106,8 +106,20 @@ def test_aggregates_real_archival_materials(tmp_path: Path, monkeypatch: pytest.
         "sample_id": "sample1", "submission_folder": str(genbank_submission),
     })
 
+    table2asn_dir = job_dir / "16-table2asn_validation" / "sample1" / "output"
+    table2asn_dir.mkdir(parents = True)
+    (table2asn_dir / "sample1.sqn").write_text("fake sqn")
+    (table2asn_dir / "sample1.gbf").write_text("fake gbf")
+    _write_json(job_dir / "16-table2asn_validation" / "sample1.table2asn_validation_result.json", {
+        "sample_id": "sample1", "status": "PASS",
+        "sqn_file": str(table2asn_dir / "sample1.sqn"), "genbank_flatfile": str(table2asn_dir / "sample1.gbf"),
+        "validation_file": "", "stats_file": "", "discrepancy_file": "",
+    })
+
+    bioproject = job_dir / "15-archival_validation" / "bioproject_metadata.json"
+    bioproject.parent.mkdir(parents = True, exist_ok = True)
+    bioproject.write_text('{"title": "test"}')
     validation = job_dir / "15-archival_validation" / "archival_validation.tsv"
-    validation.parent.mkdir(parents = True)
     validation.write_text("sample_id\tready_for_review\nsample1\tTrue\n")
     checklist = job_dir / "15-archival_validation" / "submission_checklist.md"
     checklist.write_text("# checklist\n")
@@ -120,6 +132,7 @@ def test_aggregates_real_archival_materials(tmp_path: Path, monkeypatch: pytest.
         "run_data_aggregation.py", "--job-id", "job1", "--sample-id", "sample1",
         "--job-dir", str(job_dir), "--output-dir", str(output_dir),
         "--sra-metadata-tsv", str(sra), "--biosample-metadata-tsv", str(biosample),
+        "--bioproject-metadata-json", str(bioproject),
         "--genbank-metadata-tsv", str(genbank_metadata), "--archival-validation-tsv", str(validation),
         "--submission-checklist-md", str(checklist), "--checksums-tsv", str(checksums),
         "--log-file", str(tmp_path / "logs" / "agg.log"),
@@ -127,18 +140,23 @@ def test_aggregates_real_archival_materials(tmp_path: Path, monkeypatch: pytest.
     ])
 
     assert run_data_aggregation.main() == 0
-    assert (output_dir / "archival" / "sra_metadata.tsv").is_file()
-    assert (output_dir / "archival" / "biosample_metadata.tsv").is_file()
-    assert (output_dir / "archival" / "genbank_metadata.tsv").is_file()
+    assert (output_dir / "archival" / "sra" / "sra_metadata.tsv").is_file()
+    assert (output_dir / "archival" / "biosample" / "biosample_metadata.tsv").is_file()
+    assert (output_dir / "archival" / "bioproject" / "bioproject_metadata.json").is_file()
+    assert (output_dir / "archival" / "genbank" / "genbank_metadata.tsv").is_file()
     assert (output_dir / "archival" / "archival_validation.tsv").is_file()
     assert (output_dir / "archival" / "submission_checklist.md").is_file()
     assert (output_dir / "archival" / "md5_checksums.tsv").is_file()
     assert (output_dir / "archival" / "genbank" / "sample1" / "sample1.fasta").read_text() == ">sample1\nACGT\n"
     assert (output_dir / "archival" / "genbank" / "sample1" / "sample1.gff").is_file()
+    assert (output_dir / "archival" / "genbank" / "sample1" / "sample1.sqn").read_text() == "fake sqn"
+    assert (output_dir / "archival" / "genbank" / "sample1" / "sample1.gbf").is_file()
 
     result = json.loads((output_dir / "job1.data_aggregation_result.json").read_text())
     assert result["samples"][0]["genbank_submission_dir_path"] is not None
+    assert result["samples"][0]["table2asn_sqn_path"] is not None
     assert result["archival"]["sra_metadata_path"] is not None
+    assert result["archival"]["bioproject_metadata_path"] is not None
     assert result["archival"]["submission_checklist_path"] is not None
 
 def test_multiple_samples_are_isolated(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

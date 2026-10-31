@@ -487,6 +487,60 @@ def run_snakemake(
 
     return result, output
 
+def _rerender_run_report_with_final_status(config: dict, job: PipelineJob, runtime_manifest: Path,
+                                            samples: list[Sample]) -> None:
+    """
+    Re-renders just the run-level report (not the whole Snakemake DAG)
+    now that the job's own terminal status has actually been written
+    to current_metadata.json. The Snakemake rule that first renders
+    this report runs mid-DAG, before this launcher's own
+    mark_completed()/mark_failed() call below -- structurally, it can
+    never see the job's own real final status, since that status is
+    only known once the whole Snakemake subprocess has returned. Its
+    first pass honestly labels this as "Running"/"Elapsed so far"
+    rather than guessing (see Development Status, 2026-10-28); this
+    second, lightweight pass -- the same real exec script, invoked
+    again -- corrects it to the real terminal status without
+    restructuring the DAG itself. A no-op when the reporting stage
+    never ran in the first place (no run_report.done).
+
+    Args:
+        config (dict): The pipeline configuration.
+        job (PipelineJob): The current pipeline job, already marked completed or failed.
+        runtime_manifest (Path): The runtime manifest TSV used for this run.
+        samples (list[Sample]): The run's own validated samples.
+    """
+    report_dir = job.job_dir / "13-report_pdf"
+    if not (report_dir / "run_report.done").is_file():
+        return
+
+    pandoc_config = config.get("stage_options", {}).get("report_export", {}).get("pandoc", {})
+    phylogeny_model = config.get("stage_options", {}).get("phylogeny", {}).get("iqtree", {}).get("model")
+
+    exec_script = Path.cwd() / "src" / "mitopipeline" / "exec" / "13-report_pdf" / "run_run_report.py"
+    command = [
+        sys.executable, str(exec_script),
+        "--job-id", job.job_id,
+        *[arg for sample in samples for arg in ("--sample-id", sample.sample_id)],
+        "--runtime-manifest", str(runtime_manifest),
+        "--job-dir", str(job.job_dir),
+        "--pandoc-bin", str(pandoc_config.get("bin", "pandoc")),
+        "--pdf-engine", str(pandoc_config.get("engine", "typst")),
+        "--output-dir", str(report_dir),
+        "--log-file", str(job.job_dir / "logs" / "13-report_pdf" / "run_report.log"),
+        "--global-log-file", str(job.job_dir / "logs" / "00-job" / f"{job.job_id}.global.log"),
+    ]
+    if phylogeny_model:
+        command += ["--phylogeny-model", str(phylogeny_model)]
+
+    job.job_logger.info("Re-rendering the run-level report now that the job's final status is known.")
+    result = subprocess.run(command, cwd = Path.cwd(), capture_output = True, text = True)
+    if result.returncode != 0:
+        job.job_logger.warning(
+            f"Final-status run-report re-render exited {result.returncode}; the report keeps its "
+            f"original mid-run status. stderr: {result.stderr[-2000:]}"
+        )
+
 def launch_pipeline(
         config_path: Path,
         snakefile: Path = Path("ctrl/Snakefile"),
@@ -551,6 +605,7 @@ def launch_pipeline(
                 failure_reason = _extract_failure_reason(snakemake_output, result.returncode),
                 log_tail = log_tail
             )
+        _rerender_run_report_with_final_status(config, job, runtime_manifest, samples)
         return result.returncode
     except Exception as error:
         job.job_logger.exception(f"Pipeline launch failed: {error}.")
