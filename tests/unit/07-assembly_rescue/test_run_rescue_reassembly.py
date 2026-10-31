@@ -84,7 +84,7 @@ def test_successful_rescue_writes_status_with_profile_name(tmp_path: Path, monke
     assert run_rescue_reassembly.main() == 0
     status = json.loads((output_dir / f"{sample_id}.assembly_status.json").read_text())
     assert status == {"sample_id": sample_id, "status": "circular", "success": True,
-                       "profile_name": "reduced_coverage"}
+                       "profile_name": "reduced_coverage", "seed_file": None}
 
 def test_tool_options_carry_the_profile_tuning_through(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     sample_id = "SAMPLE_02"
