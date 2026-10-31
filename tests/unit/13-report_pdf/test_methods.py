@@ -49,9 +49,12 @@ def test_methods_text_mentions_rescue_when_it_happened() -> None:
         assembly = AssemblyStatistics(sample_id = "s", status = "fragmented", source_attempt = 1,
                                       length_bp = 16000, contig_count = 1, gc_content_percent = 44.0),
         assembly_config = AssemblyConfigSummary(organelle_type = "animal_mt", seeded = False, seed_file = None),
+        rescue_attempts = (RescueAttemptSummary(attempt = 1, attempted = True, reason = "triggered",
+                                                profile_name = "candidate_guided", status = "fragmented",
+                                                recruitment = "candidate_mapped"),),
     )
     text = render_methods_text(sample)
-    assert "rescue reassembly (attempt 1" in text
+    assert "triggering rescue: attempt 1" in text
     assert "minimap2/samtools" in text
 
 def test_methods_text_describes_blast_identification() -> None:
@@ -237,7 +240,8 @@ def test_methods_text_cites_distinct_real_versions_for_rescue_tools() -> None:
                                       length_bp = 16000, contig_count = 1, gc_content_percent = 44.0),
         assembly_config = AssemblyConfigSummary(organelle_type = "animal_mt", seeded = False, seed_file = None),
         rescue_attempts = (RescueAttemptSummary(attempt = 1, attempted = True, reason = "triggered",
-                                                profile_name = "reduced_coverage", status = "fragmented"),),
+                                                profile_name = "reduced_coverage", status = "fragmented",
+                                                recruitment = "candidate_mapped"),),
         compute_summary = (
             StageComputeSummary(stage = "04d-assembly", tools = "getorganelle", invocation_count = 1,
                                 total_runtime_seconds = 1.0, total_cpu_seconds = 1.0, peak_memory_mb = 10.0,
@@ -254,11 +258,14 @@ def test_methods_text_cites_distinct_real_versions_for_rescue_tools() -> None:
     assert "GetOrganelle 1.7.7.0 (" in text  # the primary attempt's own version
     assert "minimap2 2.31-r1302" in text
     assert "samtools 1.24" in text
-    assert "GetOrganelle 1.7.7.1):" in text  # the rescue re-invocation's own (different) version
+    assert "re-running GetOrganelle 1.7.7.1)" in text  # the rescue re-invocation's own (different) version
 
-def test_methods_text_cites_distinct_rescue_tool_versions_in_the_fallback_branch() -> None:
-    """Same nuance, the other real code path: rescue_attempts is empty
-    but source_attempt > 0 (the older/simpler fallback description)."""
+def test_methods_text_fallback_branch_omits_unsupported_tool_versions() -> None:
+    """The other real code path: rescue_attempts is empty but
+    source_attempt > 0 (no real per-attempt record of what strategy
+    was used). This defensive fallback must not fabricate a specific
+    recruitment/seed/tool-version story it has no data to back --
+    it names only that a rescue reassembly happened and was selected."""
     sample = _sample(
         assembly = AssemblyStatistics(sample_id = "s", status = "circular", source_attempt = 1,
                                       length_bp = 16596, contig_count = 1, gc_content_percent = 45.0),
@@ -273,9 +280,9 @@ def test_methods_text_cites_distinct_rescue_tool_versions_in_the_fallback_branch
         ),
     )
     text = render_methods_text(sample)
-    assert "minimap2 2.31-r1302" in text
-    assert "samtools 1.24" in text
-    assert "GetOrganelle 1.7.7.1)" in text
+    assert "rescue reassembly (attempt 1) succeeded and was selected" in text
+    assert "minimap2 2.31-r1302" not in text
+    assert "samtools 1.24" not in text
 
 def test_methods_text_cites_real_blast_version() -> None:
     """Regression: BlastRunner's own real tool_name is "blast" (its

@@ -53,12 +53,18 @@ class RescueAttemptSummary:
         reason (str): The real reason recorded for whether/why this attempt ran.
         profile_name (str | None): The GetOrganelle profile name used for this attempt's reassembly, or None if it never ran.
         status (str | None): The reassembly's own real outcome status (e.g. "circular", "fragmented", "missing"), or None if it never ran.
+        recruitment (str | None): This attempt's real recruitment strategy -- "candidate_mapped" (minimap2/samtools against the current best candidate) or "full_pool" (the complete original read pool, no narrowing) -- or None if it never ran.
+        seeded (bool): Whether this attempt's reassembly actually ran with a real seed FASTA (reused from the primary attempt or freshly re-derived), as opposed to GetOrganelle's own default database.
+        reseeded (bool): Whether this attempt's seed was freshly re-derived (a genuinely different locus than the primary attempt used), as opposed to reusing the primary's own seed as-is.
     """
     attempt: int
     attempted: bool
     reason: str
     profile_name: str | None = None
     status: str | None = None
+    recruitment: str | None = None
+    seeded: bool = False
+    reseeded: bool = False
 
 @dataclass(frozen = True, slots = True)
 class BlastConfigSummary:

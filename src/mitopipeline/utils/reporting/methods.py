@@ -108,25 +108,44 @@ def _assembly_sentence(report_data: SampleReportData) -> str:
     # under 07-assembly_rescue -- cited separately from the primary
     # attempt's own 04d-assembly invocation above, since the two can
     # in principle resolve to different installed versions even
-    # though they're almost always identical in practice.
+    # though they're almost always identical in practice. minimap2/
+    # samtools are only ever actually invoked for a candidate_mapped
+    # attempt -- a full_pool attempt runs neither, so their versions
+    # are cited per-attempt below, never as one blanket clause that
+    # would misrepresent a full_pool attempt as having used them too.
     minimap2_version = _version_clause(report_data, "07-assembly_rescue", "minimap2")
     samtools_version = _version_clause(report_data, "07-assembly_rescue", "samtools")
     rescue_getorganelle_version = _version_clause(report_data, "07-assembly_rescue", "getorganelle")
 
+    def _attempt_clause(a) -> str:
+        """Describes one real rescue attempt's own actual strategy --
+        recruitment and seeding -- never a generic phrase that could
+        misrepresent what this specific attempt did."""
+        if a.recruitment == "full_pool":
+            recruitment_clause = "the complete original read pool (no recruitment narrowing)"
+        elif a.recruitment == "candidate_mapped":
+            recruitment_clause = f"reads recruited with minimap2{minimap2_version}/samtools{samtools_version} against the current candidate"
+        else:
+            recruitment_clause = "reads recruited for this attempt"
+        if a.reseeded:
+            seed_clause = "a freshly re-derived seed locus"
+        elif a.seeded:
+            seed_clause = "the primary attempt's own seed, reused"
+        else:
+            seed_clause = "no seed (GetOrganelle's own default database)"
+        profile_clause = f"profile `{a.profile_name}`, " if a.profile_name else ""
+        outcome = f"produced a {humanize_enum(a.status).lower()} result" if a.status else "did not complete"
+        return (f"attempt {a.attempt} ({profile_clause}{recruitment_clause}, {seed_clause}, "
+                f"re-running GetOrganelle{rescue_getorganelle_version}) {outcome}")
+
     attempts = report_data.rescue_attempts
     if attempts and any(a.attempted for a in attempts):
-        descriptions = []
-        for a in attempts:
-            if a.attempted:
-                outcome = f"produced a {humanize_enum(a.status).lower()} result" if a.status else "did not complete"
-                profile_clause = f" (profile `{a.profile_name}`)" if a.profile_name else ""
-                descriptions.append(f"attempt {a.attempt}{profile_clause} {outcome}")
-            else:
-                descriptions.append(f"attempt {a.attempt} was not run ({a.reason})")
+        descriptions = [
+            _attempt_clause(a) if a.attempted else f"attempt {a.attempt} was not run ({a.reason})"
+            for a in attempts
+        ]
         sentence += (
-            " The primary attempt did not yield a usable circular or fragmented genome, triggering rescue "
-            f"reassembly (mapping recruited reads with minimap2{minimap2_version}/samtools{samtools_version} "
-            f"before re-running GetOrganelle{rescue_getorganelle_version}): "
+            " The primary attempt did not yield a usable circular or fragmented genome, triggering rescue: "
             f"{'; '.join(descriptions)}."
         )
         if assembly is not None and assembly.source_attempt > 0:
@@ -134,11 +153,15 @@ def _assembly_sentence(report_data: SampleReportData) -> str:
         elif assembly is not None:
             sentence += " None improved on the primary result, so the primary assembly was retained."
     elif assembly is not None and assembly.source_attempt > 0:
+        # Defensive fallback only -- in any real, consistent run, a
+        # selected rescue attempt (source_attempt > 0) always has a
+        # matching entry in attempts with attempted=True, which the
+        # branch above already handles with the real per-attempt
+        # detail. This covers incomplete/missing rescue records
+        # without guessing at strategy details that aren't on record.
         sentence += (
             f" The primary assembly attempt did not yield a usable genome; a rescue reassembly "
-            f"(attempt {assembly.source_attempt}, mapping recruited reads with minimap2{minimap2_version}/"
-            f"samtools{samtools_version} before re-running GetOrganelle{rescue_getorganelle_version}) "
-            f"succeeded and was selected."
+            f"(attempt {assembly.source_attempt}) succeeded and was selected."
         )
     elif assembly is not None:
         sentence += " The primary assembly attempt succeeded and was selected without requiring rescue."

@@ -457,9 +457,15 @@ def collect_rescue_summary(rescue_dir: str | Path | None) -> tuple[RescueAttempt
             continue
 
         reassembly_status = None
+        reseed_record = None
         sample_id = mapping.get("sample_id")
         if sample_id:
             reassembly_status = _read_json(attempt_dir / "reassembly" / f"{sample_id}.assembly_status.json")
+            # Only present when this attempt's profile actually requested
+            # reseed=true (run_rescue_reassembly.py's own real provenance
+            # record) -- its mere existence IS the real "was this attempt
+            # reseeded" signal, not something re-derived from guesswork.
+            reseed_record = _read_json(attempt_dir / "reassembly" / f"{sample_id}.rescue_seed_selection.json")
 
         attempts.append(RescueAttemptSummary(
             attempt = _attempt_number(attempt_dir.name),
@@ -467,6 +473,9 @@ def collect_rescue_summary(rescue_dir: str | Path | None) -> tuple[RescueAttempt
             reason = mapping.get("reason", ""),
             profile_name = reassembly_status.get("profile_name") if reassembly_status else None,
             status = reassembly_status.get("status") if reassembly_status else None,
+            recruitment = mapping.get("recruitment"),
+            seeded = bool(reassembly_status and reassembly_status.get("seed_file")),
+            reseeded = bool(reseed_record and reseed_record.get("fasta_path")),
         ))
     return tuple(attempts)
 
