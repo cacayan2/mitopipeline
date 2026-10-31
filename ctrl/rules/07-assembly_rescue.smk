@@ -62,6 +62,22 @@ def _previous_done_marker(sample: str, attempt_num: int) -> Path:
         return JOB_DIR / "04d-assembly" / sample / f"{sample}.assembly.done"
     return _attempt_dir(sample, attempt_num - 1) / f"{sample}.rescue_reassembly.done"
 
+def _primary_seed_info(sample: str) -> tuple[str, str]:
+    """The primary attempt's own real seed_selection.json -- its
+    fasta_path (empty string when none/fallback) and gene (empty
+    string when none) -- so a rescue profile can either reuse it
+    as-is (reseed: false) or walk past it to a genuinely different
+    locus (reseed: true), never re-deriving what select_seed() for
+    the primary attempt already resolved."""
+    path = JOB_DIR / "04c-seed_sequences" / sample / f"{sample}.seed_selection.json"
+    try:
+        record = json.loads(Path(path).read_text())
+    except (OSError, json.JSONDecodeError):
+        return "", ""
+    if record.get("fallback_used") or not record.get("fasta_path"):
+        return "", ""
+    return record["fasta_path"], record.get("gene") or ""
+
 rule rescue_mapping:
     input:
         r1 = str(JOB_DIR / "trimming" / "{sample}" / "{sample}.R1.trimmed.fastq.gz"),
@@ -80,6 +96,7 @@ rule rescue_mapping:
         reference_fasta = lambda wc: str(_previous_status_and_fasta(wc.sample, int(wc.attempt_num))[1]),
         max_attempts = len(RESCUE_PROFILES),
         trigger_statuses = TRIGGER_STATUSES,
+        recruitment = lambda wc: RESCUE_PROFILES[int(wc.attempt_num) - 1].get("recruitment", "candidate_mapped"),
         output_dir = lambda wc: str(_attempt_dir(wc.sample, int(wc.attempt_num))),
         working_dir = str(Path.cwd()),
         log_file = str(JOB_DIR / "logs" / "07-assembly_rescue" / "{sample}.mapping.attempt{attempt_num}.log"),
@@ -100,6 +117,7 @@ rule rescue_mapping:
             --attempt {params.attempt_idx} \
             --trigger-statuses {params.trigger_statuses:q} \
             --max-attempts {params.max_attempts} \
+            --recruitment {params.recruitment:q} \
             --output-dir {params.output_dir:q} \
             --working-dir {params.working_dir:q} \
             --threads {threads} \
@@ -124,6 +142,14 @@ rule rescue_reassembly:
         rescued_r1 = lambda wc: str(_attempt_dir(wc.sample, int(wc.attempt_num)) / f"{wc.sample}.rescue.R1.fastq"),
         rescued_r2 = lambda wc: str(_attempt_dir(wc.sample, int(wc.attempt_num)) / f"{wc.sample}.rescue.R2.fastq"),
         profile = lambda wc: RESCUE_PROFILES[int(wc.attempt_num) - 1],
+        reseed_flag = lambda wc: "1" if RESCUE_PROFILES[int(wc.attempt_num) - 1].get("reseed") else "",
+        primary_seed_fasta = lambda wc: _primary_seed_info(wc.sample)[0],
+        primary_seed_gene = lambda wc: _primary_seed_info(wc.sample)[1],
+        scientific_name = lambda wc: SAMPLE_TABLE.loc[wc.sample, "organism"],
+        database_dir = lambda wc: _mitofish_database_dir(
+            JOB_DIR / "04c-seed_sequences" / "mitofish_database.json",
+            fallback = str((PROJECT_ROOT / SEED_CONFIG["database_dir"]).resolve()),
+        ),
         working_dir = str(Path.cwd()),
         log_file = str(JOB_DIR / "logs" / "07-assembly_rescue" / "{sample}.reassembly.attempt{attempt_num}.log"),
         global_log_file = str(GLOBAL_LOG_FILE),
@@ -136,6 +162,12 @@ rule rescue_reassembly:
     shell:
         """
         if [ -s {params.rescued_r1:q} ] && [ -s {params.rescued_r2:q} ]; then
+            SEED_ARGS=""
+            if [ -n "{params.reseed_flag}" ]; then
+                SEED_ARGS="--reseed --exclude-gene {params.primary_seed_gene:q} --scientific-name {params.scientific_name:q} --database-dir {params.database_dir:q}"
+            elif [ -n "{params.primary_seed_fasta}" ]; then
+                SEED_ARGS="--seed-file {params.primary_seed_fasta:q}"
+            fi
             {PYTHON_BIN:q} {params.exec_script:q} \
                 --sample-id {wildcards.sample} \
                 --r1 {params.rescued_r1:q} --r2 {params.rescued_r2:q} \
@@ -143,6 +175,7 @@ rule rescue_reassembly:
                 --kmer {params.profile[kmer]:q} \
                 --target-coverage {params.profile[target_coverage]} \
                 --max-rounds {params.profile[max_rounds]} \
+                $SEED_ARGS \
                 --output-dir {params.reassembly_dir:q} \
                 --working-dir {params.working_dir:q} \
                 --threads {threads} \

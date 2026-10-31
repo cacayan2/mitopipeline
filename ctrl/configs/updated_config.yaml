@@ -119,22 +119,48 @@ stage_options:
     # Rescue's own real decision logic (utils/rescue/trigger.py) only
     # ever reads trigger_statuses and getorganelle_profiles -- each
     # rescue attempt tries the next untried profile in that list, and
-    # an empty list means rescue is effectively off. No other knob
-    # (overlap merging, reference-guided scaffolding, a megahit
-    # consensus path, etc.) is implemented.
+    # an empty list means rescue is effectively off.
+    #
+    # Each profile names a genuinely different FAILURE MODE to try
+    # next, not just a different kmer list on the same narrowed input:
+    #   - recruitment: "candidate_mapped" (minimap2 against the best
+    #     candidate so far, properly-paired reads only -- today's
+    #     original behavior) or "full_pool" (skip that mapping chain
+    #     entirely; a read whose mate fails to map against an already-
+    #     INCOMPLETE candidate is exactly a read near the gap that
+    #     candidate is missing, so "candidate_mapped" throws it away
+    #     precisely when it would matter most -- "full_pool" hands
+    #     GetOrganelle's own more sensitive internal recruitment the
+    #     complete original read pool again instead).
+    #   - reseed: false reuses the primary attempt's own already-
+    #     resolved seed as-is; true derives a genuinely different one
+    #     by walking further down the same documented locus fallback
+    #     chain (utils/seed/models.py's LOCUS_FALLBACK_ORDER), for when
+    #     the anchor itself -- not the read recruitment -- was the
+    #     problem.
     assembly_rescue:
       trigger_statuses:
       - fragmented
       - partial
       getorganelle_profiles:
-      - name: reduced_coverage
+      - name: candidate_guided
+        recruitment: candidate_mapped
+        reseed: false
         kmer: 21,33,55,85,115
         target_coverage: 100
         max_rounds: 10
-      - name: alternate_kmers
+      - name: full_pool_alternate_seed
+        recruitment: full_pool
+        reseed: true
         kmer: 21,45,65,85,105
         target_coverage: 100
-        max_rounds: 10
+        max_rounds: 15
+      - name: full_pool_relaxed_graph
+        recruitment: full_pool
+        reseed: false
+        kmer: 21,33,45,55,65,85,105,115
+        target_coverage: 150
+        max_rounds: 20
   annotation:
     mitos2:
       conda_env: mito-annotation

@@ -43,7 +43,8 @@ def _stub_samtools_run(self: SamtoolsRunner) -> CommandResult:
         self.rescued_r2.write_text("fake r2")
     return _fake_result()
 
-def _argv(tmp_path: Path, sample_id: str, status: str, attempt: int = 0, max_attempts: int = 2) -> list[str]:
+def _argv(tmp_path: Path, sample_id: str, status: str, attempt: int = 0, max_attempts: int = 2,
+          recruitment: str = "candidate_mapped") -> list[str]:
     r1 = tmp_path / f"{sample_id}_R1.fastq.gz"
     r2 = tmp_path / f"{sample_id}_R2.fastq.gz"
     r1.touch(); r2.touch()
@@ -54,6 +55,7 @@ def _argv(tmp_path: Path, sample_id: str, status: str, attempt: int = 0, max_att
         "--sample-id", sample_id,
         "--r1", str(r1), "--r2", str(r2),
         "--reference-fasta", str(reference),
+        "--recruitment", recruitment,
         "--status", status,
         "--attempt", str(attempt),
         "--max-attempts", str(max_attempts),
@@ -132,3 +134,57 @@ def test_status_not_in_trigger_list_is_not_rescued(tmp_path: Path, monkeypatch: 
     assert run_rescue_mapping.main() == 0
     result = json.loads((tmp_path / "rescue" / f"{sample_id}.rescue_mapping.json").read_text())
     assert result["attempted"] is False
+
+def test_full_pool_recruitment_skips_the_mapping_chain_entirely(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """full_pool must never touch Minimap2Runner/SamtoolsRunner at
+    all -- stubbing them to raise proves the real code path really
+    is skipped, not just coincidentally unexercised."""
+    def _must_not_run(self):
+        raise AssertionError("full_pool recruitment must not invoke the mapping chain")
+    monkeypatch.setattr(Minimap2Runner, "run", _must_not_run)
+    monkeypatch.setattr(SamtoolsRunner, "run", _must_not_run)
+
+    sample_id = "SAMPLE_07"
+    monkeypatch.setattr(sys, "argv", _argv(tmp_path, sample_id, "fragmented", recruitment = "full_pool"))
+
+    assert run_rescue_mapping.main() == 0
+
+    result = json.loads((tmp_path / "rescue" / f"{sample_id}.rescue_mapping.json").read_text())
+    assert result["attempted"] is True
+    assert result["recruitment"] == "full_pool"
+    rescued_r1 = Path(result["rescued_r1"])
+    assert rescued_r1.name == f"{sample_id}.rescue.R1.fastq"
+    assert rescued_r1.is_file()
+
+def test_full_pool_recruitment_decompresses_gzipped_input(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """The original trimmed reads are always .gz; the rescued-read
+    naming convention (shared with candidate_mapped's own samtools
+    fastq output) is always plain text -- full_pool must actually
+    decompress on the way in, not just copy the bytes verbatim under
+    a misleading .fastq extension."""
+    sample_id = "SAMPLE_08"
+    argv = _argv(tmp_path, sample_id, "fragmented", recruitment = "full_pool")
+    r1_path = Path(argv[argv.index("--r1") + 1])
+    r2_path = Path(argv[argv.index("--r2") + 1])
+    import gzip
+    with gzip.open(r1_path, "wb") as handle:
+        handle.write(b"@read1\nACGTACGT\n+\nIIIIIIII\n")
+    with gzip.open(r2_path, "wb") as handle:
+        handle.write(b"@read1\nTTTTTTTT\n+\nIIIIIIII\n")
+    monkeypatch.setattr(sys, "argv", argv)
+
+    assert run_rescue_mapping.main() == 0
+
+    result = json.loads((tmp_path / "rescue" / f"{sample_id}.rescue_mapping.json").read_text())
+    rescued_r1 = Path(result["rescued_r1"])
+    assert rescued_r1.read_text() == "@read1\nACGTACGT\n+\nIIIIIIII\n"
+
+def test_full_pool_recruitment_respects_the_rescue_decision(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """A status that doesn't warrant rescue must still short-circuit
+    before full_pool's own passthrough, same as candidate_mapped."""
+    sample_id = "SAMPLE_09"
+    monkeypatch.setattr(sys, "argv", _argv(tmp_path, sample_id, "circular", recruitment = "full_pool"))
+    assert run_rescue_mapping.main() == 0
+    result = json.loads((tmp_path / "rescue" / f"{sample_id}.rescue_mapping.json").read_text())
+    assert result["attempted"] is False
+    assert result["rescued_r1"] is None

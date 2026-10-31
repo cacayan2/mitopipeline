@@ -1,27 +1,43 @@
 """
 run_rescue_mapping.py
 
-Execution layer connecting the rescue trigger to the proven
-minimap2 -> samtools sort -> index -> fastq chain:
-decides whether this sample's current assembly classification actually
-warrants a rescue attempt, and if so, runs the real chain and records
-the rescued paired reads the reassembly stage will consume next.
+Execution layer connecting the rescue trigger to one of two real
+recruitment strategies, per the current attempt's own configured
+profile:
 
-Doesn't decide HOW to reassemble (which getorganelle_profiles entry,
-what k-mer/coverage) -- that's the reassembly stage's job, reading this step's own
-output. This step's only job is: should rescue even happen, and if so,
-produce the rescued reads.
+- "candidate_mapped": the original minimap2 -> samtools sort -> index
+  -> fastq chain -- maps reads against the sample's own best candidate
+  so far and keeps only the properly-paired reads that mapped. Fast,
+  and sufficient when the candidate's real problem is coverage/noise,
+  not a genuinely missing region.
+- "full_pool": deliberately skips that chain. A read whose mate fails
+  to map against an already-INCOMPLETE candidate is exactly a read
+  near the gap that candidate is missing -- "candidate_mapped" throws
+  that read away precisely when it would matter most. GetOrganelle's
+  own internal seed-and-extend recruitment is more sensitive than an
+  external mapper working from an incomplete reference, so this mode
+  just hands it the complete original read pool again, unfiltered,
+  and leaves recruitment to GetOrganelle itself.
+
+Doesn't decide HOW to reassemble (kmer/coverage/seed) -- that's the
+reassembly stage's job, reading this step's own output. This step's
+only job is: should rescue even happen, and if so, produce the reads
+the next attempt should see.
 """
 
 # Imports
 import argparse
+import gzip
 import json
+import shutil
 from pathlib import Path
 from mitopipeline.api.minimap2 import Minimap2Runner
 from mitopipeline.api.samtools import SamtoolsRunner
 from mitopipeline.logging.logger_factory import make_logger
 from mitopipeline.models.sample.sample import Sample
 from mitopipeline.utils.rescue.trigger import decide_rescue
+
+VALID_RECRUITMENT_MODES = {"candidate_mapped", "full_pool"}
 
 def parse_args() -> argparse.Namespace:
     """
@@ -36,7 +52,9 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--r1", type = Path, required = True, help = "The trimmed R1 reads to map for rescue.")
     parser.add_argument("--r2", type = Path, required = True, help = "The trimmed R2 reads to map for rescue.")
     parser.add_argument("--reference-fasta", type = Path, required = True,
-                        help = "The reference to map against -- the sample's own best assembly candidate so far (contig selection's own choice).")
+                        help = "The reference to map against -- the sample's own best assembly candidate so far (contig selection's own choice). Unused when --recruitment is full_pool.")
+    parser.add_argument("--recruitment", type = str, default = "candidate_mapped", choices = sorted(VALID_RECRUITMENT_MODES),
+                        help = "This attempt's profile.recruitment setting: 'candidate_mapped' (default, today's minimap2/samtools chain) or 'full_pool' (skip it, hand GetOrganelle the complete original read pool again).")
     parser.add_argument("--status", type = str, required = True,
                         help = "The current assembly classification (e.g. from contig_selection.json) -- circular, fragmented, partial, or missing.")
     parser.add_argument("--attempt", type = int, required = True, help = "How many rescue attempts have already been made for this sample (0-indexed).")
@@ -53,19 +71,23 @@ def parse_args() -> argparse.Namespace:
 
     return parser.parse_args()
 
-def _write_decision(output_dir: Path, sample_id: str, attempted: bool, reason: str,
+def _write_decision(output_dir: Path, sample_id: str, attempted: bool, reason: str, recruitment: str,
                      rescued_r1: Path | None = None, rescued_r2: Path | None = None) -> None:
     """
-    Records this sample's rescue-mapping outcome for the reassembly stage to read,
-    without re-deriving the decision itself.
+    Records this sample's rescue-mapping outcome for the reassembly
+    stage to read, without re-deriving the decision itself --
+    including WHICH recruitment strategy this attempt actually used,
+    as a real structured field (not just folded into the free-text
+    reason string), so the report can cite it directly.
 
     Args:
         output_dir (Path): Where to write the decision record.
         sample_id (str): The sample id.
-        attempted (bool): Whether the mapping chain was actually run.
+        attempted (bool): Whether a recruitment strategy was actually run.
         reason (str): A short, human-readable explanation.
-        rescued_r1 (Path | None): The rescued R1 FASTQ, if the chain ran successfully.
-        rescued_r2 (Path | None): The rescued R2 FASTQ, if the chain ran successfully.
+        recruitment (str): Which recruitment strategy this attempt used ("candidate_mapped" or "full_pool"), regardless of whether it ultimately ran.
+        rescued_r1 (Path | None): The rescued R1 FASTQ, if recruitment ran successfully.
+        rescued_r2 (Path | None): The rescued R2 FASTQ, if recruitment ran successfully.
 
     Returns:
         None
@@ -77,9 +99,42 @@ def _write_decision(output_dir: Path, sample_id: str, attempted: bool, reason: s
             "sample_id": sample_id,
             "attempted": attempted,
             "reason": reason,
+            "recruitment": recruitment,
             "rescued_r1": str(rescued_r1) if rescued_r1 else None,
             "rescued_r2": str(rescued_r2) if rescued_r2 else None,
         }, handle, indent = 4)
+
+def _full_pool_passthrough(output_dir: Path, sample_id: str, r1_src: Path, r2_src: Path) -> tuple[Path, Path]:
+    """
+    Copies the sample's complete original read pool into rescue's own
+    expected filenames -- same naming convention the candidate_mapped
+    chain's samtools fastq step writes, so the reassembly stage (and
+    the Snakemake rule's own file-existence check) never has to know
+    which recruitment mode actually produced them. Decompresses
+    on the way in when the source is gzipped: the candidate_mapped
+    chain's own output is always plain-text FASTQ (samtools fastq's
+    real default), and GetOrganelleRunner is only ever confirmed
+    against that, not a .gz under a misleading .fastq extension.
+
+    Args:
+        output_dir (Path): This attempt's own output directory.
+        sample_id (str): The sample id.
+        r1_src (Path): The complete original R1 reads (trimmed, not recruitment-narrowed).
+        r2_src (Path): The complete original R2 reads (trimmed, not recruitment-narrowed).
+
+    Returns:
+        tuple[Path, Path]: (rescued_r1, rescued_r2), both real, already-written files.
+    """
+    output_dir.mkdir(parents = True, exist_ok = True)
+    rescued_r1 = output_dir / f"{sample_id}.rescue.R1.fastq"
+    rescued_r2 = output_dir / f"{sample_id}.rescue.R2.fastq"
+    for src, dst in ((r1_src, rescued_r1), (r2_src, rescued_r2)):
+        if src.suffix == ".gz":
+            with gzip.open(src, "rb") as compressed, dst.open("wb") as handle:
+                shutil.copyfileobj(compressed, handle)
+        else:
+            shutil.copy2(src, dst)
+    return rescued_r1, rescued_r2
 
 def main() -> int:
     """
@@ -109,7 +164,16 @@ def main() -> int:
                 f"terminal={decision.terminal}, reason: {decision.reason}")
 
     if not decision.should_rescue:
-        _write_decision(args.output_dir, args.sample_id, attempted = False, reason = decision.reason)
+        _write_decision(args.output_dir, args.sample_id, attempted = False, reason = decision.reason,
+                        recruitment = args.recruitment)
+        return 0
+
+    if args.recruitment == "full_pool":
+        rescued_r1, rescued_r2 = _full_pool_passthrough(args.output_dir, args.sample_id, args.r1, args.r2)
+        logger.info(f"{context} Full-pool recruitment: handing GetOrganelle the complete original "
+                    f"read pool again, unfiltered (minimap2/samtools narrowing skipped by design).")
+        _write_decision(args.output_dir, args.sample_id, attempted = True, reason = decision.reason,
+                        recruitment = args.recruitment, rescued_r1 = rescued_r1, rescued_r2 = rescued_r2)
         return 0
 
     sample = Sample(sample_id = args.sample_id, r1 = args.r1, r2 = args.r2)
@@ -164,12 +228,12 @@ def main() -> int:
     except (SystemExit, RuntimeError) as e:
         logger.error(f"{context} Rescue mapping chain failed ({e}).")
         _write_decision(args.output_dir, args.sample_id, attempted = True,
-                        reason = f"mapping chain failed: {decision.reason}")
+                        reason = f"mapping chain failed: {decision.reason}", recruitment = args.recruitment)
         return 1
 
     logger.info(f"{context} Rescue mapping chain complete: {extractor.rescued_r1.name}, {extractor.rescued_r2.name}")
     _write_decision(args.output_dir, args.sample_id, attempted = True, reason = decision.reason,
-                    rescued_r1 = extractor.rescued_r1, rescued_r2 = extractor.rescued_r2)
+                    recruitment = args.recruitment, rescued_r1 = extractor.rescued_r1, rescued_r2 = extractor.rescued_r2)
     return 0
 
 if __name__ == "__main__":
