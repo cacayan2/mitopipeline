@@ -2,18 +2,21 @@
 MitoPipeline is a reproducible Snakemake/Python workflow for assembly and analysis of mitogenomes from paired-end and whole-genome sequencing reads. This pipeline exists in a broader context of ecological surveying of freshwater fish, and was designed to create a database of mitogenomes for freshwater fish (~140 samples). However, the pipeline's design focuses on reproducibility, error handling, reporting, and portability to future datasets and organism types and could be readily adapted for assemblies of different types of organisms.
 
 # Table of Contents
-- [Introduction](#introduction)
 - [Pipeline Overview](#pipeline-overview)
+- [Dependencies](#dependencies)
 - [Installation](#installation)
 - [Setup](#setup)
-    + [config](#config)
-    + [manifest](#manifest)
+    + [Config](#config)
+    + [Manifest](#manifest)
 - [Running the Pipeline](#running-the-pipeline)
+- [Background](#background)
 - [v0.2.0 Changelist](#v020-changelist)
 
-# Introduction
-
 # Pipeline Overview
+
+
+
+# Dependencies
 
 # Installation
 
@@ -24,6 +27,9 @@ MitoPipeline is a reproducible Snakemake/Python workflow for assembly and analys
 ## Manifest
 
 # Running the Pipeline
+
+# Background
+The goal of this project is the development of a pipeline which will batch process and assemble raw reads from samples of fish tissue into completed mitogenomes that comprise a reference database for freshwater fish species in Illinois. This reference database would ideally then be published to NCBI GenBank and compiled into a microbiology resource announcement. 
 
 # v0.2.0 Changelist
 > **v0.2.0:** This version represents a continuation of the work started in v0.1.0 and is a complete overhaul of the original project design. While the core functionality and deliverables are preserved, when v0.1.0 was executed on sequencing data: ~40% of the data assembled, with less than 10% reaching the end of the pipeline before crashing. Changelist:
