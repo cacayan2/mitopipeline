@@ -41,6 +41,13 @@ rule blast_database_setup:
     conda:
         "../../envs/05-blast.yaml"
     shell:
+        # No `|| true` on the exec call, unlike this file's other rules:
+        # the script's own documented contract already exits 0 and
+        # records success=false for every *expected* failure (NCBI
+        # down, build error). Letting a real crash here (bad interpreter,
+        # import error -- anything outside that contract) fail the job
+        # for real is the point: `done` must mean the database is
+        # actually usable, never a marker touched regardless of outcome.
         """
         if [ {params.run_setup:q} = "true" ]; then
             API_KEY_ARGS=""
@@ -60,8 +67,7 @@ rule blast_database_setup:
                 {params.overwrite_flag} \
                 --output-dir {params.output_dir:q} \
                 --log-file {params.log_file:q} \
-                --global-log-file {params.global_log_file:q} \
-                || true
+                --global-log-file {params.global_log_file:q}
         fi
         touch {output.done:q}
         """
