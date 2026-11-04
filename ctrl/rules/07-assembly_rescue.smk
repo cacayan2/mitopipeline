@@ -143,6 +143,9 @@ rule rescue_reassembly:
         rescued_r2 = lambda wc: str(_attempt_dir(wc.sample, int(wc.attempt_num)) / f"{wc.sample}.rescue.R2.fastq"),
         profile = lambda wc: RESCUE_PROFILES[int(wc.attempt_num) - 1],
         reseed_flag = lambda wc: "1" if RESCUE_PROFILES[int(wc.attempt_num) - 1].get("reseed") else "",
+        # A profile may override the job's seed mode for its reseed (e.g.
+        # retry a whole-genome seed, or GetOrganelle's bundled set).
+        reseed_mode = lambda wc: str(RESCUE_PROFILES[int(wc.attempt_num) - 1].get("seed_mode") or SEED_MODE),
         primary_seed_fasta = lambda wc: _primary_seed_info(wc.sample)[0],
         primary_seed_gene = lambda wc: _primary_seed_info(wc.sample)[1],
         scientific_name = lambda wc: SAMPLE_TABLE.loc[wc.sample, "organism"],
@@ -164,7 +167,7 @@ rule rescue_reassembly:
         if [ -s {params.rescued_r1:q} ] && [ -s {params.rescued_r2:q} ]; then
             SEED_ARGS=""
             if [ -n "{params.reseed_flag}" ]; then
-                SEED_ARGS="--reseed --exclude-gene {params.primary_seed_gene:q} --scientific-name {params.scientific_name:q} --database-dir {params.database_dir:q}"
+                SEED_ARGS="--reseed --exclude-gene {params.primary_seed_gene:q} --scientific-name {params.scientific_name:q} --database-dir {params.database_dir:q} --seed-mode {params.reseed_mode:q}"
             elif [ -n "{params.primary_seed_fasta}" ]; then
                 SEED_ARGS="--seed-file {params.primary_seed_fasta:q}"
             fi

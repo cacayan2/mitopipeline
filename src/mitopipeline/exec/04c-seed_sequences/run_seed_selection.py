@@ -14,6 +14,7 @@ import json
 from pathlib import Path
 from mitopipeline.logging.logger_factory import make_logger
 from mitopipeline.utils.seed.seed_selector import select_seed
+from mitopipeline.utils.seed.models import DEFAULT_SEED_MODE, SEED_MODES
 
 def parse_args() -> argparse.Namespace:
     """
@@ -30,6 +31,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--output-dir", type = Path, required = True, help = "The directory to write the selected seed FASTA (and this step's own record) to.")
     parser.add_argument("--log-file", type = Path, required = True, help = "The path to the log file.")
     parser.add_argument("--global-log-file", type = Path, required = True, help = "The path to the global log file.")
+    parser.add_argument("--seed-mode", type = str, choices = SEED_MODES, default = DEFAULT_SEED_MODE,
+                        help = "How the seed is produced: the locus cut from the MitoFish record (mitofish_gene, default), the whole record (mitofish_genome), or GetOrganelle's bundled seed set with no MitoFish seed (default).")
 
     return parser.parse_args()
 
@@ -55,6 +58,7 @@ def main() -> int:
         database_dir = args.database_dir,
         output_dir = args.output_dir,
         logger = logger,
+        seed_mode = args.seed_mode,
     )
 
     args.output_dir.mkdir(parents = True, exist_ok = True)
@@ -73,6 +77,7 @@ def main() -> int:
             "checksum": result.checksum,
             "ncbi_taxon_id": result.ncbi_taxon_id,
             "sequence_length": result.sequence_length,
+            "seed_mode": result.seed_mode,
         }, handle, indent = 4)
 
     if result.fallback_used:

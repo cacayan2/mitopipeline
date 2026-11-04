@@ -29,6 +29,31 @@ LOCUS_FALLBACK_ORDER = (
     "ND1", "ND5", "ND6", "COXIII", "ND4L", "ND3", "COXII",
 )
 
+# How a sample's GetOrganelle seed is produced (config: assembly.seed.mode).
+#   mitofish_gene   -- the selected locus only (~1-2 kb), cut from the
+#                      MitoFish record by its annotation coordinates. The
+#                      default: species-specific, but without the
+#                      control region / rRNA stretches of a whole
+#                      mitogenome, whose repeat-rich and NUMT-like words
+#                      can recruit most of a deep library in one round
+#                      and leave SPAdes a graph slimming can't filter.
+#   mitofish_genome -- the whole MitoFish record (v0.2.0's original
+#                      behaviour; keep for comparison or for a shallow
+#                      library where a long seed helps).
+#   default         -- no -s at all: GetOrganelle's own bundled animal_mt
+#                      seed set (v0.1.0's behaviour).
+SEED_MODES = ("mitofish_gene", "mitofish_genome", "default")
+DEFAULT_SEED_MODE = "mitofish_gene"
+
+# A "gene-level" seed longer than this is not a gene: the annotation row
+# evidently described the whole record, so mitofish_gene mode treats it
+# as having no usable coordinates rather than seeding with a mitogenome.
+MAX_GENE_SEED_LENGTH = 5000
+
+# And one shorter than this is a fragment too small to be worth seeding
+# from (the annotation row was a partial, or the coordinates were wrong).
+MIN_GENE_SEED_LENGTH = 100
+
 @dataclass(frozen = True, slots = True)
 class SeedReferenceCandidate:
     """
@@ -40,12 +65,23 @@ class SeedReferenceCandidate:
         ncbi_taxon_id (int): The NCBI taxonomy identifier associated with the organism.
         gene (str): Mitochonddrial gene available from the reference.
         sequence_length (int): The length of the candidate gene sequence, if known.
+        gene_start (int | None): 1-based inclusive start of the gene within the record, if the annotation table carries coordinates.
+        gene_end (int | None): 1-based inclusive end of the gene within the record, if known. May be less than gene_start for a gene spanning the circular origin.
+        gene_strand (str | None): "+" or "-" when the annotation table carries strand; None when unknown (treated as "+").
     """
     accession: str
     scientific_name: str
     ncbi_taxon_id: int
     gene: str
     sequence_length: int | None = None
+    gene_start: int | None = None
+    gene_end: int | None = None
+    gene_strand: str | None = None
+
+    @property
+    def has_coordinates(self) -> bool:
+        """Whether this candidate carries usable gene coordinates."""
+        return self.gene_start is not None and self.gene_end is not None and self.gene_start >= 1 and self.gene_end >= 1
 
 @dataclass(frozen = True, slots = True)
 class SeedSelectionResult:
@@ -67,6 +103,7 @@ class SeedSelectionResult:
         checksum (str | None): A SHA-256 checksum of the selected sequence, for provenance/reproducibility -- None for a fallback result with no sequence.
         ncbi_taxon_id (int | None): The NCBI taxonomy identifier associated with the organism, if known -- a fallback source may not have one.
         sequence_length (int | None): The length of the selected sequence, if known.
+        seed_mode (str | None): The seed mode this selection ran under (one of SEED_MODES), for provenance.
     """
     sample_id: str
     scientific_name: str
@@ -80,3 +117,4 @@ class SeedSelectionResult:
     checksum: str | None = None
     ncbi_taxon_id: int | None = None
     sequence_length: int | None = None
+    seed_mode: str | None = None

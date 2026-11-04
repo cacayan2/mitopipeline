@@ -32,7 +32,7 @@ from pathlib import Path
 from mitopipeline.api.getorganelle import GetOrganelleRunner, discover_assembly_artifacts
 from mitopipeline.logging.logger_factory import make_logger
 from mitopipeline.models.sample.sample import Sample
-from mitopipeline.utils.seed.models import LOCUS_FALLBACK_ORDER
+from mitopipeline.utils.seed.models import DEFAULT_SEED_MODE, LOCUS_FALLBACK_ORDER, SEED_MODES
 from mitopipeline.utils.seed.seed_selector import select_seed
 
 def parse_args() -> argparse.Namespace:
@@ -60,6 +60,8 @@ def parse_args() -> argparse.Namespace:
                         help = "The locus the primary attempt's own seed already used (its real seed_selection.json 'gene' field) -- --reseed starts past this one, never repeating it.")
     parser.add_argument("--scientific-name", type = str, default = None, help = "The sample's scientific name. Required when --reseed is set.")
     parser.add_argument("--database-dir", type = Path, default = None, help = "The local MitoFish reference database directory. Required when --reseed is set.")
+    parser.add_argument("--seed-mode", type = str, choices = SEED_MODES, default = DEFAULT_SEED_MODE,
+                        help = "Seed mode for the reseed (see 04c-seed_sequences' --seed-mode). Only used with --reseed.")
     parser.add_argument("--output-dir", type = Path, required = True, help = "This attempt's OWN output directory -- must differ from the primary attempt's and every other rescue attempt's.")
     parser.add_argument("--working-dir", type = Path, required = True, help = "The working directory.")
     parser.add_argument("--threads", type = int, required = True, help = "The number of threads to use.")
@@ -70,7 +72,8 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 def _resolve_reseed(sample_id: str, scientific_name: str | None, database_dir: Path | None,
-                     exclude_gene: str | None, output_dir: Path, logger: Logger) -> Path | None:
+                     exclude_gene: str | None, output_dir: Path, logger: Logger,
+                     seed_mode: str = DEFAULT_SEED_MODE) -> Path | None:
     """
     Derives a genuinely different seed for this rescue attempt by
     walking LOCUS_FALLBACK_ORDER starting just past exclude_gene --
@@ -90,6 +93,7 @@ def _resolve_reseed(sample_id: str, scientific_name: str | None, database_dir: P
         exclude_gene (str | None): The locus the primary attempt's seed already used, if known. None tries the full chain from the top.
         output_dir (Path): This attempt's own output directory, to write the provenance record under.
         logger (Logger): The logger to use.
+        seed_mode (str): The seed mode for this reseed (models.SEED_MODES). "default" yields no FASTA on purpose.
 
     Returns:
         Path | None: The newly selected seed FASTA, or None if reseeding was skipped or found nothing usable (GetOrganelle's own default database applies, same as any other unseeded run).
@@ -111,7 +115,8 @@ def _resolve_reseed(sample_id: str, scientific_name: str | None, database_dir: P
         return None
 
     result = select_seed(sample_id = sample_id, scientific_name = scientific_name,
-                         database_dir = database_dir, output_dir = output_dir, logger = logger, loci = loci)
+                         database_dir = database_dir, output_dir = output_dir, logger = logger, loci = loci,
+                         seed_mode = seed_mode)
 
     output_dir.mkdir(parents = True, exist_ok = True)
     (output_dir / f"{sample_id}.rescue_seed_selection.json").write_text(json.dumps({
@@ -119,6 +124,7 @@ def _resolve_reseed(sample_id: str, scientific_name: str | None, database_dir: P
         "accession": result.accession, "source": result.source,
         "fasta_path": str(result.fasta_path) if result.fasta_path else None,
         "fallback_used": result.fallback_used, "fallback_reason": result.fallback_reason,
+        "seed_mode": result.seed_mode, "sequence_length": result.sequence_length,
         "excluded_gene": exclude_gene,
     }, indent = 4), encoding = "utf-8")
 
@@ -150,7 +156,7 @@ def main() -> int:
     tool_options = {}
     if args.reseed:
         reseeded_fasta = _resolve_reseed(args.sample_id, args.scientific_name, args.database_dir,
-                                         args.exclude_gene, args.output_dir, logger)
+                                         args.exclude_gene, args.output_dir, logger, seed_mode = args.seed_mode)
         if reseeded_fasta is not None:
             tool_options["seed_file"] = str(reseeded_fasta)
     elif args.seed_file is not None:

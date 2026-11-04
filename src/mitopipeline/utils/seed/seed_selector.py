@@ -20,12 +20,47 @@ from Bio.Seq import Seq
 from Bio.SeqRecord import SeqRecord
 from mitopipeline.utils.seed.gene_extraction import write_gene_fasta
 from mitopipeline.utils.seed.mitofish import MitoFishReferenceLookup
-from mitopipeline.utils.seed.models import DEFAULT_SEED_LOCUS, LOCUS_FALLBACK_ORDER, SeedSelectionResult
+from mitopipeline.utils.seed.models import (
+    DEFAULT_SEED_LOCUS, DEFAULT_SEED_MODE, LOCUS_FALLBACK_ORDER, MAX_GENE_SEED_LENGTH, MIN_GENE_SEED_LENGTH,
+    SEED_MODES, SeedReferenceCandidate, SeedSelectionResult,
+)
 
 # The accession recorded on a fallback result, where no real seed
 # accession exists.
 FALLBACK_ACCESSION = "GETORGANELLE_DEFAULT"
 FALLBACK_SOURCE = "fallback_default_database"
+
+# The source recorded when seed mode "default" was chosen on purpose:
+# GetOrganelle's bundled seed set is the configured choice, not a
+# fallback, so fallback_used stays False.
+DEFAULT_MODE_SOURCE = "getorganelle_default_seed"
+
+def extract_gene_region(sequence: str, candidate: SeedReferenceCandidate) -> str | None:
+    """
+    Cuts the candidate's gene out of its full record by the annotation
+    coordinates (1-based, inclusive), reverse-complementing a minus-
+    strand gene and wrapping across the circular origin when end < start.
+
+    Args:
+        sequence (str): The full record sequence the candidate's coordinates refer to.
+        candidate (SeedReferenceCandidate): The candidate carrying gene_start/gene_end/gene_strand.
+
+    Returns:
+        str | None: The oriented gene sequence, or None when the candidate has no coordinates or they fall outside the record.
+    """
+    if not candidate.has_coordinates:
+        return None
+    start, end = candidate.gene_start, candidate.gene_end
+    if start > len(sequence) or end > len(sequence):
+        return None
+    if end >= start:
+        region = sequence[start - 1:end]
+    else:
+        # A gene spanning the origin of a circular record.
+        region = sequence[start - 1:] + sequence[:end]
+    if candidate.gene_strand == "-":
+        region = str(Seq(region).reverse_complement())
+    return region
 
 def _checksum(sequence: str) -> str:
     """
@@ -39,7 +74,7 @@ def _checksum(sequence: str) -> str:
     """
     return hashlib.sha256(sequence.encode("ascii")).hexdigest()
 
-def _fallback(sample_id: str, scientific_name: str, gene: str, reason: str) -> SeedSelectionResult:
+def _fallback(sample_id: str, scientific_name: str, gene: str, reason: str, seed_mode: str | None = None) -> SeedSelectionResult:
     """
     Builds the typed "no seed" result for a sample, recording why.
 
@@ -48,6 +83,7 @@ def _fallback(sample_id: str, scientific_name: str, gene: str, reason: str) -> S
         scientific_name (str): The scientific name the selection was queried against.
         gene (str): The mitochondrial locus that was requested (or the first locus tried, for a whole-chain exhaustion).
         reason (str): Why a fallback was needed.
+        seed_mode (str | None): The seed mode the selection ran under, for provenance.
 
     Returns:
         SeedSelectionResult: A result with fallback_used True and no FASTA.
@@ -60,6 +96,7 @@ def _fallback(sample_id: str, scientific_name: str, gene: str, reason: str) -> S
         source = FALLBACK_SOURCE,
         fallback_used = True,
         fallback_reason = reason,
+        seed_mode = seed_mode,
     )
 
 def select_seed(sample_id: str,
@@ -67,11 +104,16 @@ def select_seed(sample_id: str,
                  database_dir: Path,
                  output_dir: Path,
                  logger: logging.Logger,
-                 loci: tuple[str, ...] = LOCUS_FALLBACK_ORDER) -> SeedSelectionResult:
+                 loci: tuple[str, ...] = LOCUS_FALLBACK_ORDER,
+                 seed_mode: str = DEFAULT_SEED_MODE) -> SeedSelectionResult:
     """
     Selects and writes a mitochondrial seed sequence for one sample,
     trying each locus in loci in order until one yields a MitoFish
-    candidate with a fetchable sequence. Multiple candidates at a
+    candidate with a fetchable sequence. What is written depends on
+    seed_mode (see models.SEED_MODES): the locus alone cut from the
+    record by its annotation coordinates ("mitofish_gene", the
+    default), the whole record ("mitofish_genome"), or nothing at all
+    so GetOrganelle uses its own bundled seed set ("default"). Multiple candidates at a
     locus are resolved deterministically (longest available sequence
     record first, accession as a final tie-breaker) rather than
     skipped as "ambiguous" -- a well-documented organism (e.g. Danio
@@ -88,12 +130,27 @@ def select_seed(sample_id: str,
         output_dir (Path): The directory to write the selected seed FASTA to.
         logger (logging.Logger): The logger to use for logging messages.
         loci (tuple[str, ...]): The mitochondrial loci to try, in order, most densely documented first. Defaults to LOCUS_FALLBACK_ORDER.
+        seed_mode (str): One of SEED_MODES. Defaults to DEFAULT_SEED_MODE ("mitofish_gene").
 
     Returns:
         SeedSelectionResult: Always returned, never raises -- fallback_used
         is True and fasta_path is None when no locus could be resolved.
     """
     context = f"{{{sample_id}}}"
+    first_locus = loci[0] if loci else DEFAULT_SEED_LOCUS
+
+    if seed_mode not in SEED_MODES:
+        logger.warning(f"{context} Unknown seed mode '{seed_mode}'; using '{DEFAULT_SEED_MODE}'. Valid modes: {', '.join(SEED_MODES)}.")
+        seed_mode = DEFAULT_SEED_MODE
+
+    # Mode "default" is a deliberate choice of GetOrganelle's bundled
+    # seed set: no MitoFish query, no FASTA, and NOT a fallback.
+    if seed_mode == "default":
+        logger.info(f"{context} Seed mode 'default': using GetOrganelle's bundled seed database (no MitoFish seed).")
+        return SeedSelectionResult(
+            sample_id = sample_id, scientific_name = scientific_name or "", gene = first_locus,
+            accession = FALLBACK_ACCESSION, source = DEFAULT_MODE_SOURCE, fallback_used = False, seed_mode = seed_mode,
+        )
 
     # A sample with no scientific name (a run launched from an input
     # directory with no manifest, or a manifest row with blank organism/
@@ -102,7 +159,7 @@ def select_seed(sample_id: str,
     # reason in the selection record.
     if scientific_name is None or not scientific_name.strip():
         logger.warning(f"{context} No scientific name for this sample; falling back to GetOrganelle's default database.")
-        return _fallback(sample_id, scientific_name or "", loci[0] if loci else DEFAULT_SEED_LOCUS, "no_scientific_name")
+        return _fallback(sample_id, scientific_name or "", first_locus, "no_scientific_name", seed_mode)
 
     lookup = MitoFishReferenceLookup(database_dir = database_dir, logger = logger, sample_id = sample_id)
 
@@ -115,7 +172,7 @@ def select_seed(sample_id: str,
             candidates = lookup.lookup(scientific_name = scientific_name, gene = gene)
         except SystemExit:
             logger.warning(f"{context} MitoFish lookup failed for {scientific_name}; falling back to GetOrganelle's default database.")
-            return _fallback(sample_id, scientific_name, gene, "mitofish_lookup_failed")
+            return _fallback(sample_id, scientific_name, gene, "mitofish_lookup_failed", seed_mode)
 
         # No candidate at this locus -- trying the next one in the chain.
         if not candidates:
@@ -139,13 +196,35 @@ def select_seed(sample_id: str,
                 logger.info(f"{context} Failed to fetch sequence for accession {candidate.accession} ({gene}); trying the next candidate.")
                 continue
 
+            # In gene mode, cutting the locus out of the record. The
+            # record itself is kept as the seed only when it is already
+            # gene-sized (a gene-level accession); a whole mitogenome
+            # with no usable coordinates means the annotation table
+            # can't support gene mode at all, which is the same for
+            # every candidate, so that is a fallback to GetOrganelle's
+            # bundled seed set -- never a silent whole-genome seed.
+            if seed_mode == "mitofish_gene":
+                region = extract_gene_region(sequence, candidate)
+                if region is not None and not (MIN_GENE_SEED_LENGTH <= len(region) <= MAX_GENE_SEED_LENGTH):
+                    logger.info(f"{context} {candidate.accession} ({gene}) coordinates give a {len(region)} bp region, outside "
+                                f"{MIN_GENE_SEED_LENGTH}-{MAX_GENE_SEED_LENGTH} bp; not a usable gene seed.")
+                    region = None
+                if region is None and len(sequence) <= MAX_GENE_SEED_LENGTH:
+                    region = sequence
+                if region is None:
+                    logger.warning(f"{context} {candidate.accession} is a {len(sequence)} bp record with no usable {gene} coordinates "
+                                   f"in the MitoFish annotation table; seed mode 'mitofish_gene' cannot cut a gene seed from it. "
+                                   f"Falling back to GetOrganelle's bundled seed database (use seed mode 'mitofish_genome' to seed with the whole record).")
+                    return _fallback(sample_id, scientific_name, gene, "no_gene_coordinates", seed_mode)
+                sequence = region
+
             # Writing the seed FASTA and returning the successful result.
             seq_record = SeqRecord(Seq(sequence), id = candidate.accession,
-                                   description = f"{gene} seed for {sample_id}, {scientific_name}")
+                                   description = f"{gene} seed for {sample_id}, {scientific_name} ({seed_mode})")
             fasta_path = output_dir / f"{sample_id}.seed.fasta"
             write_gene_fasta(seq_record, fasta_path)
 
-            logger.info(f"{context} Selected MitoFish seed {candidate.accession} ({gene}) for {scientific_name}; written to {fasta_path}.")
+            logger.info(f"{context} Selected MitoFish seed {candidate.accession} ({gene}, {len(sequence)} bp, {seed_mode}) for {scientific_name}; written to {fasta_path}.")
 
             return SeedSelectionResult(
                 sample_id = sample_id,
@@ -159,10 +238,11 @@ def select_seed(sample_id: str,
                 checksum = _checksum(sequence),
                 ncbi_taxon_id = candidate.ncbi_taxon_id,
                 sequence_length = len(sequence),
+                seed_mode = seed_mode,
             )
 
         logger.info(f"{context} No fetchable MitoFish candidate for {scientific_name} ({gene}); trying the next locus.")
 
     # Every locus in the chain was exhausted without a fetchable match.
     logger.warning(f"{context} No usable MitoFish match for {scientific_name} across {len(loci)} loci; falling back to GetOrganelle's default database.")
-    return _fallback(sample_id, scientific_name, loci[0] if loci else DEFAULT_SEED_LOCUS, "no_fetchable_mitofish_match")
+    return _fallback(sample_id, scientific_name, first_locus, "no_fetchable_mitofish_match", seed_mode)

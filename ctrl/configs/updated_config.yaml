@@ -79,6 +79,19 @@ stage_options:
       # reproducibility; null resolves and downloads the latest
       # release automatically on every fresh run.
       version: null
+      # How each sample's GetOrganelle seed is produced:
+      #   mitofish_gene   - only the selected locus (~1-2 kb), cut from the
+      #                     MitoFish record by its annotation coordinates.
+      #                     Recommended: species-specific without the
+      #                     repeat-rich control region of a whole mitogenome,
+      #                     which on a deep library can recruit most reads in
+      #                     one round and leave a graph slimming can't filter.
+      #   mitofish_genome - the whole MitoFish record (v0.2.0's original
+      #                     behaviour).
+      #   default         - no -s: GetOrganelle's own bundled animal_mt seed
+      #                     set (v0.1.0's behaviour).
+      # A rescue profile may set its own seed_mode for its reseed.
+      mode: mitofish_gene
     getorganelle:
       threads: 4
       database_type: animal_mt

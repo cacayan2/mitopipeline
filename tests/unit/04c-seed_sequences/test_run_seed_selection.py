@@ -67,3 +67,22 @@ def test_main_records_a_fallback_result_as_a_valid_non_error_outcome(tmp_path: P
     record = json.loads((tmp_path / "seed_out" / f"{sample_id}.seed_selection.json").read_text())
     assert record["fallback_used"] is True
     assert record["fasta_path"] is None
+
+def test_main_passes_the_seed_mode_through_and_records_it(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    sample_id = "SAMPLE_03"
+    seen = {}
+    def _stub_select_seed(**kwargs):
+        seen.update(kwargs)
+        return SeedSelectionResult(sample_id = sample_id, scientific_name = "Danio rerio", gene = "COXI",
+                                   accession = "GETORGANELLE_DEFAULT", source = "getorganelle_default_seed",
+                                   fasta_path = None, fallback_used = False, seed_mode = kwargs["seed_mode"])
+
+    monkeypatch.setattr(run_seed_selection, "select_seed", _stub_select_seed)
+    monkeypatch.setattr(sys, "argv", _argv(tmp_path, sample_id) + ["--seed-mode", "default"])
+
+    assert run_seed_selection.main() == 0
+    assert seen["seed_mode"] == "default"
+    record = json.loads((tmp_path / "seed_out" / f"{sample_id}.seed_selection.json").read_text())
+    assert record["seed_mode"] == "default"
+    assert record["fasta_path"] is None
+    assert record["fallback_used"] is False

@@ -183,7 +183,7 @@ def test_reseed_derives_a_different_locus_and_uses_it(tmp_path: Path, monkeypatc
     reseeded_fasta.write_text(">reseed\nACGT\n")
 
     from mitopipeline.utils.seed.models import SeedSelectionResult
-    def _fake_select_seed(sample_id, scientific_name, database_dir, output_dir, logger, loci):
+    def _fake_select_seed(sample_id, scientific_name, database_dir, output_dir, logger, loci, **kwargs):
         assert "COXI" not in loci  # the excluded gene must never be retried
         return SeedSelectionResult(sample_id = sample_id, scientific_name = scientific_name, gene = loci[0],
                                    accession = "FAKE123", source = "mitofish", fasta_path = reseeded_fasta,
@@ -238,7 +238,7 @@ def test_reseed_takes_priority_over_an_explicit_seed_file(tmp_path: Path, monkey
     reseeded_fasta.write_text(">reseed\nACGT\n")
 
     from mitopipeline.utils.seed.models import SeedSelectionResult
-    def _fake_select_seed(sample_id, scientific_name, database_dir, output_dir, logger, loci):
+    def _fake_select_seed(sample_id, scientific_name, database_dir, output_dir, logger, loci, **kwargs):
         return SeedSelectionResult(sample_id = sample_id, scientific_name = scientific_name, gene = loci[0],
                                    accession = "FAKE123", source = "mitofish", fasta_path = reseeded_fasta,
                                    fallback_used = False)
@@ -255,3 +255,30 @@ def test_reseed_takes_priority_over_an_explicit_seed_file(tmp_path: Path, monkey
 
     assert run_rescue_reassembly.main() == 0
     assert seen.get("seed_file") == str(reseeded_fasta)
+
+def test_reseed_passes_the_profile_seed_mode_through(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """A rescue profile's seed_mode reaches select_seed() for its reseed,
+    and is recorded in the attempt's own provenance."""
+    sample_id = "SAMPLE_12"
+    output_dir = tmp_path / "rescue_attempt_3"
+    reseeded_fasta = tmp_path / "reseeded.fasta"
+    reseeded_fasta.write_text(">reseed\nACGT\n")
+
+    from mitopipeline.utils.seed.models import SeedSelectionResult
+    seen_modes = []
+    def _fake_select_seed(sample_id, scientific_name, database_dir, output_dir, logger, loci, seed_mode):
+        seen_modes.append(seed_mode)
+        return SeedSelectionResult(sample_id = sample_id, scientific_name = scientific_name, gene = loci[0],
+                                   accession = "FAKE123", source = "mitofish", fasta_path = reseeded_fasta,
+                                   fallback_used = False, seed_mode = seed_mode)
+
+    monkeypatch.setattr(run_rescue_reassembly, "select_seed", _fake_select_seed)
+    monkeypatch.setattr(GetOrganelleRunner, "run", _stub_run_success)
+    monkeypatch.setattr(sys, "argv", _argv(tmp_path, sample_id, output_dir, reseed = True,
+                                            exclude_gene = "COXI", scientific_name = "Danio rerio",
+                                            database_dir = tmp_path / "mitofish") + ["--seed-mode", "mitofish_genome"])
+
+    assert run_rescue_reassembly.main() == 0
+    assert seen_modes == ["mitofish_genome"]
+    record = json.loads((output_dir / f"{sample_id}.rescue_seed_selection.json").read_text())
+    assert record["seed_mode"] == "mitofish_genome"

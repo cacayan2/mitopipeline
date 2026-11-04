@@ -15,6 +15,10 @@ import json
 from pathlib import Path
 
 SEED_CONFIG = config["stage_options"]["assembly"]["seed"]
+# How each sample's seed is produced (models.SEED_MODES): the locus cut
+# from its MitoFish record (mitofish_gene), the whole record
+# (mitofish_genome), or GetOrganelle's own bundled seed set (default).
+SEED_MODE = str(SEED_CONFIG.get("mode") or "mitofish_gene")
 
 def _mitofish_database_dir(result_path: Path, fallback: str) -> str:
     """Reads the resolved MitoFish database directory mitofish_database_setup
@@ -72,6 +76,7 @@ rule seed_selection:
             fallback = str((PROJECT_ROOT / SEED_CONFIG["database_dir"]).resolve()),
         ),
         output_dir = str(JOB_DIR / "04c-seed_sequences" / "{sample}"),
+        seed_mode = SEED_MODE,
         log_file = str(JOB_DIR / "logs" / "04c-seed_sequences" / "{sample}.log"),
         global_log_file = str(GLOBAL_LOG_FILE),
         exec_script = str(SRC_DIR / "mitopipeline" / "exec" / "04c-seed_sequences" / "run_seed_selection.py")
@@ -84,6 +89,7 @@ rule seed_selection:
             --scientific-name {params.scientific_name:q} \
             --database-dir {params.database_dir:q} \
             --output-dir {params.output_dir:q} \
+            --seed-mode {params.seed_mode:q} \
             --log-file {params.log_file:q} \
             --global-log-file {params.global_log_file:q}
         touch {output.done:q}

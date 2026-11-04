@@ -285,10 +285,12 @@ class MitoFishReferenceLookup:
 
         # Building one candidate for each matching reference record.
         candidates: list[SeedReferenceCandidate] = []
+        coordinate_columns = self._coordinate_columns(annotations.columns)
 
         # Iterating through each matching reference record and populating the candidate list.
         for _, record in gene_matches.iterrows():
             accession = str(record["accession"])
+            gene_start, gene_end, gene_strand = self._coordinates_from_row(record, coordinate_columns)
 
             # Creating the candidate from the MitoFish annotation record.
             candidate = SeedReferenceCandidate(
@@ -296,7 +298,10 @@ class MitoFishReferenceLookup:
                 scientific_name = scientific_name,
                 ncbi_taxon_id = int(accession_taxon_ids[accession]),
                 gene = gene,
-                sequence_length = int(record["length"]) if pd.notna(record["length"]) else None
+                sequence_length = int(record["length"]) if pd.notna(record["length"]) else None,
+                gene_start = gene_start,
+                gene_end = gene_end,
+                gene_strand = gene_strand,
             )
 
             candidates.append(candidate)
@@ -308,13 +313,74 @@ class MitoFishReferenceLookup:
         self.logger.info(f"{context} Found {len(candidates)} candidate reference(s) for {scientific_name}, gene {gene}.")
         return candidates
 
+    # Column names the MitoFish annotation table may use for a gene's
+    # coordinates within its record. Matched case-insensitively; the
+    # first present name wins. Without a start AND an end column the
+    # table carries no coordinates and every candidate is returned
+    # without them (seed_selector's mitofish_gene mode then declines to
+    # seed from the whole record rather than guess).
+    _START_COLUMNS = ("start", "gene_start", "start_pos", "start_position", "from", "begin")
+    _END_COLUMNS = ("end", "gene_end", "end_pos", "end_position", "to", "stop")
+    _STRAND_COLUMNS = ("strand", "direction", "orientation")
+
+    @classmethod
+    def _coordinate_columns(cls, columns) -> tuple[str, str, str | None] | None:
+        """
+        Finds the annotation table's (start, end, strand) column names.
+
+        Args:
+            columns: The annotation table's column index.
+
+        Returns:
+            tuple[str, str, str | None] | None: The real (start, end, strand-or-None) column names, or None when the table has no start/end pair.
+        """
+        by_lower = {str(column).lower(): str(column) for column in columns}
+        start = next((by_lower[name] for name in cls._START_COLUMNS if name in by_lower), None)
+        end = next((by_lower[name] for name in cls._END_COLUMNS if name in by_lower), None)
+        strand = next((by_lower[name] for name in cls._STRAND_COLUMNS if name in by_lower), None)
+        if start is None or end is None:
+            return None
+        return start, end, strand
+
+    @staticmethod
+    def _coordinates_from_row(record, coordinate_columns: tuple[str, str, str | None] | None) -> tuple[int | None, int | None, str | None]:
+        """
+        Reads one annotation row's gene coordinates, tolerating blanks
+        and non-numeric values (either leaves the candidate without
+        coordinates rather than failing the lookup).
+
+        Args:
+            record: One row of the annotation table.
+            coordinate_columns (tuple | None): From _coordinate_columns().
+
+        Returns:
+            tuple[int | None, int | None, str | None]: (start, end, strand) with strand normalised to "+"/"-" or None.
+        """
+        if coordinate_columns is None:
+            return None, None, None
+        start_col, end_col, strand_col = coordinate_columns
+        try:
+            start = int(float(record[start_col])) if pd.notna(record[start_col]) else None
+            end = int(float(record[end_col])) if pd.notna(record[end_col]) else None
+        except (TypeError, ValueError):
+            return None, None, None
+        strand: str | None = None
+        if strand_col is not None and pd.notna(record[strand_col]):
+            raw = str(record[strand_col]).strip().lower()
+            if raw in ("-", "-1", "minus", "reverse", "rev", "neg", "negative", "complement"):
+                strand = "-"
+            elif raw in ("+", "1", "+1", "plus", "forward", "fwd", "pos", "positive"):
+                strand = "+"
+        return start, end, strand
+
     def fetch_sequence(self, accession: str) -> str:
         """
         Retrieves the sequence for a MitoFish accession from the local
-        sequence database. MitoFish's own FASTA entries are already the
-        gene-extracted record for that accession (see lookup()'s
-        "gene"/"length" annotation columns) -- no feature-based gene
-        extraction is needed for a MitoFish-sourced candidate.
+        sequence database. The entries in MitoFish's sequence FASTA are
+        the full records (a complete mitogenome for a complete-genome
+        accession), NOT the gene region the annotation row describes;
+        cutting the gene out is seed_selector's job, using the
+        candidate's annotation coordinates.
 
         Args:
             accession (str): The MitoFish accession to fetch.
