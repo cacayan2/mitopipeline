@@ -12,12 +12,48 @@ ASSEMBLY_CONFIG = config["stage_options"]["assembly"]["getorganelle"]
 
 def getorganelle_config_input(wc):
     """
-    Depends on #04c's seed-selection record when seed selection is
-    enabled, otherwise has no real file dependency.
+    Always depends on the job-level GetOrganelle database check (no
+    assembly can succeed without usable databases), plus #04c's
+    seed-selection record when seed selection is enabled.
     """
+    inputs = {"database_record": str(JOB_DIR / "04a-getorganelle_config" / "getorganelle_database.json")}
     if stage_enabled("04c-seed_sequences"):
-        return {"seed_record": str(JOB_DIR / "04c-seed_sequences" / "{sample}" / f"{wc.sample}.seed_selection.json")}
-    return {}
+        inputs["seed_record"] = str(JOB_DIR / "04c-seed_sequences" / "{sample}" / f"{wc.sample}.seed_selection.json")
+    return inputs
+
+rule getorganelle_database_setup:
+    """
+    Once per job: makes sure GetOrganelle's default LabelDatabase (BLAST)
+    and SeedDatabase (bowtie2) for the configured organelle type exist
+    and are usable by THIS environment's BLAST/bowtie2, downloading or
+    rebuilding them if not. GetOrganelle shares these under
+    ~/.GetOrganelle across every environment on a machine and only
+    checks that the files exist; an index built by another BLAST
+    version makes every slim_graph.py call fail ("Not a valid version 4
+    database"), which GetOrganelle swallows and turns into "No valid
+    assembly graph found!" for every sample. Fails the run here, with
+    the reason, rather than there.
+    """
+    output:
+        record = str(JOB_DIR / "04a-getorganelle_config" / "getorganelle_database.json"),
+        done = str(JOB_DIR / "04a-getorganelle_config" / "getorganelle_database.done")
+    params:
+        organelle_type = ASSEMBLY_CONFIG.get("database_type", "animal_mt"),
+        output_dir = str(JOB_DIR / "04a-getorganelle_config"),
+        log_file = str(JOB_DIR / "logs" / "04a-getorganelle_config" / "getorganelle_database.log"),
+        global_log_file = str(GLOBAL_LOG_FILE),
+        exec_script = str(SRC_DIR / "mitopipeline" / "exec" / "04a-getorganelle_config" / "run_getorganelle_database.py")
+    conda:
+        "../../envs/04c-assembly.yaml"
+    shell:
+        """
+        {PYTHON_BIN:q} {params.exec_script:q} \
+            --organelle-type {params.organelle_type:q} \
+            --output-dir {params.output_dir:q} \
+            --log-file {params.log_file:q} \
+            --global-log-file {params.global_log_file:q}
+        touch {output.done:q}
+        """
 
 rule getorganelle_config:
     input:
