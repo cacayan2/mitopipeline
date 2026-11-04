@@ -3,9 +3,13 @@ MitoPipeline is a reproducible Snakemake/Python workflow for assembly and analys
 
 # Table of Contents
 - [Pipeline Overview](#pipeline-overview)
+    + [Features](#features)
+    + [Inputs](#inputs)
+    + [Outputs](#outputs)
 - [Dependencies](#dependencies)
 - [Installation](#installation)
 - [Setup](#setup)
+    + [Input Directory](#input-directory)
     + [Config](#config)
     + [Manifest](#manifest)
 - [Running the Pipeline](#running-the-pipeline)
@@ -13,7 +17,27 @@ MitoPipeline is a reproducible Snakemake/Python workflow for assembly and analys
 - [v0.2.0 Changelist](#v020-changelist)
 
 # Pipeline Overview
+## Features
+MitoPipeline is a comprehensive workflow for both assembling genomes and reporting on their biological validity. MitoPipeline integrates the major stages of mitogenome analysis into a single configurable workflow:
 
+<img src="zmisc/images/flowchart.png" alt="" style="display: block; margin: 0 auto;">
+
+ This pipeline takes raw paired-end format sequence data (in fastq.gz format) and returns the following:
+- Genome assembled via `GetOrganelle` with annotations and phylogenetic comparisons.
+- FastQC reports on sequence data.
+- Metadata required for submitting to GenBank, SRA, and BioProject/BioSample.
+- Detailed reports on sequence runs.
+
+This pipeline features a number of abstraction techniques to increase the fidelity of intermediate scripts, maintainability, reproducibility, and logging. Namely:
+- **Snakemake Orchestration:** Snakemake orchestration allows for the seamless integration of bioinformatic tools without having to worry about versions and conda environments. It ensures that users have fine grain control over the parallelization of tasks running across the pipeline to maximize resource usage.
+- **Object-Oriented Design:** Individual tools within the pipeline are abstracted into API's that inherit from a `BaseTool` class. Expected behaviors of tools are codified beforehand so that addition/removal of tools is self-consistent. These API's are called in execution scripts that are ultimately managed by Snakemake. 
+- **Robust Logging:** Logging is completed per-step and per-sample, with output to the console tightly controlled by Snakemake and execution scripts. This ensures that the console is not cluttered by the output of individual tools but is ultimately reflective of the scripts that Snakemake is currently running and errors that were run along the way. Logging is standardized by the `logging` package defined in base `Python`. 
+- **Provenance Control and Error Handling:** Because of the standardization of tool behavior, the pipeline is able to intelligently self-regulate silent failures, crashes, and warnings to help with debugging of code and troubleshooting datasets that will not assemble.
+- **Detailed Reporting:** Run metrics (including machine usage) alongside biological data and plausibility of the genome is reported in detailed pdf documents at the end of the run.
+
+Alongside the software engineering practices implemented above, MitoPipeline implements a number of strategies to provide evidence refuting/supporting the biological validity of assembled mitogenomes:
+- **Assembly Assessment and Rescue:** The assembled mitogenome is characterized and compared to expected metrics. If for some reason, the mitogenome does not meet these metrics, a comprehensive rescue protocol is started - hyperparameters for assembly are adjusted to correct for possible causes of failed, incomplete, or unacceptable assemblies. The outcome of this is detailed in the reports once the run is completed. 
+- **FastQC Quality Assessments:** FastQC is run 3 times for a given sample - once before the sample is trimmed by `fastp`, once after the trimming is complete, and once `GetOrganelle` has finished its read recruitment step. 
 
 
 # Dependencies
@@ -21,6 +45,8 @@ MitoPipeline is a reproducible Snakemake/Python workflow for assembly and analys
 # Installation
 
 # Setup
+
+## Inputs
 
 ## Config
 
