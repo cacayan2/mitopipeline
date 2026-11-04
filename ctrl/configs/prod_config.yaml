@@ -5,7 +5,7 @@ job_configuration:
   output_root: /home/fishl/mitogenome_project/outputs
   manifest: ctrl/manifests/mitopipeline_production_manifest.tsv
   input_directory: /home/fishl/mitogenome_project/all_species_raw
-  job_id: final_output_v2
+  job_id: final_output_v020
   validate_input_files: true
 
 # You can choose which stages to turn on/off
