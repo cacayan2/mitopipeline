@@ -125,19 +125,19 @@ rule trimming:
         # output (Emil's call, 2026-10-21: keeps data reorg/access
         # unambiguous later) -- FastpRunner now builds output_r1/output_r2/
         # output_html/output_json to match this exact naming.
-        r1 = str(JOB_DIR / "trimming" / "{sample}" / "{sample}.R1.trimmed.fastq.gz"),
-        r2 = str(JOB_DIR / "trimming" / "{sample}" / "{sample}.R2.trimmed.fastq.gz"),
-        html = str(JOB_DIR / "trimming" / "{sample}" / "{sample}.fastp.html"),
-        json = str(JOB_DIR / "trimming" / "{sample}" / "{sample}.fastp.json"),
-        done = str(JOB_DIR / "trimming" / "{sample}" / "{sample}.trimming.done")
+        r1 = str(JOB_DIR / "02-trimming" / "{sample}" / "{sample}.R1.trimmed.fastq.gz"),
+        r2 = str(JOB_DIR / "02-trimming" / "{sample}" / "{sample}.R2.trimmed.fastq.gz"),
+        html = str(JOB_DIR / "02-trimming" / "{sample}" / "{sample}.fastp.html"),
+        json = str(JOB_DIR / "02-trimming" / "{sample}" / "{sample}.fastp.json"),
+        done = str(JOB_DIR / "02-trimming" / "{sample}" / "{sample}.trimming.done")
     # The shell runs a python script that has options - params defines
     # those options.
     params:
-        output_dir = str(JOB_DIR / "trimming" / "{sample}"),
+        output_dir = str(JOB_DIR / "02-trimming" / "{sample}"),
         working_dir = str(Path.cwd()),
-        log_file = str(JOB_DIR / "logs" / "trimming" / "{sample}.trimming.log"),
+        log_file = str(JOB_DIR / "logs" / "02-trimming" / "{sample}.trimming.log"),
         global_log_file = str(GLOBAL_LOG_FILE),
-        metrics_dir = str(JOB_DIR / "metrics" / "trimming" / "{sample}"),
+        metrics_dir = str(JOB_DIR / "metrics" / "02-trimming" / "{sample}"),
         exec_script = str(SRC_DIR / "mitopipeline" / "exec" / "02-trimming" / "run_fastp.py"),
         optional_args = fastp_optional_args(config)
     threads:

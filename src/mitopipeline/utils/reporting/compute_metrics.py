@@ -241,14 +241,12 @@ def collect_machine_info() -> MachineInfo:
 def _iter_metrics_records(metrics_dir: Path, sample_id: str | None = None) -> list[tuple[str, dict]]:
     """
     Reads every real *.metrics.json under metrics_dir, at any real
-    depth (most stages use metrics/{stage}/{sample}/{file}, but
-    01-qc_raw/03-qc_trimmed nest one level deeper --
-    metrics/qc/raw/{sample}/{file} and metrics/qc/trimmed/{sample}/{file}
-    -- so a fixed two-level glob silently missed them; a real,
-    confirmed gap, now fixed). The "stage" for a given file is every
-    real path component between metrics_dir and the sample directory
-    (its own immediate parent), joined with "/" -- "08b-annotation"
-    for the common case, "qc/raw" / "qc/trimmed" for the deeper one.
+    depth. Every stage currently uses metrics/{stage}/{sample}/{file},
+    but the glob stays recursive so a nested stage layout is never
+    silently missed. The "stage" for a given file is every real path
+    component between metrics_dir and the sample directory (its own
+    immediate parent), joined with "/" -- e.g. "01-qc_raw" or
+    "08b-annotation".
     Returns (stage, record) pairs, filtered to one sample's own
     records when sample_id is given. A single malformed/unreadable
     record is skipped, not fatal to the rest.

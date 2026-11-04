@@ -41,6 +41,9 @@ def parse_args() -> argparse.Namespace:
     # --no-conda: The flag to disable the conda environment (optional, but recommend not messing with this.
     # --dry-run: The flag to run the pipeline in dry-run mode (optional).
     # --printshellcmds: The flag to print shell commands (optional - useful for debugging).
+    # --rerun-triggers: Passed straight through to Snakemake (optional). "mtime" alone is how
+    #     to resume a run after its output directories were moved/renamed without Snakemake
+    #     rerunning every already-finished job just because its recorded input paths changed.
     # The minimum command to run the pipeline is:
     ## python pipeline_launcher.py --config <path/to/config.yaml>
     # Recommended:
@@ -51,6 +54,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--no-conda", action = "store_true", help = "The flag to disable the conda environment (optional, but recommend not messing with this).")
     parser.add_argument("--dry-run", action = "store_true", help = "The flag to run the pipeline in dry-run mode (optional).")
     parser.add_argument("--printshellcmds", action = "store_true", help = "The flag to print shell commands (optional - useful for debugging).")
+    parser.add_argument("--rerun-triggers", nargs = "+", choices = ["mtime", "params", "input", "software-env", "code"], default = None,
+                        help = "Passed through to Snakemake's own --rerun-triggers (optional). Defaults to Snakemake's own default (all triggers).")
 
     # Returning the parsed arguments.
     return parser.parse_args()
@@ -393,7 +398,8 @@ def run_snakemake(
         snakefile: Path = Path("ctrl/Snakefile"),
         dry_run: bool = False,
         printshellcmds: bool = False,
-        output_log_path: Path | None = None
+        output_log_path: Path | None = None,
+        rerun_triggers: list[str] | None = None
 ) -> tuple[subprocess.CompletedProcess, str]:
     """
     Run Snakemake using the runtime configuration.
@@ -406,6 +412,7 @@ def run_snakemake(
         snakefile (Path, optional): The path to the Snakefile. Defaults to "ctrl/Snakefile".
         dry_run (bool, optional): Whether to run Snakemake in dry-run mode. Defaults to False.
         printshellcmds (bool, optional): Whether to print shell commands. Defaults to False.
+        rerun_triggers (list[str] | None): Passed through to Snakemake's own --rerun-triggers. None leaves Snakemake's default (every trigger) in effect.
         output_log_path (Path | None): Where to durably save Snakemake's full captured stdout/stderr, for later inspection after a crash. When None, output is still captured and returned but not saved to its own file.
 
     Returns:
@@ -454,6 +461,7 @@ def run_snakemake(
     if use_conda: command.append("--use-conda")
     if dry_run: command.append("--dry-run")
     if printshellcmds: command.append("--printshellcmds")
+    if rerun_triggers: command.extend(["--rerun-triggers", *rerun_triggers])
 
     # Logging and running the command. Output is streamed live to this
     # process's own stdout (so watching it run interactively still
@@ -547,7 +555,8 @@ def launch_pipeline(
         cores: int = 1,
         use_conda: bool = True,
         dry_run: bool = False,
-        printshellcmds: bool = False
+        printshellcmds: bool = False,
+        rerun_triggers: list[str] | None = None
 ):
     """
     Launch a single pipeline run.
@@ -559,6 +568,7 @@ def launch_pipeline(
         use_conda (bool, optional): Whether to use conda. Defaults to True.
         dry_run (bool, optional): Whether to run the pipeline in dry-run mode. Defaults to False.
         printshellcmds (bool, optional): Whether to print shell commands. Defaults to False.
+        rerun_triggers (list[str] | None, optional): Passed through to Snakemake's own --rerun-triggers. Defaults to None (Snakemake's default).
 
     Returns:
         None
@@ -591,6 +601,7 @@ def launch_pipeline(
             logger = job.job_logger,
             dry_run = dry_run,
             printshellcmds = printshellcmds,
+            rerun_triggers = rerun_triggers,
             output_log_path = job.job_dir / "logs" / "00-job" / f"{job.job_id}.snakemake_output.log"
         )
         if result.returncode == 0:
@@ -645,7 +656,8 @@ def main() -> int:
         cores = args.cores,
         use_conda = not args.no_conda,
         dry_run = args.dry_run,
-        printshellcmds = args.printshellcmds
+        printshellcmds = args.printshellcmds,
+        rerun_triggers = args.rerun_triggers
     )
 
 # Running the main command.

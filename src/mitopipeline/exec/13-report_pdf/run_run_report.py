@@ -46,7 +46,7 @@ def _sample_paths(job_dir: Path, sample_id: str) -> dict:
         "statistics_json": job_dir / "12a-stats_aggregation" / sample_id / f"{sample_id}.statistics.json",
         "biological_validation_json": job_dir / "06-contig_selection" / sample_id / f"{sample_id}.biological_validation.json",
         "visualization_result_json": job_dir / "09-visualization" / sample_id / f"{sample_id}.circular_map_result.json",
-        "fastp_json": job_dir / "trimming" / sample_id / f"{sample_id}.fastp.json",
+        "fastp_json": job_dir / "02-trimming" / sample_id / f"{sample_id}.fastp.json",
         "getorganelle_config_json": job_dir / "04a-getorganelle_config" / sample_id / f"{sample_id}.getorganelle_config.json",
         "blast_config_json": job_dir / "05a-blast_config" / sample_id / f"{sample_id}.blast_config.json",
         "mitos2_config_json": job_dir / "08a-mitos2_config" / sample_id / f"{sample_id}.mitos2_config.json",

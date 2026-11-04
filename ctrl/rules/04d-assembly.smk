@@ -12,8 +12,8 @@ ASSEMBLY_CONFIG = config["stage_options"]["assembly"]["getorganelle"]
 
 rule assembly:
     input:
-        r1 = str(JOB_DIR / "trimming" / "{sample}" / "{sample}.R1.trimmed.fastq.gz"),
-        r2 = str(JOB_DIR / "trimming" / "{sample}" / "{sample}.R2.trimmed.fastq.gz"),
+        r1 = str(JOB_DIR / "02-trimming" / "{sample}" / "{sample}.R1.trimmed.fastq.gz"),
+        r2 = str(JOB_DIR / "02-trimming" / "{sample}" / "{sample}.R2.trimmed.fastq.gz"),
         config_json = str(JOB_DIR / "04a-getorganelle_config" / "{sample}" / "{sample}.getorganelle_config.json")
     output:
         # Neither data.fasta NOR status.json is declared here, and

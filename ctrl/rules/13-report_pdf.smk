@@ -42,9 +42,9 @@ def _sample_report_inputs(wildcards):
     # stages are actually enabled -- same reasoning as phylogeny/
     # archival below.
     if stage_enabled("01-qc_raw"):
-        inputs["qc_raw_done"] = str(JOB_DIR / "qc" / "raw" / wildcards.sample / f"{wildcards.sample}.qc_raw.done")
+        inputs["qc_raw_done"] = str(JOB_DIR / "01-qc_raw" / wildcards.sample / f"{wildcards.sample}.qc_raw.done")
     if stage_enabled("03-qc_trimmed"):
-        inputs["qc_trimmed_done"] = str(JOB_DIR / "qc" / "trimmed" / wildcards.sample / f"{wildcards.sample}.qc_trimmed.done")
+        inputs["qc_trimmed_done"] = str(JOB_DIR / "03-qc_trimmed" / wildcards.sample / f"{wildcards.sample}.qc_trimmed.done")
     # Phylogeny/archival dependencies are only real dependency edges
     # when those stages are actually enabled -- otherwise their own
     # .done markers are never produced by anything else in the DAG.
@@ -74,7 +74,7 @@ rule sample_report:
         statistics_json = str(JOB_DIR / "12a-stats_aggregation" / "{sample}" / "{sample}.statistics.json"),
         biological_validation_json = str(JOB_DIR / "06-contig_selection" / "{sample}" / "{sample}.biological_validation.json"),
         visualization_result_json = str(JOB_DIR / "09-visualization" / "{sample}" / "{sample}.circular_map_result.json"),
-        fastp_json = str(JOB_DIR / "trimming" / "{sample}" / "{sample}.fastp.json"),
+        fastp_json = str(JOB_DIR / "02-trimming" / "{sample}" / "{sample}.fastp.json"),
         getorganelle_config_json = str(JOB_DIR / "04a-getorganelle_config" / "{sample}" / "{sample}.getorganelle_config.json"),
         seed_selection_json = str(JOB_DIR / "04c-seed_sequences" / "{sample}" / "{sample}.seed_selection.json"),
         blast_config_json = str(JOB_DIR / "05a-blast_config" / "{sample}" / "{sample}.blast_config.json"),
@@ -85,10 +85,10 @@ rule sample_report:
         iqtree_result_json = str(JOB_DIR / "11-phylogeny" / "{sample}" / "iqtree_result.json"),
         phylogeny_model = config["stage_options"]["phylogeny"]["iqtree"].get("model", "") if stage_enabled("11-phylogeny") else "",
         tree_figure_png = str(JOB_DIR / "11-phylogeny" / "{sample}" / "tree_figure.png"),
-        raw_r1_fastqc_zip = str(JOB_DIR / "qc" / "raw" / "{sample}" / "{sample}.R1_fastqc.zip"),
-        raw_r2_fastqc_zip = str(JOB_DIR / "qc" / "raw" / "{sample}" / "{sample}.R2_fastqc.zip"),
-        trimmed_r1_fastqc_zip = str(JOB_DIR / "qc" / "trimmed" / "{sample}" / "{sample}.R1_fastqc.zip"),
-        trimmed_r2_fastqc_zip = str(JOB_DIR / "qc" / "trimmed" / "{sample}" / "{sample}.R2_fastqc.zip"),
+        raw_r1_fastqc_zip = str(JOB_DIR / "01-qc_raw" / "{sample}" / "{sample}.R1_fastqc.zip"),
+        raw_r2_fastqc_zip = str(JOB_DIR / "01-qc_raw" / "{sample}" / "{sample}.R2_fastqc.zip"),
+        trimmed_r1_fastqc_zip = str(JOB_DIR / "03-qc_trimmed" / "{sample}" / "{sample}.R1_fastqc.zip"),
+        trimmed_r2_fastqc_zip = str(JOB_DIR / "03-qc_trimmed" / "{sample}" / "{sample}.R2_fastqc.zip"),
         recruited_reads_fastqc_dir = lambda wc, input: _recruited_reads_fastqc_dir(input.selection),
         aggregated_data_dir = str(JOB_DIR / "aggregated_data"),
         rescue_dir = str(JOB_DIR / "07-assembly_rescue" / "{sample}"),

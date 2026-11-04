@@ -139,57 +139,13 @@ class PipelineJob:
         self.parent_dir.mkdir(parents = True, exist_ok = True)
         self.job_dir.mkdir(parents = True, exist_ok = True)
 
-        # Setting up directories for all the outputs of the pipeline. 
-        output_directories = [
-            self.job_dir / "01-qc_raw",
-            self.job_dir / "02-trimming",
-            self.job_dir / "03-qc_trimmed",
-            self.job_dir / "04a-getorganelle_config",
-            self.job_dir / "04b-seed_sequences",
-            self.job_dir / "04c-assembly",
-            self.job_dir / "05a-blast_config",
-            self.job_dir / "05b-blast",
-            self.job_dir / "05c-blast_hits",
-            self.job_dir / "06-contig_selection",
-            self.job_dir / "07-assembly_rescue",
-            self.job_dir / "08a-mitos2_config",
-            self.job_dir / "08b-annotation",
-            self.job_dir / "09-visualization",
-            self.job_dir / "10-alignment_dataset",
-            self.job_dir / "11-phylogeny",
-            self.job_dir / "12-reporting",
-            self.job_dir / "13-report_pdf",
-            self.job_dir / "14a-sra_archival",
-            self.job_dir / "14b-biosample_archival",
-            self.job_dir / "15-archival_validation",
-            self.job_dir / "16-table2asn_validation"
-        ]
-
-        # Setting up all the directories required for logging of the pipeline.
-        log_directories = [
-            self.job_dir / "logs",
-            self.job_dir / "logs" / "00-job",
-            self.job_dir / "logs" / "01-qc_raw",
-            self.job_dir / "logs" / "02-trimming",
-            self.job_dir / "logs" / "03-qc_trimmed",
-            self.job_dir / "logs" / "04-assembly",
-            self.job_dir / "logs" / "05-blast",
-            self.job_dir / "logs" / "06-contig_selection",
-            self.job_dir / "logs" / "07-assembly_rescue",
-            self.job_dir / "logs" / "08-annotation",
-            self.job_dir / "logs" / "09-visualization",
-            self.job_dir / "logs" / "10-alignment_dataset",
-            self.job_dir / "logs" / "11-phylogeny",
-            self.job_dir / "logs" / "12-reporting",
-            self.job_dir / "logs" / "13-report_pdf",
-            self.job_dir / "logs" / "14-archival",
-            self.job_dir / "logs" / "15-archival_validation",
-            self.job_dir / "logs" / "16-table2asn_validation"
-        ]
-
-        # Creating the output directories.
-        for directory in output_directories: directory.mkdir(parents = True, exist_ok = True)
-        for directory in log_directories: directory.mkdir(parents = True, exist_ok = True)
+        # Per-stage output, log and metrics directories are NOT pre-created
+        # here: each Snakemake rule declares its own output paths (Snakemake
+        # creates their parents), and the logger factory and BaseTool create
+        # their own log/metrics directories on first write. A hardcoded list
+        # here previously drifted out of sync with the rules and left a set of
+        # empty, misnamed stage directories in every job directory.
+        (self.job_dir / "logs" / "00-job").mkdir(parents = True, exist_ok = True)
 
         # Stored (not just passed to make_logger) so mark_failed()/
         # mark_completed() can reference it -- they already did, but the

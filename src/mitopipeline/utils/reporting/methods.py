@@ -49,7 +49,7 @@ def _trimming_sentence(report_data: SampleReportData) -> str:
     if stats.get("adapter_detection"):
         settings.append("automatic paired-end adapter detection")
     settings_clause = f" ({'; '.join(settings)})" if settings else ""
-    fastp_version = _version_clause(report_data, "trimming", "fastp")
+    fastp_version = _version_clause(report_data, "02-trimming", "fastp")
 
     sentence = (
         f"Raw reads were quality-trimmed with fastp{fastp_version}{settings_clause}, retaining "
@@ -67,8 +67,8 @@ def _trimming_sentence(report_data: SampleReportData) -> str:
     ]
     if qc_clauses:
         fastqc_version = (
-            _version_clause(report_data, "qc/raw", "fastqc")
-            or _version_clause(report_data, "qc/trimmed", "fastqc")
+            _version_clause(report_data, "01-qc_raw", "fastqc")
+            or _version_clause(report_data, "03-qc_trimmed", "fastqc")
         )
         sentence += f" FastQC{fastqc_version} quality control was performed at each stage ({', '.join(qc_clauses)})."
 

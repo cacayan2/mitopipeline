@@ -54,11 +54,11 @@ rule qc_raw:
         # keeps data reorg/access unambiguous later) -- run_fastqc_raw.py
         # passes sample-id-prefixed stems into FastQCRunner so the files
         # it actually writes match this exactly.
-        r1_html = str(JOB_DIR / "qc" / "raw" / "{sample}" / "{sample}.R1_fastqc.html"),
-        r1_zip = str(JOB_DIR / "qc" / "raw" / "{sample}" / "{sample}.R1_fastqc.zip"),
-        r2_html = str(JOB_DIR / "qc" / "raw" / "{sample}" / "{sample}.R2_fastqc.html"),
-        r2_zip = str(JOB_DIR / "qc" / "raw" / "{sample}" / "{sample}.R2_fastqc.zip"),
-        done = str(JOB_DIR / "qc" / "raw" / "{sample}" / "{sample}.qc_raw.done")
+        r1_html = str(JOB_DIR / "01-qc_raw" / "{sample}" / "{sample}.R1_fastqc.html"),
+        r1_zip = str(JOB_DIR / "01-qc_raw" / "{sample}" / "{sample}.R1_fastqc.zip"),
+        r2_html = str(JOB_DIR / "01-qc_raw" / "{sample}" / "{sample}.R2_fastqc.html"),
+        r2_zip = str(JOB_DIR / "01-qc_raw" / "{sample}" / "{sample}.R2_fastqc.zip"),
+        done = str(JOB_DIR / "01-qc_raw" / "{sample}" / "{sample}.qc_raw.done")
     # The shell runs a python script that has options - params defines
     # those options.
     #
@@ -74,11 +74,11 @@ rule qc_raw:
     #         (exec/01-qc_raw/), which isn't a valid dotted module path,
     #         so `-m` can never resolve it regardless of what's installed.
     params:
-        output_dir = str(JOB_DIR / "qc" / "raw" / "{sample}"),
+        output_dir = str(JOB_DIR / "01-qc_raw" / "{sample}"),
         working_dir = str(Path.cwd()),
-        log_file = str(JOB_DIR / "logs" / "qc" / "raw" / "{sample}.qc_raw.log"),
+        log_file = str(JOB_DIR / "logs" / "01-qc_raw" / "{sample}.qc_raw.log"),
         global_log_file = str(GLOBAL_LOG_FILE),
-        metrics_dir = str(JOB_DIR / "metrics" / "qc" / "raw" / "{sample}"),
+        metrics_dir = str(JOB_DIR / "metrics" / "01-qc_raw" / "{sample}"),
         exec_script = str(SRC_DIR / "mitopipeline" / "exec" / "01-qc_raw" / "run_fastqc_raw.py")
     threads:
         QC_RAW_CONFIG.get("threads")

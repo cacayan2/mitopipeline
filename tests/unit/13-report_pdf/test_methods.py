@@ -208,7 +208,7 @@ def test_methods_text_cites_real_fastp_and_fastqc_versions() -> None:
     sample = _sample(
         fastp_stats = {"reads_in": 1000, "reads_out": 900, "read_retention_rate": 0.9},
         compute_summary = (
-            StageComputeSummary(stage = "trimming", tools = "fastp", invocation_count = 1,
+            StageComputeSummary(stage = "02-trimming", tools = "fastp", invocation_count = 1,
                                 total_runtime_seconds = 1.0, total_cpu_seconds = 1.0, peak_memory_mb = 10.0,
                                 tool_versions = {"fastp": "fastp 1.4.0"}),
         ),

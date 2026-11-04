@@ -80,8 +80,8 @@ def _primary_seed_info(sample: str) -> tuple[str, str]:
 
 rule rescue_mapping:
     input:
-        r1 = str(JOB_DIR / "trimming" / "{sample}" / "{sample}.R1.trimmed.fastq.gz"),
-        r2 = str(JOB_DIR / "trimming" / "{sample}" / "{sample}.R2.trimmed.fastq.gz"),
+        r1 = str(JOB_DIR / "02-trimming" / "{sample}" / "{sample}.R1.trimmed.fastq.gz"),
+        r2 = str(JOB_DIR / "02-trimming" / "{sample}" / "{sample}.R2.trimmed.fastq.gz"),
         previous_done = lambda wc: str(_previous_done_marker(wc.sample, int(wc.attempt_num)))
     output:
         # rescued_r1/r2 are NOT declared -- only ever produced when

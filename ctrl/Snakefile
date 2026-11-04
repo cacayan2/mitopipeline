@@ -166,11 +166,11 @@ def enabled_targets() -> list[str]:
     # Each stage produces a "done" file which serves as a checkpoint for Snakemake to build the DAG.
     # In this way, we are making forcing a DAG of targets making debugging easier and enforcing step ordering.
     if stage_enabled("01-qc_raw"): 
-        targets.extend(sample_target("qc/raw", "{sample}.qc_raw.done"))
+        targets.extend(sample_target("01-qc_raw", "{sample}.qc_raw.done"))
     if stage_enabled("02-trimming"): 
-        targets.extend(sample_target("trimming", "{sample}.trimming.done"))
+        targets.extend(sample_target("02-trimming", "{sample}.trimming.done"))
     if stage_enabled("03-qc_trimmed"): 
-        targets.extend(sample_target("qc/trimmed", "{sample}.qc_trimmed.done"))
+        targets.extend(sample_target("03-qc_trimmed", "{sample}.qc_trimmed.done"))
     if stage_enabled("04a-getorganelle_config"): 
         targets.extend(sample_target("04a-getorganelle_config", "{sample}.getorganelle_config.done"))
     if stage_enabled("04c-seed_sequences"): 

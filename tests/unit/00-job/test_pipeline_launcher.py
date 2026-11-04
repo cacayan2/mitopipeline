@@ -113,6 +113,28 @@ def test_run_snakemake_resolves_the_binary_against_sys_executable(tmp_path: Path
     # own, not require a manual --cleanup-metadata/--rerun-incomplete step.
     assert "--rerun-incomplete" in command
 
+def test_rerun_triggers_flag_is_parsed_and_defaults_to_none(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(sys, "argv", ["pipeline_launcher.py", "--config", "config.yaml"])
+    assert parse_args().rerun_triggers is None
+    monkeypatch.setattr(sys, "argv", ["pipeline_launcher.py", "--config", "config.yaml", "--rerun-triggers", "mtime"])
+    assert parse_args().rerun_triggers == ["mtime"]
+
+def test_run_snakemake_passes_rerun_triggers_through_only_when_given(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Resuming after output directories were moved needs Snakemake's own
+    --rerun-triggers mtime, or every finished job reruns because its
+    recorded input paths changed; omitted, Snakemake's default stands."""
+    captured_commands: list[list[str]] = []
+    monkeypatch.setattr(subprocess, "Popen", lambda command, **kwargs: (captured_commands.append(command), _FakeProcess())[1])
+
+    run_snakemake(runtime_config = tmp_path / "runtime_config.yaml", cores = 2, use_conda = True,
+                  logger = logging.getLogger("test"))
+    assert "--rerun-triggers" not in captured_commands[0]
+
+    run_snakemake(runtime_config = tmp_path / "runtime_config.yaml", cores = 2, use_conda = True,
+                  logger = logging.getLogger("test"), rerun_triggers = ["mtime"])
+    command = captured_commands[1]
+    assert command[command.index("--rerun-triggers") + 1] == "mtime"
+
 class _FakeJob:
     """A minimal stand-in exposing only what _rerender_run_report_with_final_status() actually touches -- never a real PipelineJob, which creates real directories and log files as a side effect of construction."""
     def __init__(self, job_dir: Path) -> None:

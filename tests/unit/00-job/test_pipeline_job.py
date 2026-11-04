@@ -138,3 +138,15 @@ def test_write_metadata_appends_to_history_without_losing_prior_entries(tmp_path
     assert len(history_data) == 3  # created + two mark_failed calls
     assert history_data[-1]["failure_reason"] == "second failure"
     assert history_data[-2]["failure_reason"] == "first failure"
+
+def test_pipeline_job_does_not_pre_create_empty_stage_directories(tmp_path: Path) -> None:
+    """Regression: PipelineJob used to pre-create a hardcoded list of
+    numbered stage directories that had drifted out of sync with the
+    Snakemake rules (e.g. 04b-seed_sequences/04c-assembly vs. the real
+    04c-seed_sequences/04d-assembly), leaving empty, misnamed directories
+    in every job. Rules, the logger factory and BaseTool create their own
+    directories on demand, so only the job's own log directory is made."""
+    job = PipelineJob(parent_dir = tmp_path)
+    created = sorted(p.name for p in job.job_dir.iterdir() if p.is_dir())
+    assert created == ["logs"]
+    assert (job.job_dir / "logs" / "00-job").is_dir()

@@ -80,26 +80,35 @@ def test_collect_compute_summary_skips_a_malformed_record(tmp_path: Path) -> Non
     summaries = collect_compute_summary(metrics_dir)
     assert summaries[0].invocation_count == 1
 
-def test_collect_compute_summary_finds_the_real_deeper_qc_raw_trimmed_layout(tmp_path: Path) -> None:
-    """Regression: 01-qc_raw/03-qc_trimmed nest one level deeper than
-    every other stage (metrics/qc/raw/{sample}/file vs. the usual
-    metrics/{stage}/{sample}/file) -- a fixed two-level glob silently
-    found nothing here at all, meaning FastQC never appeared anywhere
-    in either report. "qc/raw" and "qc/trimmed" must be distinct real
-    stage entries, not merged or dropped."""
+def test_collect_compute_summary_keeps_qc_raw_and_qc_trimmed_as_distinct_stages(tmp_path: Path) -> None:
+    """Regression: both FastQC passes record metrics under the same tool
+    name, so the raw (01-qc_raw) and trimmed (03-qc_trimmed) passes must
+    surface as distinct stage entries, not merged or dropped -- FastQC
+    previously never appeared in either report at all."""
     metrics_dir = tmp_path / "metrics"
-    _write_metric(metrics_dir / "qc" / "raw" / "sample1" / "fastqc.sample1.1.metrics.json",
+    _write_metric(metrics_dir / "01-qc_raw" / "sample1" / "fastqc.sample1.1.metrics.json",
                   "fastqc", runtime = 2.0, user_cpu = 1.0, system_cpu = 0.0, peak_mb = 50.0, tool_version = "FastQC v0.13.0")
-    _write_metric(metrics_dir / "qc" / "trimmed" / "sample1" / "fastqc.sample1.1.metrics.json",
+    _write_metric(metrics_dir / "03-qc_trimmed" / "sample1" / "fastqc.sample1.1.metrics.json",
                   "fastqc", runtime = 3.0, user_cpu = 1.5, system_cpu = 0.0, peak_mb = 55.0, tool_version = "FastQC v0.13.0")
 
     summaries = collect_compute_summary(metrics_dir)
     stages = {s.stage: s for s in summaries}
+    assert "01-qc_raw" in stages
+    assert "03-qc_trimmed" in stages
+    assert stages["01-qc_raw"].invocation_count == 1
+    assert stages["01-qc_raw"].total_runtime_seconds == 2.0
+    assert stages["03-qc_trimmed"].total_runtime_seconds == 3.0
+
+def test_collect_compute_summary_still_finds_a_nested_stage_layout(tmp_path: Path) -> None:
+    """The metrics glob stays recursive: a stage nested one level deeper
+    (metrics/a/b/{sample}/file) is reported as "a/b", never silently
+    missed."""
+    metrics_dir = tmp_path / "metrics"
+    _write_metric(metrics_dir / "qc" / "raw" / "sample1" / "fastqc.sample1.1.metrics.json",
+                  "fastqc", runtime = 2.0, user_cpu = 1.0, system_cpu = 0.0, peak_mb = 50.0, tool_version = "FastQC v0.13.0")
+
+    stages = {s.stage: s for s in collect_compute_summary(metrics_dir)}
     assert "qc/raw" in stages
-    assert "qc/trimmed" in stages
-    assert stages["qc/raw"].invocation_count == 1
-    assert stages["qc/raw"].total_runtime_seconds == 2.0
-    assert stages["qc/trimmed"].total_runtime_seconds == 3.0
 
 def test_collect_compute_summary_aggregates_the_real_first_detected_tool_version(tmp_path: Path) -> None:
     metrics_dir = tmp_path / "metrics"
