@@ -10,8 +10,10 @@ per-sample design) lives in that sample's own report, not here.
 
 # Imports
 from pathlib import Path
+from mitopipeline.utils.archival.field_hints import RERUN_NOTE, field_hint
 from mitopipeline.utils.reporting.markdown_report import (
     basename_code,
+    escape_markdown_cell,
     file_link,
     format_bp,
     format_duration,
@@ -19,6 +21,7 @@ from mitopipeline.utils.reporting.markdown_report import (
     format_memory_mb,
     format_percent,
     humanize_enum,
+    humanize_list,
     markdown_table,
     pluralize,
     render_machine_info_rows,
@@ -149,12 +152,45 @@ def render_sample_status_section(run_data: RunReportData, report_path: Path) -> 
         ])
     return ["## Sample Status", "", markdown_table(["Sample", "Verdict", "Rescued", "Report"], rows), ""]
 
+def render_bioproject_summary_section(run_data: RunReportData) -> list[str]:
+    """
+    Renders this run's own real, run-level BioProject preparation
+    status -- one record for the whole run, never per-sample, so it
+    lives in its own subsection rather than the per-sample archival
+    table above.
+    """
+    lines = ["### BioProject", ""]
+    bioproject = run_data.bioproject
+    if bioproject is None:
+        return [*lines, "_BioProject preparation was not available for this run._", ""]
+
+    rows = [
+        ["Title", wrap_cell_text(bioproject.title or "Not set", width = 48)],
+        ["Organism", escape_markdown_cell(bioproject.organism or "Not set")],
+        ["Sample scope", escape_markdown_cell(bioproject.sample_scope or "Not set")],
+        ["Release status", escape_markdown_cell(bioproject.release_status or "Not set")],
+        ["Review status",
+         status_badge(bioproject.review_status) if bioproject.review_status else "Not available"],
+    ]
+    lines += [markdown_table(["Field", "Value"], rows), ""]
+
+    missing_fields = [f for f in bioproject.missing_fields.split(";") if f]
+    if missing_fields:
+        lines += [f"**Needs review:** {humanize_list(bioproject.missing_fields)}", ""]
+        lines += [f"**How to complete:** {RERUN_NOTE}", ""]
+        lines += [f"- `{field}`: {field_hint(field)}" for field in missing_fields]
+        lines += [""]
+    return lines
+
 def render_archival_summary_section(run_data: RunReportData) -> list[str]:
     """Renders the run-level NCBI archival preparation summary."""
     lines = ["## NCBI Archival Summary", ""]
     samples_with_archival = [s for s in run_data.samples if s.archival is not None]
-    if not samples_with_archival:
+    if not samples_with_archival and run_data.bioproject is None:
         return [*lines, "_Archival preparation was not available for this run._", ""]
+
+    if not samples_with_archival:
+        return [*lines, "_Per-sample archival preparation was not available for this run._", "", *render_bioproject_summary_section(run_data)]
 
     rows = [
         ["Samples ready for submission review", f"{run_data.archival_ready_count} / {len(run_data.samples)}"],
@@ -171,6 +207,7 @@ def render_archival_summary_section(run_data: RunReportData) -> list[str]:
         *lines, markdown_table(["Metric", "Value"], rows), "",
         "### Per-Sample Archival Status", "",
         markdown_table(["Sample", "SRA", "BioSample", "GenBank", "Ready"], per_sample_rows), "",
+        *render_bioproject_summary_section(run_data),
         "This pipeline prepares submission-ready files only; it never submits to NCBI directly.", "",
     ]
 

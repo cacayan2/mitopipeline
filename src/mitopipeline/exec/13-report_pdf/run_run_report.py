@@ -30,6 +30,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--sample-id", type = str, required = True, action = "append", help = "A sample id to include. Repeat for every sample in the run.")
     parser.add_argument("--runtime-manifest", type = Path, required = True, help = "The runtime manifest TSV.")
     parser.add_argument("--job-dir", type = Path, required = True, help = "The pipeline job's own output directory, used to resolve every per-sample result JSON by its known stage-relative path.")
+    parser.add_argument("--bioproject-metadata-json", type = Path, default = None, help = "The run's own real BioProject metadata JSON, written by run_archival_validation.py, or omit if the archival_validation stage didn't run.")
     parser.add_argument("--phylogeny-model", type = str, default = None, help = "The substitution model IQ-TREE was run with, if known -- the same config value applies uniformly to every sample's own tree.")
     parser.add_argument("--pandoc-bin", type = str, default = "pandoc", help = "The pandoc executable name. Defaults to 'pandoc'.")
     parser.add_argument("--pdf-engine", type = str, default = "typst", help = "The PDF engine pandoc should use. Defaults to 'typst'.")
@@ -83,6 +84,7 @@ def main() -> int:
         current_metadata_json = args.job_dir / "current_metadata.json",
         historical_metadata_json = args.job_dir / "historical_metadata.json",
         global_log_file = args.global_log_file,
+        bioproject_metadata_json = args.bioproject_metadata_json,
     )
 
     markdown_path = args.output_dir / f"{args.job_id}.run_report.md"

@@ -11,7 +11,7 @@ there is no batch-level phylogeny artifact anymore.
 # Imports
 from pathlib import Path
 from mitopipeline.utils.reporting.compute_metrics import MachineInfo, StageComputeSummary
-from mitopipeline.utils.reporting.models import JobMetadataSummary, RunReportData, SampleReportData
+from mitopipeline.utils.reporting.models import BioProjectSummary, JobMetadataSummary, RunReportData, SampleReportData
 from mitopipeline.utils.reporting.run_report import render_run_report
 
 def _sample(sample_id: str, verdict: str | None) -> SampleReportData:
@@ -137,6 +137,31 @@ def test_job_metadata_section_shows_gpu_with_not_utilized_disclaimer() -> None:
     text = "\n".join(render_job_metadata_section(run_data))
     assert "NVIDIA GeForce RTX 3080" in text
     assert "not utilized by any part of this pipeline" in text
+
+def test_archival_summary_shows_bioproject_missing_fields_and_hints(tmp_path: Path) -> None:
+    bioproject = BioProjectSummary(
+        title = "Mitochondrial genome assembly of Danio rerio", organism = "Danio rerio",
+        sample_scope = "Monoisolate", release_status = "HUP",
+        review_status = "MANUAL_REVIEW_REQUIRED", missing_fields = "publication;funding",
+    )
+    run_data = RunReportData(job_id = "job1", generated_at = "now", samples = (), bioproject = bioproject)
+    text = render_run_report(run_data, tmp_path / "run.report.md")
+    assert "### BioProject" in text
+    assert "Danio rerio" in text
+    assert "Publication, Funding" in text
+    assert "**How to complete:**" in text
+    assert "`publication`: " in text
+    assert "`funding`: " in text
+
+def test_archival_summary_shows_bioproject_not_available_when_missing(tmp_path: Path) -> None:
+    from mitopipeline.utils.reporting.models import ArchivalSummary
+    sample = SampleReportData(
+        sample_id = "s1", metadata = {}, fastp_stats = None, assembly = None, blast = None, annotation = None,
+        overall_verdict = None, archival = ArchivalSummary(sra_review_status = "READY"),
+    )
+    run_data = RunReportData(job_id = "job1", generated_at = "now", samples = (sample,))
+    text = render_run_report(run_data, tmp_path / "run.report.md")
+    assert "_BioProject preparation was not available for this run._" in text
 
 def test_job_metadata_section_shows_batch_wide_compute_summary_and_access_paths(tmp_path: Path) -> None:
     from mitopipeline.utils.reporting.run_report import render_job_metadata_section

@@ -79,6 +79,7 @@ def main() -> int:
         genbank_metadata_tsv, args.job_dir, table2asn_results_dir = args.table2asn_results_dir, logger = logger,
     )
     write_archival_validation(validation_records, args.output_dir / "archival_validation.tsv", logger = logger)
+    bioproject_dict = bioproject.to_dict()
 
     real_files = [args.sra_metadata_tsv, args.biosample_metadata_tsv, genbank_metadata_tsv,
                   args.output_dir / "bioproject_metadata.json"]
@@ -94,7 +95,8 @@ def main() -> int:
 
     checksum_records = build_checksum_manifest(real_files, base_directory = args.job_dir)
     write_checksum_manifest(checksum_records, args.output_dir / "md5_checksums.tsv", logger = logger)
-    write_submission_checklist(validation_records, args.job_id, args.output_dir / "submission_checklist.md", logger = logger)
+    write_submission_checklist(validation_records, args.job_id, args.output_dir / "submission_checklist.md",
+                                bioproject = bioproject_dict, logger = logger)
 
     return 0
 

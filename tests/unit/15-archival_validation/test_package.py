@@ -90,6 +90,27 @@ def test_submission_checklist_omits_how_to_complete_when_nothing_missing() -> No
     checklist = render_submission_checklist(records, "job1")
     assert "**How to complete:**" not in checklist
 
+def test_submission_checklist_includes_bioproject_section_with_hints() -> None:
+    bioproject = {
+        "sample_scope": "Monoisolate", "review_status": "MANUAL_REVIEW_REQUIRED",
+        "missing_metadata": "publication;funding",
+    }
+    checklist = render_submission_checklist([], "job1", bioproject = bioproject)
+    assert "## BioProject (Monoisolate)" in checklist
+    assert "[ ] Ready for submission review" in checklist
+    assert "`publication`: " in checklist
+    assert "`funding`: " in checklist
+
+def test_submission_checklist_marks_bioproject_ready_with_no_hints() -> None:
+    bioproject = {"sample_scope": "Monoisolate", "review_status": "READY", "missing_metadata": ""}
+    checklist = render_submission_checklist([], "job1", bioproject = bioproject)
+    assert "[x] Ready for submission review" in checklist
+    assert "**How to complete:**" not in checklist
+
+def test_submission_checklist_omits_bioproject_section_when_absent() -> None:
+    checklist = render_submission_checklist([], "job1")
+    assert "## BioProject" not in checklist
+
 def test_write_submission_checklist_writes_a_real_file(tmp_path: Path) -> None:
     records = [{"sample_id": "sample1", "organism": "Danio rerio", "raw_fastq_ready": "True",
                "assembly_ready": "True", "annotation_ready": "True", "sra_ready": "True",

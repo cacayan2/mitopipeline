@@ -51,9 +51,15 @@ def test_full_validation_and_packaging(tmp_path: Path, monkeypatch: pytest.Monke
     assert (output_dir / "genbank_metadata.tsv").is_file()
     assert (output_dir / "archival_validation.tsv").is_file()
     assert (output_dir / "md5_checksums.tsv").is_file()
+    assert (output_dir / "bioproject_metadata.json").is_file()
+    bioproject = json.loads((output_dir / "bioproject_metadata.json").read_text())
+    assert bioproject["review_status"] == "MANUAL_REVIEW_REQUIRED"
+    assert "publication" in bioproject["missing_metadata"]
     checklist = (output_dir / "submission_checklist.md").read_text()
     assert "sample1" in checklist
     assert "annotation_gff" in checklist or "GenBank needs review" in checklist
+    assert "## BioProject" in checklist
+    assert "`publication`: " in checklist
 
 def test_handles_no_samples_gracefully(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     manifest = tmp_path / "manifest.tsv"

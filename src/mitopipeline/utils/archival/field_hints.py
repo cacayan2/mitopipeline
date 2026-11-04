@@ -46,6 +46,10 @@ FIELD_HINTS: dict[str, str] = {
     "topology": "`circular` or `linear` -- always derived automatically from this sample's own real assembly status, never a manifest column or config value to set.",
     "assembly_method": "The real assembly tool/version used. Add an `assembly_method` manifest column (per sample), or set `stage_options.archival.biosample.assembly_method`.",
     "annotation_method": "The real annotation tool/version used. Add an `annotation_method` manifest column (per sample), or set `stage_options.archival.biosample.annotation_method`.",
+    # BioProject (run-level, one record per run -- never per-sample; set via stage_options.archival.bioproject)
+    "publication": "A real citation for this project, if one exists yet. Set `stage_options.archival.bioproject.publication`, or leave blank if nothing is on file (never fabricated).",
+    "funding": "Real funding/grant information, if any is on file. Set `stage_options.archival.bioproject.funding`, or leave blank if nothing is on file (never fabricated).",
+    "sample_ids": "No sample resolved an organism/sample id for this run. Check that the runtime manifest's own `sample_id` column is populated and that at least one sample produced a real GenBank record.",
 }
 
 RERUN_NOTE = (

@@ -250,6 +250,9 @@ stage_options:
         # bare "typst" once the system package is healthy again.
         engine: /home/eacac/.local/bin/typst
   archival:
+    bioproject:
+      publication: null
+      funding: null
     sra:
       library_strategy: WGS
       library_source: GENOMIC

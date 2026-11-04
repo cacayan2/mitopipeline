@@ -41,6 +41,14 @@ def test_real_publication_and_funding_clears_missing_metadata() -> None:
     assert "publication" not in record.missing_metadata
     assert "funding" not in record.missing_metadata
 
+def test_missing_metadata_sets_manual_review_required() -> None:
+    record = build_bioproject_metadata({"s1": "Danio rerio"})
+    assert record.review_status == "MANUAL_REVIEW_REQUIRED"
+
+def test_no_missing_metadata_sets_ready() -> None:
+    record = build_bioproject_metadata({"s1": "Danio rerio"}, publication = "Smith et al. 2026", funding = "NSF DEB-1234567")
+    assert record.review_status == "READY"
+
 def test_no_samples_tracked_as_missing() -> None:
     record = build_bioproject_metadata({})
     assert "sample_ids" in record.missing_metadata

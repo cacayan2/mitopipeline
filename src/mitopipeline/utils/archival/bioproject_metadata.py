@@ -18,6 +18,7 @@ from dataclasses import asdict, dataclass
 import json
 from logging import Logger
 from pathlib import Path
+from mitopipeline.utils.archival.models import MANUAL_REVIEW_REQUIRED, READY
 
 # The real NCBI BioProject "Project Data Type" controlled-vocabulary
 # value this project's own output actually is (genome assembly from
@@ -62,6 +63,7 @@ class BioProjectMetadata:
         publication (str): A real citation, or "" when none exists yet (never invented).
         funding (str): Real funding/grant information, or "" when none is on file (never invented).
         missing_metadata (str): A semicolon-joined list of fields genuinely missing, for honest tracking (never silently blank).
+        review_status (str): READY when missing_metadata is empty, MANUAL_REVIEW_REQUIRED otherwise -- matching the SRA/BioSample/GenBank convention so this run-level record carries the same real reviewability signal, surfaced in the reports and submission checklist.
     """
     title: str
     description: str
@@ -73,6 +75,7 @@ class BioProjectMetadata:
     publication: str
     funding: str
     missing_metadata: str
+    review_status: str
 
     def to_dict(self) -> dict:
         """Serializes this metadata to a JSON-safe dictionary."""
@@ -134,6 +137,7 @@ def build_bioproject_metadata(sample_organisms: dict[str, str], title: str | Non
         # the investigator can actually make.
         release_status = "HUP", publication = publication, funding = funding,
         missing_metadata = ";".join(missing),
+        review_status = READY if not missing else MANUAL_REVIEW_REQUIRED,
     )
 
 

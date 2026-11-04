@@ -108,6 +108,29 @@ class ArchivalSummary:
         return all(s == "READY" for s in statuses)
 
 @dataclass(frozen = True, slots = True)
+class BioProjectSummary:
+    """
+    The run's own real, run-level NCBI BioProject preparation status
+    -- one record for the whole run, never per-sample (a BioProject
+    represents the research project itself, read from
+    bioproject_metadata.py's own real record).
+
+    Attributes:
+        title (str): The real project title.
+        organism (str): The real organism or taxonomic branch this project covers.
+        sample_scope (str): NCBI's own "Sample Scope" value ("Monoisolate"/"Multiisolate"/"Multispecies").
+        release_status (str): NCBI's own real release status (e.g. "HUP").
+        review_status (str): READY or MANUAL_REVIEW_REQUIRED.
+        missing_fields (str): The record's own missing_metadata, semicolon-delimited.
+    """
+    title: str = ""
+    organism: str = ""
+    sample_scope: str = ""
+    release_status: str = ""
+    review_status: str | None = None
+    missing_fields: str = ""
+
+@dataclass(frozen = True, slots = True)
 class ReadQCSummary:
     """
     One read-set's own real FastQC-derived QC summary -- raw, trimmed,
@@ -252,6 +275,7 @@ class RunReportData:
         compute_summary (tuple[StageComputeSummary, ...]): The real batch-wide compute cost per stage, across every sample.
         job_dir (Path | None): The job's own output root, for linking to logs/metrics directly.
         global_log_file (Path | None): The job's own shared global log file, or None.
+        bioproject (BioProjectSummary | None): This run's own real BioProject preparation status, or None when the archival_validation stage didn't run.
     """
     job_id: str
     generated_at: str
@@ -261,6 +285,7 @@ class RunReportData:
     job_dir: Path | None = None
     global_log_file: Path | None = None
     machine_info: MachineInfo | None = None
+    bioproject: BioProjectSummary | None = None
 
     @property
     def verdict_counts(self) -> dict[str, int]:

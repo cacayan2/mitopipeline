@@ -21,6 +21,7 @@ from mitopipeline.utils.reporting.models import (
     AnnotationConfigSummary,
     ArchivalSummary,
     AssemblyConfigSummary,
+    BioProjectSummary,
     BlastConfigSummary,
     JobMetadataSummary,
     PhylogenySummary,
@@ -185,6 +186,27 @@ def collect_archival_summary(sample_id: str, sra_metadata_tsv: str | Path | None
         biosample_missing_fields = biosample_row.get("missing_fields", "") if biosample_row else "",
         genbank_review_status = genbank_record.get("review_status") if genbank_record else None,
         genbank_missing = ";".join(genbank_missing_parts),
+    )
+
+def collect_bioproject_summary(bioproject_metadata_json: str | Path | None = None) -> BioProjectSummary | None:
+    """
+    Reads this run's own real, run-level BioProject preparation
+    status from the real record build_bioproject_metadata() wrote --
+    one record for the whole run, never per-sample.
+
+    Args:
+        bioproject_metadata_json (str | Path | None): The run's own real BioProject metadata JSON, written by run_archival_validation.py.
+
+    Returns:
+        BioProjectSummary | None: The summary, or None when the archival_validation stage didn't run.
+    """
+    record = _read_json(Path(bioproject_metadata_json) if bioproject_metadata_json else None)
+    if record is None:
+        return None
+    return BioProjectSummary(
+        title = record.get("title", ""), organism = record.get("organism", ""),
+        sample_scope = record.get("sample_scope", ""), release_status = record.get("release_status", ""),
+        review_status = record.get("review_status"), missing_fields = record.get("missing_metadata", ""),
     )
 
 def collect_sample_report_data(sample_id: str, runtime_manifest_path: str | Path,
@@ -539,7 +561,8 @@ def collect_run_report_data(job_id: str, generated_at: str, samples: list[Sample
                              job_dir: str | Path | None = None,
                              current_metadata_json: str | Path | None = None,
                              historical_metadata_json: str | Path | None = None,
-                             global_log_file: str | Path | None = None) -> RunReportData:
+                             global_log_file: str | Path | None = None,
+                             bioproject_metadata_json: str | Path | None = None) -> RunReportData:
     """
     Assembles the run-level report data from every sample's own
     already-collected report data (each one carrying its own real
@@ -553,6 +576,7 @@ def collect_run_report_data(job_id: str, generated_at: str, samples: list[Sample
         current_metadata_json (str | Path | None): The job's own current_metadata.json, or None if unavailable.
         historical_metadata_json (str | Path | None): The job's own historical_metadata.json, or None if unavailable.
         global_log_file (str | Path | None): The job's own shared global log file, or None if unavailable.
+        bioproject_metadata_json (str | Path | None): The run's own real BioProject metadata JSON, written by run_archival_validation.py, or None if unavailable.
 
     Returns:
         RunReportData: The assembled run-level report data.
@@ -560,6 +584,7 @@ def collect_run_report_data(job_id: str, generated_at: str, samples: list[Sample
     return RunReportData(
         job_id = job_id, generated_at = generated_at, samples = tuple(samples),
         job_metadata = collect_job_metadata(current_metadata_json, historical_metadata_json, job_id),
+        bioproject = collect_bioproject_summary(bioproject_metadata_json),
         compute_summary = collect_compute_summary(Path(job_dir) / "metrics") if job_dir else (),
         job_dir = Path(job_dir) if job_dir else None,
         global_log_file = Path(global_log_file) if global_log_file else None,

@@ -161,6 +161,8 @@ def _run_report_inputs(wildcards):
         inputs["biosample_archival_done"] = str(JOB_DIR / "14b-biosample_archival" / "biosample_archival.done")
     if stage_enabled("14c-mitogenome_archival"):
         inputs["mitogenome_archival_done"] = sample_target("14c-mitogenome_archival", "{sample}.mitogenome_archival.done")
+    if stage_enabled("15-archival_validation"):
+        inputs["archival_validation_done"] = str(JOB_DIR / "15-archival_validation" / "archival_validation.done")
     return inputs
 
 rule run_report:
@@ -174,6 +176,8 @@ rule run_report:
         runtime_manifest = str(RUNTIME_MANIFEST_PATH),
         job_dir = str(JOB_DIR),
         phylogeny_model = config["stage_options"]["phylogeny"]["iqtree"].get("model", "") if stage_enabled("11-phylogeny") else "",
+        bioproject_metadata_json = (str(JOB_DIR / "15-archival_validation" / "bioproject_metadata.json")
+                                    if stage_enabled("15-archival_validation") else ""),
         pandoc_bin = config["stage_options"]["report_export"]["pandoc"]["bin"],
         pdf_engine = config["stage_options"]["report_export"]["pandoc"]["engine"],
         output_dir = str(JOB_DIR / "13-report_pdf"),
@@ -188,12 +192,17 @@ rule run_report:
         if [ -n "{params.phylogeny_model}" ]; then
             MODEL_ARGS="--phylogeny-model {params.phylogeny_model:q}"
         fi
+        BIOPROJECT_ARGS=""
+        if [ -n "{params.bioproject_metadata_json}" ]; then
+            BIOPROJECT_ARGS="--bioproject-metadata-json {params.bioproject_metadata_json:q}"
+        fi
         {PYTHON_BIN:q} {params.exec_script:q} \
             --job-id {params.job_id:q} \
             {params.sample_id_flags} \
             --runtime-manifest {params.runtime_manifest:q} \
             --job-dir {params.job_dir:q} \
             $MODEL_ARGS \
+            $BIOPROJECT_ARGS \
             --pandoc-bin {params.pandoc_bin:q} \
             --pdf-engine {params.pdf_engine:q} \
             --output-dir {params.output_dir:q} \

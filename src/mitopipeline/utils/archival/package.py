@@ -59,7 +59,8 @@ def write_checksum_manifest(records: list[dict[str, str]], output_path: str | Pa
         writer.writerows(records)
     if logger is not None: logger.info(f"Wrote checksum manifest ({len(records)} file(s)) to {output_path}.")
 
-def render_submission_checklist(validation_records: list[dict[str, str]], job_id: str) -> str:
+def render_submission_checklist(validation_records: list[dict[str, str]], job_id: str,
+                                 bioproject: dict[str, str] | None = None) -> str:
     """
     Renders a human-readable submission checklist -- the real
     "Submission Blockers" report the project's own NCBI archival
@@ -69,6 +70,7 @@ def render_submission_checklist(validation_records: list[dict[str, str]], job_id
     Args:
         validation_records (list[dict[str, str]]): The records built by validate_archival_readiness()/build_archival_validation().
         job_id (str): The pipeline job id.
+        bioproject (dict[str, str] | None): The run's own real BioProject metadata record (BioProjectMetadata.to_dict()), or None when archival_validation didn't build one.
 
     Returns:
         str: The checklist, as Markdown text.
@@ -82,6 +84,19 @@ def render_submission_checklist(validation_records: list[dict[str, str]], job_id
             "human review and upload through the NCBI Submission Portal."
         ), "",
     ]
+
+    if bioproject is not None:
+        lines.append(f"## BioProject ({bioproject.get('sample_scope', 'scope not set')})")
+        lines.append("")
+        lines.append(f"- [{'x' if bioproject.get('review_status') == 'READY' else ' '}] Ready for submission review")
+        bioproject_missing = [f for f in bioproject.get("missing_metadata", "").split(";") if f]
+        if bioproject_missing:
+            lines.append("")
+            lines.append(f"**How to complete:** {RERUN_NOTE}")
+            lines.append("")
+            for field in bioproject_missing:
+                lines.append(f"- `{field}`: {field_hint(field)}")
+        lines.append("")
 
     for record in validation_records:
         lines.append(f"## {record['sample_id']} ({record['organism'] or 'organism not set'})")
@@ -112,7 +127,7 @@ def render_submission_checklist(validation_records: list[dict[str, str]], job_id
     return "\n".join(lines)
 
 def write_submission_checklist(validation_records: list[dict[str, str]], job_id: str, output_path: str | Path,
-                                logger: Logger | None = None) -> Path:
+                                bioproject: dict[str, str] | None = None, logger: Logger | None = None) -> Path:
     """
     Writes the submission checklist to disk.
 
@@ -120,6 +135,7 @@ def write_submission_checklist(validation_records: list[dict[str, str]], job_id:
         validation_records (list[dict[str, str]]): The records built by build_archival_validation().
         job_id (str): The pipeline job id.
         output_path (str | Path): Where to write the checklist.
+        bioproject (dict[str, str] | None): The run's own real BioProject metadata record, or None when archival_validation didn't build one.
         logger (Logger | None): Logger to use. Defaults to None.
 
     Returns:
@@ -127,6 +143,6 @@ def write_submission_checklist(validation_records: list[dict[str, str]], job_id:
     """
     output_path = Path(output_path)
     output_path.parent.mkdir(parents = True, exist_ok = True)
-    output_path.write_text(render_submission_checklist(validation_records, job_id), encoding = "utf-8")
+    output_path.write_text(render_submission_checklist(validation_records, job_id, bioproject = bioproject), encoding = "utf-8")
     if logger is not None: logger.info(f"Wrote submission checklist to {output_path}.")
     return output_path

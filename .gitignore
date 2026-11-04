@@ -17,3 +17,5 @@ resources/
 tests/fixtures/common_carp_001/
 # setuptools build artifact from pip install -e .
 build/
+# Emil's own in-progress documentation drafts -- never pushed.
+zmisc/docs/*_guide.pdf

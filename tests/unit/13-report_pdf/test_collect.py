@@ -13,6 +13,7 @@ import zipfile
 from pathlib import Path
 import pytest
 from mitopipeline.utils.reporting.collect import (
+    collect_bioproject_summary,
     collect_job_metadata,
     collect_phylogeny_summary,
     collect_read_qc,
@@ -331,6 +332,34 @@ def test_collect_run_report_data_joins_samples(tmp_path: Path) -> None:
     run_data = collect_run_report_data("job1", "2026-10-27T00:00:00Z", [sample])
     assert run_data.job_id == "job1"
     assert len(run_data.samples) == 1
+
+def test_collect_bioproject_summary_reads_the_real_record(tmp_path: Path) -> None:
+    path = _write_json(tmp_path / "bioproject_metadata.json", {
+        "title": "Mitochondrial genome assembly of Danio rerio", "organism": "Danio rerio",
+        "sample_scope": "Monoisolate", "release_status": "HUP",
+        "review_status": "MANUAL_REVIEW_REQUIRED", "missing_metadata": "publication;funding",
+    })
+    summary = collect_bioproject_summary(path)
+    assert summary is not None
+    assert summary.organism == "Danio rerio"
+    assert summary.review_status == "MANUAL_REVIEW_REQUIRED"
+    assert summary.missing_fields == "publication;funding"
+
+def test_collect_bioproject_summary_none_when_missing(tmp_path: Path) -> None:
+    assert collect_bioproject_summary(None) is None
+    assert collect_bioproject_summary(tmp_path / "does_not_exist.json") is None
+
+def test_collect_run_report_data_wires_bioproject_summary(tmp_path: Path) -> None:
+    manifest = tmp_path / "manifest.tsv"
+    manifest.write_text("sample_id\tr1\tr2\nsample1\ta\tb\n")
+    sample = collect_sample_report_data("sample1", manifest)
+    bioproject_json = _write_json(tmp_path / "bioproject_metadata.json", {
+        "organism": "Danio rerio", "review_status": "READY", "missing_metadata": "",
+    })
+    run_data = collect_run_report_data("job1", "2026-10-27T00:00:00Z", [sample],
+                                        bioproject_metadata_json = bioproject_json)
+    assert run_data.bioproject is not None
+    assert run_data.bioproject.review_status == "READY"
 
 def test_collect_job_metadata_merges_current_and_historical(tmp_path: Path) -> None:
     current = _write_json(tmp_path / "current_metadata.json", {

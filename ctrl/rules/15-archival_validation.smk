@@ -8,6 +8,8 @@ job-level, depends on every prior archival stage having run for
 every sample.
 """
 
+BIOPROJECT_DEFAULTS = config["stage_options"]["archival"].get("bioproject", {})
+
 rule archival_validation:
     input:
         sra_done = str(JOB_DIR / "14a-sra_archival" / "sra_archival.done"),
@@ -27,6 +29,8 @@ rule archival_validation:
         genbank_records_dir = str(JOB_DIR / "14c-mitogenome_archival"),
         table2asn_results_dir = (str(JOB_DIR / "16-table2asn_validation") if stage_enabled("16-table2asn_validation") else ""),
         job_dir = str(JOB_DIR),
+        publication = str(BIOPROJECT_DEFAULTS.get("publication") or ""),
+        funding = str(BIOPROJECT_DEFAULTS.get("funding") or ""),
         output_dir = str(JOB_DIR / "15-archival_validation"),
         log_file = str(JOB_DIR / "logs" / "15-archival_validation" / "archival_validation.log"),
         global_log_file = str(GLOBAL_LOG_FILE),
@@ -47,6 +51,8 @@ rule archival_validation:
             --genbank-records-dir {params.genbank_records_dir:q} \
             $TABLE2ASN_ARGS \
             --job-dir {params.job_dir:q} \
+            --publication {params.publication:q} \
+            --funding {params.funding:q} \
             --output-dir {params.output_dir:q} \
             --log-file {params.log_file:q} \
             --global-log-file {params.global_log_file:q} \

@@ -92,3 +92,28 @@ def test_phylogeny_model_flag_is_accepted_and_does_not_crash(tmp_path: Path, mon
 
     assert run_run_report.main() == 0
     assert (output_dir / "job1.run_report.md").is_file()
+
+def test_bioproject_metadata_flag_surfaces_in_the_run_report(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    manifest = tmp_path / "manifest.tsv"
+    manifest.write_text("sample_id\tr1\tr2\nsample1\ta\tb\n")
+    job_dir = tmp_path / "job"
+    output_dir = tmp_path / "output"
+    bioproject_json = _write_json(tmp_path / "bioproject_metadata.json", {
+        "organism": "Danio rerio", "sample_scope": "Monoisolate",
+        "review_status": "MANUAL_REVIEW_REQUIRED", "missing_metadata": "publication;funding",
+    })
+
+    monkeypatch.setattr(sys, "argv", [
+        "run_run_report.py", "--job-id", "job1", "--sample-id", "sample1",
+        "--runtime-manifest", str(manifest), "--job-dir", str(job_dir),
+        "--bioproject-metadata-json", str(bioproject_json),
+        "--output-dir", str(output_dir),
+        "--log-file", str(tmp_path / "logs" / "run_report.log"),
+        "--global-log-file", str(tmp_path / "logs" / "global.log"),
+    ])
+
+    assert run_run_report.main() == 0
+    text = (output_dir / "job1.run_report.md").read_text()
+    assert "### BioProject" in text
+    assert "Danio rerio" in text
+    assert "`publication`: " in text
