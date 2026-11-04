@@ -63,7 +63,7 @@ def _fallback(sample_id: str, scientific_name: str, gene: str, reason: str) -> S
     )
 
 def select_seed(sample_id: str,
-                 scientific_name: str,
+                 scientific_name: str | None,
                  database_dir: Path,
                  output_dir: Path,
                  logger: logging.Logger,
@@ -83,7 +83,7 @@ def select_seed(sample_id: str,
 
     Args:
         sample_id (str): The sample to select a seed for.
-        scientific_name (str): The sample's scientific name.
+        scientific_name (str | None): The sample's scientific name. None or blank falls back to GetOrganelle's default database without querying MitoFish.
         database_dir (Path): The path to the local MitoFish reference database.
         output_dir (Path): The directory to write the selected seed FASTA to.
         logger (logging.Logger): The logger to use for logging messages.
@@ -94,6 +94,16 @@ def select_seed(sample_id: str,
         is True and fasta_path is None when no locus could be resolved.
     """
     context = f"{{{sample_id}}}"
+
+    # A sample with no scientific name (a run launched from an input
+    # directory with no manifest, or a manifest row with blank organism/
+    # genus/species) has nothing to look up: falling back immediately
+    # avoids a pointless MitoFish query per locus and names the real
+    # reason in the selection record.
+    if scientific_name is None or not scientific_name.strip():
+        logger.warning(f"{context} No scientific name for this sample; falling back to GetOrganelle's default database.")
+        return _fallback(sample_id, scientific_name or "", loci[0] if loci else DEFAULT_SEED_LOCUS, "no_scientific_name")
+
     lookup = MitoFishReferenceLookup(database_dir = database_dir, logger = logger, sample_id = sample_id)
 
     for gene in loci:

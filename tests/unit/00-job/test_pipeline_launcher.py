@@ -18,8 +18,10 @@ import sys
 import pytest
 from mitopipeline.launcher.pipeline_launcher import (
     _configured_job_id, _job_configuration, _rerender_run_report_with_final_status,
-    load_config, parse_args, run_snakemake,
+    discover_fastq_pairs, load_config, parse_args, prepare_runtime_manifest, run_snakemake,
+    write_validated_manifest,
 )
+from mitopipeline.models.sample.sample import Sample
 
 def test_loads_a_real_yaml_config_without_a_job(tmp_path: Path) -> None:
     config_path = tmp_path / "config.yaml"
@@ -134,6 +136,91 @@ def test_run_snakemake_passes_rerun_triggers_through_only_when_given(tmp_path: P
                   logger = logging.getLogger("test"), rerun_triggers = ["mtime"])
     command = captured_commands[1]
     assert command[command.index("--rerun-triggers") + 1] == "mtime"
+
+class _FakeDiscoveryJob:
+    """Only what discover_fastq_pairs()/write_*_manifest() touch: a logger."""
+    def __init__(self) -> None:
+        self.job_logger = logging.getLogger("test_discovery")
+
+def _touch_fastqs(directory: Path, names: list[str]) -> None:
+    directory.mkdir(parents = True, exist_ok = True)
+    for name in names:
+        (directory / name).write_bytes(b"")
+
+def test_discover_fastq_pairs_pairs_illumina_and_sra_style_names(tmp_path: Path) -> None:
+    """Regression: discover_fastq_pairs() crashed on its first line
+    (`fastq_files = list[Path] = []`, a chained assignment into the list
+    type, a real TypeError) so a manifest-less run could never start. Now
+    it pairs Illumina "_R1_001"/"_R2_001", bare "_R1"/"_R2" and SRA
+    "_1"/"_2" names, keying each pair on everything before the token."""
+    _touch_fastqs(tmp_path, [
+        "54_FMNH_124727_CGTGTAACTT-TTGTCACGTT_L001_R1_001.fastq.gz",
+        "54_FMNH_124727_CGTGTAACTT-TTGTCACGTT_L001_R2_001.fastq.gz",
+        "SRR000001_1.fastq.gz", "SRR000001_2.fastq.gz",
+        "tiny_R1.fq", "tiny_R2.fq",
+    ])
+    records = discover_fastq_pairs(tmp_path, _FakeDiscoveryJob())
+    by_id = {r["sample_id"]: r for r in records}
+    assert sorted(by_id) == ["54_FMNH_124727_CGTGTAACTT-TTGTCACGTT_L001", "SRR000001", "tiny"]
+    assert by_id["SRR000001"]["r1"].endswith("SRR000001_1.fastq.gz")
+    assert by_id["SRR000001"]["r2"].endswith("SRR000001_2.fastq.gz")
+    assert by_id["tiny"]["r1"].endswith("tiny_R1.fq")
+    assert all(r["source"] == "discovered_fastq" for r in records)
+
+def test_discover_fastq_pairs_does_not_mistake_an_inner_underscore_digit_for_the_mate_token(tmp_path: Path) -> None:
+    """The old substring check split "FMNH_124727..." at the first "_1"; the
+    mate token must sit right before the extension (or "_001")."""
+    _touch_fastqs(tmp_path, ["FMNH_124727_R1.fastq.gz", "FMNH_124727_R2.fastq.gz"])
+    records = discover_fastq_pairs(tmp_path, _FakeDiscoveryJob())
+    assert [r["sample_id"] for r in records] == ["FMNH_124727"]
+
+def test_discover_fastq_pairs_rejects_a_missing_mate(tmp_path: Path) -> None:
+    _touch_fastqs(tmp_path, ["a_R1.fastq.gz", "a_R2.fastq.gz", "b_R1.fastq.gz"])
+    with pytest.raises(SystemExit):
+        discover_fastq_pairs(tmp_path, _FakeDiscoveryJob())
+
+def test_discover_fastq_pairs_rejects_an_empty_or_missing_directory(tmp_path: Path) -> None:
+    with pytest.raises(SystemExit):
+        discover_fastq_pairs(tmp_path / "missing", _FakeDiscoveryJob())
+    _touch_fastqs(tmp_path / "unpaired", ["single.fastq.gz"])
+    with pytest.raises(SystemExit):
+        discover_fastq_pairs(tmp_path / "unpaired", _FakeDiscoveryJob())
+
+def test_validated_manifest_always_carries_an_organism_column(tmp_path: Path) -> None:
+    """The rule layer reads SAMPLE_TABLE["organism"] directly, so the
+    runtime manifest must always have the column: derived from genus/
+    species when no explicit organism was given, blank when nothing is
+    known (a discovered sample)."""
+    fastq = tmp_path / "x_R1.fastq.gz"; fastq.write_bytes(b"")
+    samples = [
+        Sample(sample_id = "named", r1 = fastq, r2 = fastq, metadata = {"organism": "Danio rerio"}),
+        Sample(sample_id = "derived", r1 = fastq, r2 = fastq, genus = "Danio", species = "rerio", metadata = {}),
+        Sample(sample_id = "nameless", r1 = fastq, r2 = fastq, metadata = {"source": "discovered_fastq"}),
+    ]
+    manifest = tmp_path / "runtime_manifest.tsv"
+    write_validated_manifest(manifest, samples, _FakeDiscoveryJob())
+
+    import pandas as pd
+    table = pd.read_csv(manifest, sep = "\t", dtype = str, keep_default_na = False).set_index("sample_id")
+    assert table.loc["named", "organism"] == "Danio rerio"
+    assert table.loc["derived", "organism"] == "Danio rerio"
+    assert table.loc["nameless", "organism"] == ""
+
+def test_prepare_runtime_manifest_runs_end_to_end_without_a_manifest(tmp_path: Path) -> None:
+    """The whole manifest-less path: discover from input_directory, write,
+    re-parse through the same validator a user manifest goes through, and
+    land a runtime manifest the Snakefile can load."""
+    input_dir = tmp_path / "raw"
+    _touch_fastqs(input_dir, ["s1_R1_001.fastq.gz", "s1_R2_001.fastq.gz"])
+    job = _FakeDiscoveryJob(); job.job_dir = tmp_path / "job"; job.job_dir.mkdir()
+    config = {"job_configuration": {"input_directory": str(input_dir)}}
+
+    runtime_manifest, samples = prepare_runtime_manifest(config, job)
+    assert runtime_manifest.is_file()
+    assert [s.sample_id for s in samples] == ["s1"]
+    assert samples[0].scientific_name is None
+    header = runtime_manifest.read_text().splitlines()[0].split("\t")
+    assert {"sample_id", "r1", "r2", "organism"} <= set(header)
 
 class _FakeJob:
     """A minimal stand-in exposing only what _rerender_run_report_with_final_status() actually touches -- never a real PipelineJob, which creates real directories and log files as a side effect of construction."""

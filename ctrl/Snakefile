@@ -72,6 +72,10 @@ SAMPLE_TABLE = pd.read_csv(
     keep_default_na = False
 )
 if "sample_id" not in SAMPLE_TABLE.columns: raise ValueError("Runtime manifest must include a 'sample_id' column.")
+# The launcher always writes an "organism" column (blank for a sample with no
+# known scientific name); tolerate its absence so a hand-written runtime
+# manifest still parses, with a blank meaning "no organism known".
+if "organism" not in SAMPLE_TABLE.columns: SAMPLE_TABLE["organism"] = ""
 SAMPLE_TABLE = SAMPLE_TABLE.set_index("sample_id", drop = False)
 SAMPLES = SAMPLE_TABLE.index.tolist()
 

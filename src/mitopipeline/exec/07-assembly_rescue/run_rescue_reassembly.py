@@ -95,8 +95,10 @@ def _resolve_reseed(sample_id: str, scientific_name: str | None, database_dir: P
         Path | None: The newly selected seed FASTA, or None if reseeding was skipped or found nothing usable (GetOrganelle's own default database applies, same as any other unseeded run).
     """
     context = f"{{{sample_id}}}"
-    if scientific_name is None or database_dir is None:
-        logger.warning(f"{context} --reseed requested but --scientific-name/--database-dir missing; "
+    # The rule layer passes the manifest's organism verbatim, so a sample
+    # with no known scientific name arrives here as "" rather than None.
+    if scientific_name is None or not scientific_name.strip() or database_dir is None:
+        logger.warning(f"{context} --reseed requested but --scientific-name/--database-dir missing or blank; "
                        "falling back to unseeded for this attempt.")
         return None
 

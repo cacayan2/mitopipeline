@@ -3,6 +3,11 @@
 # that you're happy with the options!
 job_configuration:
   output_root:
+  # A TSV with sample_id, r1, r2 and (strongly recommended) organism or
+  # genus/species columns. Leave blank to discover paired FASTQs from
+  # input_directory instead (filenames must end in _R1/_R2 or _1/_2);
+  # discovered samples have no organism, so seed selection falls back to
+  # GetOrganelle's default database and archival metadata is incomplete.
   manifest:
   input_directory:
   job_id:

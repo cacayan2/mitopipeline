@@ -303,3 +303,25 @@ def test_select_seed_accepts_custom_loci_override(mitofish_database_coxi: Path, 
     )
     assert result.fallback_used is True
     assert result.fallback_reason == "no_fetchable_mitofish_match"
+
+@pytest.mark.parametrize("scientific_name", ["", "   ", None])
+def test_select_seed_falls_back_immediately_without_a_scientific_name(tmp_path: Path, scientific_name: str | None) -> None:
+    """
+    A sample with no scientific name (a manifest-less run from an input
+    directory, or a manifest row with blank organism/genus/species) has
+    nothing to look up: it must fall back to GetOrganelle's default
+    database without touching the MitoFish database at all (a missing
+    database_dir here proves no lookup was attempted) and record the real
+    reason.
+    """
+    result = select_seed(
+        sample_id = "SAMPLE_NAMELESS",
+        scientific_name = scientific_name,
+        database_dir = tmp_path / "nonexistent_db",
+        output_dir = tmp_path / "seeds",
+        logger = logging.getLogger("test"),
+    )
+    assert result.fallback_used is True
+    assert result.fallback_reason == "no_scientific_name"
+    assert result.fasta_path is None
+    assert result.source != "mitofish"

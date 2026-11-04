@@ -13,6 +13,7 @@ from __future__ import  annotations
 import argparse
 import logging
 from pathlib import Path
+import re
 import subprocess
 import pandas as pd
 import yaml
@@ -20,6 +21,14 @@ import sys
 from mitopipeline.utils.manifest.manifest_parser import parse_sample_manifest
 from mitopipeline.models.pipeline_job.pipeline_job import PipelineJob
 from mitopipeline.models.sample.sample import Sample
+
+# Matches a paired-end FASTQ filename and captures the sample ID (everything
+# before the read-pair token) and the mate number. Recognises Illumina-style
+# "<sample>_R1_001.fastq.gz" / "<sample>_R1.fastq.gz" and SRA-style
+# "<sample>_1.fastq.gz"; see discover_fastq_pairs().
+FASTQ_PAIR_PATTERN = re.compile(
+    r"^(?P<sample>.+?)_R?(?P<mate>[12])(?:_001)?\.(?:fastq|fq)(?:\.gz)?$"
+)
 
 def parse_args() -> argparse.Namespace:
     """
@@ -122,44 +131,48 @@ def discover_fastq_pairs(input_dir: Path, job: PipelineJob) -> list[dict[str, st
         job.job_logger.error(f"Input directory does not exist: {input_dir}.")
         sys.exit(1)
 
-    # Creating a list of acceptable fastq file suffixes and initializing an empty dictionary for the bulk list of files.
+    # Collecting every FASTQ in the directory (not recursive), sorted and de-duplicated.
     fastq_suffixes = [
         ".fastq.gz",
         ".fq.gz",
         ".fastq",
         ".fq"
     ]
-    fastq_files = list[Path] = []
-
-    # Iterating through the suffixes and searching through the input_dir for each one - appending to the list of files.
-    # This is followed up by sorting and removing duplicates. 
+    fastq_files: list[Path] = []
     for suffix in fastq_suffixes:
-        fastq_files.extend(input_dir.glob(f"*{suffix}"))
+        fastq_files.extend(path for path in input_dir.glob(f"*{suffix}") if path.is_file())
     fastq_files = sorted(set(fastq_files))
 
-    # Now creating individual dictionaries for r1 and r2 files. The key is the sample ID, and the value is the path to the file.
-    # We then iterate through each of the fastq files and determine if it is an R1 or R2 file, and extract the sample ID from each.  
-    r1_files = dict[str, Path] = {}
-    r2_files = dict[str, Path] = {}
+    # Sorting each file into R1 or R2 by its read-pair token. The sample
+    # ID is everything before that token, so both mates of one pair map
+    # to the same ID. Illumina-style "_R1"/"_R2" (optionally followed by
+    # "_001") and SRA-style "_1"/"_2" are recognised; the token must sit
+    # right before the extension (or before "_001"), so a stray "_1"
+    # inside a sample name (e.g. "FMNH_124727") can't be mistaken for it.
+    r1_files: dict[str, Path] = {}
+    r2_files: dict[str, Path] = {}
+    unpaired: list[str] = []
     for fastq in fastq_files:
-        name = fastq.name
-        if "_R1" in name:
-            sample_id = name.split("_R1")[0]
-            r1_files[sample_id] = fastq
-        elif "_R2" in name:
-            sample_id = name.split("_R2")[0]
-            r2_files[sample_id] = fastq
-        elif "_1" in name:
-            sample_id = name.split("_1")[0]
-            r1_files[sample_id] = fastq
-        elif "_2" in name:
-            sample_id = name.split("_2")[0]
-            r2_files[sample_id] = fastq
+        match = FASTQ_PAIR_PATTERN.match(fastq.name)
+        if match is None:
+            unpaired.append(fastq.name)
+            continue
+        sample_id, mate = match.group("sample"), match.group("mate")
+        target = r1_files if mate == "1" else r2_files
+        if sample_id in target:
+            job.job_logger.error(f"Two R{mate} files resolve to the same sample ID '{sample_id}': "
+                                 f"{target[sample_id].name} and {fastq.name}. Provide a manifest to disambiguate.")
+            sys.exit(1)
+        target[sample_id] = fastq
+
+    if unpaired:
+        job.job_logger.warning(f"Ignoring {len(unpaired)} FASTQ file(s) with no recognisable read-pair token "
+                               f"(_R1/_R2 or _1/_2 before the extension): {', '.join(unpaired)}.")
 
     # The finalized list of sample ids are the union of the r1 and r2 sample ids and validated that it is not empty.
     sample_ids = sorted(set(r1_files) | set(r2_files))
     if len(sample_ids) == 0:
-        job.job_logger.error(f"No fastq files found in {input_dir}.")
+        job.job_logger.error(f"No paired FASTQ files found in {input_dir}.")
         sys.exit(1)
 
     # Then we create the list of records - a dict containing each of the r1 and r2 files mapped to each other.
@@ -176,10 +189,13 @@ def discover_fastq_pairs(input_dir: Path, job: PipelineJob) -> list[dict[str, st
             "sample_id": sample_id,
             "r1": str(r1_files[sample_id]),
             "r2": str(r2_files[sample_id]),
-            "genus": "",
-            "species": "",
             "source": "discovered_fastq"
         })
+
+    job.job_logger.info(f"Discovered {len(records)} paired-end sample(s) in {input_dir}.")
+    job.job_logger.warning("No manifest was provided, so discovered samples have no organism: MitoFish seed "
+                           "selection falls back to GetOrganelle's default database for every sample, and "
+                           "archival metadata (BioSample/GenBank) will be incomplete.")
 
     # Returning the list of records.
     return records
@@ -241,8 +257,14 @@ def write_validated_manifest(
     manifest_path = Path(manifest_path)
     manifest_path.parent.mkdir(parents = True, exist_ok = True)
 
-    # Setting required columns for manifest.
-    required_columns = ["sample_id", "r1", "r2"]
+    # Setting required columns for manifest. "organism" is always written
+    # (from Sample.scientific_name, which also derives it from genus/species
+    # when no explicit organism column was given, and is blank for a
+    # discovered sample with no manifest at all) because the Snakemake rule
+    # layer reads SAMPLE_TABLE["organism"] directly for seed selection and
+    # rescue reseeding -- a runtime manifest without the column would raise
+    # a KeyError there regardless of how the samples were provided.
+    required_columns = ["sample_id", "r1", "r2", "organism"]
 
     # Creating an empty list for the metadata columns.
     metadata_columns: list[str] = []
@@ -265,6 +287,7 @@ def write_validated_manifest(
         record["sample_id"] = sample.sample_id
         record["r1"] = str(sample.r1)
         record["r2"] = str(sample.r2)
+        record["organism"] = sample.scientific_name or ""
         records.append(record)
 
     # Writing the records to a pandas dataframe and then exporting to tsv. 
