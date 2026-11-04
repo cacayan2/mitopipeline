@@ -19,3 +19,4 @@ tests/fixtures/common_carp_001/
 build/
 # Emil's own in-progress documentation drafts -- never pushed.
 zmisc/docs/*_guide.pdf
+prod_config.yaml
