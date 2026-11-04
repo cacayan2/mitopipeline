@@ -17,5 +17,4 @@ resources/
 tests/fixtures/common_carp_001/
 # setuptools build artifact from pip install -e .
 build/
-zmisc/docs/*_guide.pdf
 prod_config.yaml
