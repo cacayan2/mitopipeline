@@ -8,6 +8,8 @@ already installed on the real execution host.
 """
 
 # Imports
+import re
+import os
 import shutil
 import subprocess
 from dataclasses import dataclass
@@ -106,7 +108,7 @@ def export_markdown_to_pdf(markdown_path: str | Path, pdf_path: str | Path | Non
         # root", confirmed via a real compile). Widening the root to
         # the filesystem root lets Typst resolve real absolute image
         # paths anywhere on disk.
-        "--pdf-engine-opt=--root=/",
+         "--pdf-engine-opt=--root", "--pdf-engine-opt=/",
         "--output", str(temporary_pdf_path),
     ]
 
@@ -125,3 +127,5 @@ def export_markdown_to_pdf(markdown_path: str | Path, pdf_path: str | Path | Non
         markdown_path = markdown_path, pdf_path = pdf_path, success = success,
         return_code = result.returncode, stderr = result.stderr,
     )
+
+
