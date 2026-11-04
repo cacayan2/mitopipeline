@@ -1,0 +1,289 @@
+# If you do nothing else in this configuration file,
+# please look through these options and ensure
+# that you're happy with the options!
+job_configuration: 
+  output_root: /home/fishl/mitogenome_project/outputs
+  manifest: ctrl/manifests/mitopipeline_production_manifest.tsv
+  input_directory: /home/fishl/mitogenome_project/all_species_raw
+  job_id: final_output_v2
+  validate_input_files: true
+
+# You can choose which stages to turn on/off
+# (this is mostly for debugging purposes - most
+# of the stages are dependent on each other
+# so I don't recommend really doing too much here).
+stages: 
+  qc_raw: true
+  trimming: true
+  qc_trimmed: true
+  assembly: true
+  blast: true
+  assembly_post:
+    contig_selection: true
+    assembly_rescue: true
+  annotation: true
+  visualization: true
+  phylogeny: true
+  reporting: true
+  pdf_export: true
+  sra_archival: true
+  biosample_archival: true
+  mitogenome_archival: true
+  archival_validation: true
+  table2asn_validation: true
+
+stage_options:
+  qc.raw:
+    fastqc: 
+      threads: 2
+  trimming:
+    fastp:
+      threads: 8
+      qualified_quality_phred: 20
+      length_required: 50
+      trim_front1: null
+      trim_tail1: null
+      trim_front2: null
+      trim_tail2: null
+      cut_window_size: 4
+      cut_mean_quality: 20
+      n_base_limit: 5
+      unqualified_percent_limit: 40
+      average_qual: null
+      report_title: null
+      adapter_sequence: null
+      adapter_sequence_r2: null
+      adapter_fasta: null
+      detect_adapter_for_pe: true
+      cut_front: false
+      cut_tail: false
+      cut_right: false
+      disable_quality_filtering: false
+      disable_length_filtering: false
+      trim_poly_g: false
+      trim_poly_x: false
+  qc.trimmed:
+    fastqc: 
+      threads: 2
+  assembly:
+    seed:
+      # Downloaded automatically (ctrl/rules/04c-seed_sequences.smk's
+      # mitofish_database_setup rule) -- never a manual setup step.
+      database_dir: resources/mitofish
+      # Pin a specific MitoFish release (format "YYYY.MM") for
+      # reproducibility; null resolves and downloads the latest
+      # release automatically on every fresh run.
+      version: null
+      mode: mitofish_gene
+    getorganelle:
+      threads: 8
+      database_type: animal_mt
+      # NOT YET WIRED: nothing in the pipeline currently reads this key.
+      # GetOrganelle's own bundled label database (used to classify
+      # assembled contigs) ships in a BLAST database format its own
+      # bundled blastn can't read on some installs and must be rebuilt
+      # by hand once per installation -- see Development Status.md,
+      # "GetOrganelle real version/environment details." This key is a
+      # placeholder for automating that rebuild; currently a no-op.
+      initialize_database: true
+      max_rounds: null
+      kmer: null
+      word_size: null
+      pre_grouping: null
+      max_reads: null
+      target_coverage: null
+      min_read_length: null
+      max_read_length: null
+      expected_max_size: null
+      expected_min_size: null
+      seed_file: null
+      genes_file: null
+      exclude_fasta: null
+      prefix: null
+      round_output_prefix: null
+      blast_path: null
+      bandage_path: null
+      spades_path: null
+      overwrite: true
+      continue_run: false
+      fast_mode: false
+      disentangle_df: 5.0
+      disentangle_time_limit: 1800
+      reverse_lsc: false
+      no_slim: false
+      keep_temp_files: false
+      verbose: true
+  assembly_post:
+    assembly_assessment:
+      complete_min_length: 14000
+      complete_max_length: 22000
+    # Rescue's own real decision logic (utils/rescue/trigger.py) only
+    # ever reads trigger_statuses and getorganelle_profiles -- each
+    # rescue attempt tries the next untried profile in that list, and
+    # an empty list means rescue is effectively off.
+    #
+    # Each profile names a genuinely different FAILURE MODE to try
+    # next, not just a different kmer list on the same narrowed input:
+    #   - recruitment: "candidate_mapped" (minimap2 against the best
+    #     candidate so far, properly-paired reads only -- today's
+    #     original behavior) or "full_pool" (skip that mapping chain
+    #     entirely; a read whose mate fails to map against an already-
+    #     INCOMPLETE candidate is exactly a read near the gap that
+    #     candidate is missing, so "candidate_mapped" throws it away
+    #     precisely when it would matter most -- "full_pool" hands
+    #     GetOrganelle's own more sensitive internal recruitment the
+    #     complete original read pool again instead).
+    #   - reseed: false reuses the primary attempt's own already-
+    #     resolved seed as-is; true derives a genuinely different one
+    #     by walking further down the same documented locus fallback
+    #     chain (utils/seed/models.py's LOCUS_FALLBACK_ORDER), for when
+    #     the anchor itself -- not the read recruitment -- was the
+    #     problem.
+    assembly_rescue:
+      trigger_statuses:
+      - fragmented
+      - partial
+      getorganelle_profiles:
+      - name: candidate_guided
+        recruitment: candidate_mapped
+        reseed: false
+        kmer: 21,33,55,85,115
+        target_coverage: 100
+        max_rounds: 10
+      - name: full_pool_alternate_seed
+        recruitment: full_pool
+        reseed: true
+        kmer: 21,45,65,85,105
+        target_coverage: 100
+        max_rounds: 15
+      - name: full_pool_relaxed_graph
+        recruitment: full_pool
+        reseed: false
+        kmer: 21,33,45,55,65,85,105,115
+        target_coverage: inf
+        max_rounds: 20
+  annotation:
+    mitos2:
+      conda_env: mito-annotation
+      env_file: envs/annotation.yaml
+      genetic_code: 2
+      # Downloaded automatically from Zenodo record zenodo_record
+      # (ctrl/rules/08a-mitos2_config.smk's mitos_database_setup
+      # rule) -- never a manual setup step.
+      refdir: resources/mitos
+      refseqver: refseq89m
+      zenodo_record: '4284483'
+      circular: true
+      noplots: true
+      best: false
+      ncbicode: false
+      zip_output: false
+  annotation_viz:
+    dpi: 600
+  phylogeny:
+    blast:
+      mode: local
+      database_source: ncbi
+      database_dir: resources/blast
+      database: resources/blast/actinopterygii_mt_refs
+      reference_fasta: resources/blast/actinopterygii_mitogenomes.fasta
+      database_title: MitoPipeline mitochondrial reference database
+      # Downloaded and built automatically (ctrl/rules/05a-blast_config.smk's
+      # blast_database_setup rule) -- never a manual setup step.
+      # initialize_database: false skips this entirely (e.g. a
+      # database_dir prepared out of band); overwrite_database forces
+      # a rebuild even if a valid database is already present.
+      initialize_database: true
+      overwrite_database: true
+      parse_seqids: true
+      threads: 8
+      task: blastn
+      evalue: 1.0e-05
+      max_target_seqs: 50
+      max_hsps: 1
+      maximum_matches: 6
+      perc_identity: null
+      query_coverage: null
+      word_size: null
+      entrez_email: ecacayan@luc.edu
+      entrez_api_key: null
+      # The NCBI organism-level scope to search within -- broad enough
+      # to include real confound species (e.g. marine fish when the
+      # target is freshwater), not narrowed to the sample's own
+      # lineage. See utils/blast/reference_database.py's own
+      # DEFAULT_TAXON_SCOPE/build_ncbi_query().
+      taxon_scope: Actinopterygii
+      # A high ceiling, not a real limit (~3900 real records for
+      # Actinopterygii, measured 2026-10-19) -- the historical bug
+      # this whole module exists to fix was exactly this value set
+      # too low (250), silently truncating the real reference set to
+      # an arbitrary small, untargeted subsample.
+      ncbi_max_records: 10000
+      ncbi_batch_size: 50
+      output_format: 6 qseqid sseqid pident length mismatch gapopen qstart qend sstart
+        send evalue bitscore qcovs staxids sscinames stitle
+    mafft:
+      threads: 8
+      strategy: auto
+    iqtree:
+      threads: 16
+      sequence_type: DNA
+      model: MFP
+      ultrafast_bootstrap: 1000
+      sh_alrt: 1000
+      random_seed: 12345
+      # Rendered automatically into the run-level report's tree
+      # figure (ctrl/rules/11-phylogeny.smk's tree_figure rule).
+      # midpoint_root_figure: IQ-TREE's own ML output is unrooted; set
+      # false to draw it exactly as IQ-TREE wrote it instead.
+      render_dpi: 600
+      midpoint_root_figure: true
+  report_export:
+      pandoc:
+        bin: pandoc
+        # Absolute path, not the bare "typst" on $PATH: this host's
+        # system typst is a snap package whose confined filesystem
+        # view broke after an external kernel-level cache-drop event
+        # (confirmed via dmesg, unrelated to this project) -- it can
+        # no longer find even its own input file. A real, standalone
+        # typst binary (same version, no snap confinement) is
+        # installed at this path as the real fix; point back to the
+        # bare "typst" once the system package is healthy again.
+        engine: /home/eacac/.local/bin/typst
+  archival:
+    bioproject:
+      publication: null
+      funding: null
+    sra:
+      library_strategy: WGS
+      library_source: GENOMIC
+      library_selection: RANDOM
+      library_layout: PAIRED
+      platform: ILLUMINA
+      instrument_model: null
+      filetype: fastq
+      title_template: '{sample_id} raw sequencing reads'
+      design_description: null
+    biosample:
+      bioproject_accession: null
+      isolation_source: null
+      collection_date: null
+      geo_loc_name: null
+      lat_lon: null
+      sample_type: environmental sample
+      description_template: Biological sample for {sample_id}.
+      mitogenome: null
+      molecule_type: DNA
+      genome_location: mitochondrion
+      topology: circular
+      assembly_method: GetOrganelle
+      annotation_method: MITOS2
+      file_mode: copy
+    table2asn:
+      # Resolved relative to the project root, same convention as
+      # blast.reference_fasta -- auto-installed on first use
+      # (table2asn_binary.py) rather than assumed pre-installed.
+      binary_path: resources/bin/table2asn
+      submission_template: resources/archival/submission_template.sbt
+      topology: circular
+      genome_location: mitochondrion
