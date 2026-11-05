@@ -44,8 +44,17 @@ rule visualization:
     conda:
         "../../envs/09-visualization.yaml"
     shell:
+        # The guard uses explicit double-quoted substitutions, not
+        # `{{params.fasta_path:q}}`/`{{params.gff_path:q}}` -- when
+        # either is "" (nothing selected, or no annotation GFF yet),
+        # `:q` renders that as literally nothing, collapsing
+        # `[ -s ]` to a single-token test that POSIX reads as the
+        # non-empty string "-s" itself, always true. The guard never
+        # actually protected anything, and the call below it crashed
+        # argparse the same way entrez_api_key did in
+        # blast_database_setup (see 05a-blast_config.smk).
         """
-        if [ -s {params.fasta_path:q} ] && [ -s {params.gff_path:q} ]; then
+        if [ -s "{params.fasta_path}" ] && [ -s "{params.gff_path}" ]; then
             {PYTHON_BIN:q} {params.exec_script:q} \
                 --sample-id {wildcards.sample} \
                 --gff-path {params.gff_path:q} \

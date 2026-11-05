@@ -77,8 +77,16 @@ rule mitos2_config:
     conda:
         "../../envs/08b-annotation.yaml"
     shell:
+        # The guard uses an explicit double-quoted substitution, not
+        # `{{params.input_fasta:q}}` -- when nothing was selected
+        # (input_fasta == ""), `:q` renders that as literally nothing,
+        # collapsing `[ -s ]` to a single-token test that POSIX reads
+        # as the non-empty string "-s" itself, always true. The guard
+        # never actually protected anything, and the call below it
+        # crashed argparse the same way entrez_api_key did in
+        # blast_database_setup (see 05a-blast_config.smk).
         """
-        if [ -s {params.input_fasta:q} ]; then
+        if [ -s "{params.input_fasta}" ]; then
             {PYTHON_BIN:q} {params.exec_script:q} \
                 --sample-id {wildcards.sample} \
                 --input-fasta {params.input_fasta:q} \

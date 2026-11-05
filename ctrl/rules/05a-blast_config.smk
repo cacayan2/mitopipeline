@@ -112,16 +112,27 @@ rule blast_config:
     conda:
         "../../envs/05-blast.yaml"
     shell:
+        # The guard below uses an explicit double-quoted substitution,
+        # not `{{params.query_fasta:q}}` -- when contig_selection found
+        # nothing (query_fasta == ""), `:q` renders that as literally
+        # nothing, collapsing `[ -s ]` to a single-token test that
+        # POSIX reads as the non-empty string "-s" itself, always true.
+        # The guard would have silently never protected anything, and
+        # the unconditional call below it crashed argparse the same way
+        # entrez_api_key did in blast_database_setup, above.
         """
-        {PYTHON_BIN:q} {params.exec_script:q} \
-            --sample-id {wildcards.sample} \
-            --query-fasta {params.query_fasta:q} \
-            --database {params.database:q} \
-            --mode {params.mode:q} \
-            --blast-output-dir {params.blast_output_dir:q} \
-            --output-dir {params.output_dir:q} \
-            --log-file {params.log_file:q} \
-            --global-log-file {params.global_log_file:q} \
-            || true
+        if [ -s "{params.query_fasta}" ]; then
+            {PYTHON_BIN:q} {params.exec_script:q} \
+                --sample-id {wildcards.sample} \
+                --query-fasta {params.query_fasta:q} \
+                --database {params.database:q} \
+                --mode {params.mode:q} \
+                --blast-output-dir {params.blast_output_dir:q} \
+                --output-dir {params.output_dir:q} \
+                --log-file {params.log_file:q} \
+                --global-log-file {params.global_log_file:q} \
+                || true
+        fi
+        mkdir -p $(dirname {output.done:q})
         touch {output.done:q}
         """
