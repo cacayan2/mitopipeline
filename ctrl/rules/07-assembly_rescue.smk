@@ -37,8 +37,14 @@ def _reassembly_dir(sample: str, attempt_num: int) -> Path:
     already live there); this nested leaf is not."""
     return _attempt_dir(sample, attempt_num) / "reassembly"
 
-def _previous_status_and_fasta(sample: str, attempt_num: int) -> tuple[Path, Path]:
-    """The previous attempt's own status.json and data.fasta -- the
+def _read_status(status_path: Path) -> str:
+    try:
+        return json.loads(Path(status_path).read_text())["status"]
+    except (OSError, json.JSONDecodeError, KeyError):
+        return "missing"
+
+def _previous_status_and_fasta(sample: str, attempt_num: int) -> tuple[str, Path]:
+    """The previous attempt's own real status and data.fasta -- the
     primary assembly's for attempt 1, the prior rescue attempt's for
     every attempt after that.
 
@@ -52,18 +58,34 @@ def _previous_status_and_fasta(sample: str, attempt_num: int) -> tuple[Path, Pat
     so attempt 2 always skipped regardless of what attempt 1 actually
     produced. Confirmed live: attempt 1 genuinely reassembled and came
     back "fragmented", but attempt 2's decision record cited status
-    'missing' as the reason it never ran."""
+    'missing' as the reason it never ran. Fixed by pointing at
+    _reassembly_dir() -- but that fix alone still leaves one real gap:
+    a DECLINED attempt (already circular, or any other terminal
+    reason) never runs reassembly at all, so no status.json exists
+    there either, and _read_status() falls back to "missing" --
+    indistinguishable from a genuinely missing assembly. Confirmed
+    live: an already-circular primary assembly correctly declined
+    rescue at attempt 1, but attempt 2 then read the absent file as
+    "missing" and spuriously ran a real full_pool reassembly against
+    a sample that was never broken. Fixed by falling back to the
+    previous attempt's own rescue_mapping.json, which records the
+    real status it was given even when it declined -- only defaulting
+    to "missing" if that record is itself unavailable."""
     if attempt_num == 1:
         primary_dir = JOB_DIR / "04d-assembly" / sample / "primary"
-        return primary_dir / f"{sample}.assembly_status.json", primary_dir / "data.fasta"
-    previous_dir = _reassembly_dir(sample, attempt_num - 1)
-    return previous_dir / f"{sample}.assembly_status.json", previous_dir / "data.fasta"
+        return _read_status(primary_dir / f"{sample}.assembly_status.json"), primary_dir / "data.fasta"
 
-def _read_status(status_path: Path) -> str:
+    previous_reassembly_dir = _reassembly_dir(sample, attempt_num - 1)
+    previous_status_path = previous_reassembly_dir / f"{sample}.assembly_status.json"
+    if previous_status_path.is_file():
+        return _read_status(previous_status_path), previous_reassembly_dir / "data.fasta"
+
+    previous_decision_path = _attempt_dir(sample, attempt_num - 1) / f"{sample}.rescue_mapping.json"
     try:
-        return json.loads(Path(status_path).read_text())["status"]
+        previous_status = json.loads(previous_decision_path.read_text())["status"]
     except (OSError, json.JSONDecodeError, KeyError):
-        return "missing"
+        previous_status = "missing"
+    return previous_status, previous_reassembly_dir / "data.fasta"
 
 def _previous_done_marker(sample: str, attempt_num: int) -> Path:
     """The real, always-produced dependency edge for the PREVIOUS
@@ -104,7 +126,7 @@ rule rescue_mapping:
         done = str(_attempt_dir("{sample}", "{attempt_num}") / "{sample}.rescue_mapping.done")
     params:
         attempt_idx = lambda wc: int(wc.attempt_num) - 1,   # decide_rescue() is 0-indexed
-        status = lambda wc: _read_status(_previous_status_and_fasta(wc.sample, int(wc.attempt_num))[0]),
+        status = lambda wc: _previous_status_and_fasta(wc.sample, int(wc.attempt_num))[0],
         reference_fasta = lambda wc: str(_previous_status_and_fasta(wc.sample, int(wc.attempt_num))[1]),
         max_attempts = len(RESCUE_PROFILES),
         trigger_statuses = TRIGGER_STATUSES,

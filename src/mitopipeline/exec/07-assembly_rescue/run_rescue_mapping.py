@@ -71,7 +71,7 @@ def parse_args() -> argparse.Namespace:
 
     return parser.parse_args()
 
-def _write_decision(output_dir: Path, sample_id: str, attempted: bool, reason: str, recruitment: str,
+def _write_decision(output_dir: Path, sample_id: str, status: str, attempted: bool, reason: str, recruitment: str,
                      rescued_r1: Path | None = None, rescued_r2: Path | None = None) -> None:
     """
     Records this sample's rescue-mapping outcome for the reassembly
@@ -80,9 +80,21 @@ def _write_decision(output_dir: Path, sample_id: str, attempted: bool, reason: s
     as a real structured field (not just folded into the free-text
     reason string), so the report can cite it directly.
 
+    Also records the status this decision was actually made FROM.
+    When this attempt declines (attempted=False), reassembly never
+    runs and never writes its own assembly_status.json -- so a
+    DECLINED attempt is the only record of what the real status was
+    at this point in the chain. The next attempt's own decision reads
+    this field specifically to propagate that real status forward
+    (see 07-assembly_rescue.smk's _previous_status_and_fasta()); without
+    it, a missing status file is indistinguishable from a genuinely
+    missing assembly, which previously caused an already-circular
+    sample to be misread as "missing" and spuriously re-rescued.
+
     Args:
         output_dir (Path): Where to write the decision record.
         sample_id (str): The sample id.
+        status (str): The assembly status this decision was made from.
         attempted (bool): Whether a recruitment strategy was actually run.
         reason (str): A short, human-readable explanation.
         recruitment (str): Which recruitment strategy this attempt used ("candidate_mapped" or "full_pool"), regardless of whether it ultimately ran.
@@ -97,6 +109,7 @@ def _write_decision(output_dir: Path, sample_id: str, attempted: bool, reason: s
     with path.open("w", encoding = "utf-8") as handle:
         json.dump({
             "sample_id": sample_id,
+            "status": status,
             "attempted": attempted,
             "reason": reason,
             "recruitment": recruitment,
@@ -164,7 +177,7 @@ def main() -> int:
                 f"terminal={decision.terminal}, reason: {decision.reason}")
 
     if not decision.should_rescue:
-        _write_decision(args.output_dir, args.sample_id, attempted = False, reason = decision.reason,
+        _write_decision(args.output_dir, args.sample_id, status = args.status, attempted = False, reason = decision.reason,
                         recruitment = args.recruitment)
         return 0
 
@@ -172,7 +185,7 @@ def main() -> int:
         rescued_r1, rescued_r2 = _full_pool_passthrough(args.output_dir, args.sample_id, args.r1, args.r2)
         logger.info(f"{context} Full-pool recruitment: handing GetOrganelle the complete original "
                     f"read pool again, unfiltered (minimap2/samtools narrowing skipped by design).")
-        _write_decision(args.output_dir, args.sample_id, attempted = True, reason = decision.reason,
+        _write_decision(args.output_dir, args.sample_id, status = args.status, attempted = True, reason = decision.reason,
                         recruitment = args.recruitment, rescued_r1 = rescued_r1, rescued_r2 = rescued_r2)
         return 0
 
@@ -227,12 +240,12 @@ def main() -> int:
         _run_stage(extractor, "samtools fastq")
     except (SystemExit, RuntimeError) as e:
         logger.error(f"{context} Rescue mapping chain failed ({e}).")
-        _write_decision(args.output_dir, args.sample_id, attempted = True,
+        _write_decision(args.output_dir, args.sample_id, status = args.status, attempted = True,
                         reason = f"mapping chain failed: {decision.reason}", recruitment = args.recruitment)
         return 1
 
     logger.info(f"{context} Rescue mapping chain complete: {extractor.rescued_r1.name}, {extractor.rescued_r2.name}")
-    _write_decision(args.output_dir, args.sample_id, attempted = True, reason = decision.reason,
+    _write_decision(args.output_dir, args.sample_id, status = args.status, attempted = True, reason = decision.reason,
                     recruitment = args.recruitment, rescued_r1 = extractor.rescued_r1, rescued_r2 = extractor.rescued_r2)
     return 0
 

@@ -73,6 +73,17 @@ def test_circular_status_is_never_rescued(tmp_path: Path, monkeypatch: pytest.Mo
     assert result["attempted"] is False
     assert result["rescued_r1"] is None
 
+def test_declined_decision_records_the_real_status_it_was_given(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    # A declined attempt (e.g. already circular) never runs reassembly,
+    # so its own decision record is the only place the real status
+    # survives for the next attempt to read -- see
+    # 07-assembly_rescue.smk's _previous_status_and_fasta().
+    sample_id = "SAMPLE_01B"
+    monkeypatch.setattr(sys, "argv", _argv(tmp_path, sample_id, "circular"))
+    assert run_rescue_mapping.main() == 0
+    result = json.loads((tmp_path / "rescue" / f"{sample_id}.rescue_mapping.json").read_text())
+    assert result["status"] == "circular"
+
 def test_fragmented_status_triggers_the_real_chain(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(Minimap2Runner, "run", _stub_minimap2_run)
     monkeypatch.setattr(SamtoolsRunner, "run", _stub_samtools_run)
