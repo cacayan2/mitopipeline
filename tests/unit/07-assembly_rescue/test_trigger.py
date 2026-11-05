@@ -59,7 +59,7 @@ def test_recruitment_defaults_to_candidate_mapped_for_callers_that_omit_it() -> 
 
 def test_status_not_in_trigger_statuses_is_terminal_and_not_rescued() -> None:
     config = dict(CONFIG, trigger_statuses = ["fragmented"])
-    decision = decide_rescue("partial", attempt = 0, config = config)
+    decision = decide_rescue("unknown", attempt = 0, config = config)
     assert decision.should_rescue is False
     assert decision.terminal is True
     assert "not in trigger_statuses" in decision.reason

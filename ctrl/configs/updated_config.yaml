@@ -159,7 +159,6 @@ stage_options:
     assembly_rescue:
       trigger_statuses:
       - fragmented
-      - partial
       getorganelle_profiles:
       - name: candidate_guided
         recruitment: candidate_mapped

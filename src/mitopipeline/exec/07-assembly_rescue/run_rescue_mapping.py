@@ -56,9 +56,9 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--recruitment", type = str, default = "candidate_mapped", choices = sorted(VALID_RECRUITMENT_MODES),
                         help = "This attempt's profile.recruitment setting: 'candidate_mapped' (default, today's minimap2/samtools chain) or 'full_pool' (skip it, hand GetOrganelle the complete original read pool again).")
     parser.add_argument("--status", type = str, required = True,
-                        help = "The current assembly classification (e.g. from contig_selection.json) -- circular, fragmented, partial, or missing.")
+                        help = "The current assembly classification (e.g. from contig_selection.json) -- circular, fragmented, or missing.")
     parser.add_argument("--attempt", type = int, required = True, help = "How many rescue attempts have already been made for this sample (0-indexed).")
-    parser.add_argument("--trigger-statuses", type = str, default = "fragmented,partial",
+    parser.add_argument("--trigger-statuses", type = str, default = "fragmented",
                         help = "Comma-separated statuses that warrant rescue (config.yaml's assembly_rescue.trigger_statuses).")
     parser.add_argument("--max-attempts", type = int, required = True,
                         help = "The configured retry bound -- the number of getorganelle_profiles entries (config.yaml's own documented mechanism; see utils.rescue.trigger).")

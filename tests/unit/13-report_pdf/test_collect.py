@@ -307,7 +307,7 @@ def test_collect_rescue_summary_reads_every_real_attempt(tmp_path: Path) -> None
     attempt_2.mkdir(parents = True)
     _write_json(attempt_2 / "sample1.rescue_mapping.json", {
         "sample_id": "sample1", "attempted": False,
-        "reason": "status 'missing' is not in trigger_statuses ['fragmented', 'partial']",
+        "reason": "status 'missing' is not in trigger_statuses ['fragmented']",
     })
 
     attempts = collect_rescue_summary(rescue_dir)

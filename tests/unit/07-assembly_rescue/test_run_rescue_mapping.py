@@ -112,7 +112,7 @@ def test_chain_failure_is_recorded_not_an_uncaught_crash(tmp_path: Path, monkeyp
         raise SystemExit(1)
     monkeypatch.setattr(Minimap2Runner, "run", _failing_run)
     sample_id = "SAMPLE_04"
-    monkeypatch.setattr(sys, "argv", _argv(tmp_path, sample_id, "partial"))
+    monkeypatch.setattr(sys, "argv", _argv(tmp_path, sample_id, "fragmented"))
 
     assert run_rescue_mapping.main() == 1
 

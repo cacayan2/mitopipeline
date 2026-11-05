@@ -147,7 +147,6 @@ stage_options:
       # structural guard, not a policy choice; see utils/rescue/trigger.py).
       trigger_statuses:
       - fragmented
-      - partial
       - missing
       getorganelle_profiles:
       - name: candidate_guided

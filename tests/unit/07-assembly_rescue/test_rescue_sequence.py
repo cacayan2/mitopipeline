@@ -14,7 +14,7 @@ an attempt.
 # Imports
 from mitopipeline.utils.rescue.trigger import decide_rescue
 
-CONFIG = {"trigger_statuses": ["fragmented", "partial"], "getorganelle_profiles": [None, None, None]}
+CONFIG = {"trigger_statuses": ["fragmented"], "getorganelle_profiles": [None, None, None]}
 
 def _simulate_sequence(statuses: list[str]) -> list:
     """
@@ -64,7 +64,7 @@ def test_tool_failure_mid_sequence_does_not_fabricate_improvement() -> None:
     # "missing" (see _write_status's success=False path), never as an
     # improvement. The next decide_rescue() call must still see
     # "missing" (a trigger status is NOT required here -- "missing" is
-    # its own real classification, distinct from "fragmented"/"partial")
+    # its own real classification, distinct from "fragmented")
     # and, since "missing" isn't configured as a trigger status in this
     # sequence, rescue correctly stops rather than retrying forever on a
     # tool that keeps crashing.
@@ -79,7 +79,7 @@ def test_missing_configured_as_a_trigger_keeps_retrying_through_a_failure() -> N
     # status, a tool failure classified as "missing" is treated the
     # same as "fragmented" -- rescue keeps retrying rather than giving
     # up on the first tool failure, up to the same profile-count bound.
-    config = {"trigger_statuses": ["fragmented", "partial", "missing"], "getorganelle_profiles": [None, None]}
+    config = {"trigger_statuses": ["fragmented", "missing"], "getorganelle_profiles": [None, None]}
     decisions = [decide_rescue(s, i, config) for i, s in enumerate(["fragmented", "missing", "fragmented"])]
     assert [d.should_rescue for d in decisions] == [True, True, False]
     assert decisions[-1].terminal is True

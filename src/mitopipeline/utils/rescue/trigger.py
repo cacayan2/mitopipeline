@@ -48,7 +48,7 @@ def decide_rescue(status: str, attempt: int, config: dict,
     next time with the same status, until one of the above is reached.
 
     Args:
-        status (str): The assembly's current classification, as returned by discover_assembly_artifacts() -- "circular", "fragmented", "partial", or "missing".
+        status (str): The assembly's current classification, as returned by discover_assembly_artifacts() -- "circular", "fragmented", or "missing".
         attempt (int): How many rescue attempts have already been made for this sample (0-indexed; 0 means none yet).
         config (dict): This sample's assembly_rescue config section (trigger_statuses, getorganelle_profiles, etc. -- see config.yaml).
         recruitment (str): This attempt's own recruitment strategy ("candidate_mapped" or "full_pool") -- see run_rescue_mapping.py's module docstring. Defaults to "candidate_mapped" (attempt 1's own default) for callers that don't pass it.
