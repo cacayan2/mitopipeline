@@ -40,11 +40,23 @@ def _reassembly_dir(sample: str, attempt_num: int) -> Path:
 def _previous_status_and_fasta(sample: str, attempt_num: int) -> tuple[Path, Path]:
     """The previous attempt's own status.json and data.fasta -- the
     primary assembly's for attempt 1, the prior rescue attempt's for
-    every attempt after that."""
+    every attempt after that.
+
+    Was pointing at _attempt_dir(sample, attempt_num - 1) directly for
+    attempt_num > 1, but rescue_reassembly actually writes its status
+    under the nested _reassembly_dir() (same "never pre-exist GetOrganelle's
+    -o target" constraint as the primary assembly, see _reassembly_dir's
+    own docstring) -- so every attempt after the first was reading a
+    path that never existed. _read_status()'s own except silently
+    defaulted that to "missing", which doesn't match trigger_statuses,
+    so attempt 2 always skipped regardless of what attempt 1 actually
+    produced. Confirmed live: attempt 1 genuinely reassembled and came
+    back "fragmented", but attempt 2's decision record cited status
+    'missing' as the reason it never ran."""
     if attempt_num == 1:
         primary_dir = JOB_DIR / "04d-assembly" / sample / "primary"
         return primary_dir / f"{sample}.assembly_status.json", primary_dir / "data.fasta"
-    previous_dir = _attempt_dir(sample, attempt_num - 1)
+    previous_dir = _reassembly_dir(sample, attempt_num - 1)
     return previous_dir / f"{sample}.assembly_status.json", previous_dir / "data.fasta"
 
 def _read_status(status_path: Path) -> str:
