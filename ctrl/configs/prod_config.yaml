@@ -140,9 +140,15 @@ stage_options:
     #     the anchor itself -- not the read recruitment -- was the
     #     problem.
     assembly_rescue:
+      # "missing" is eligible here too, but only for full_pool-recruitment
+      # profiles (below) -- candidate_mapped recruitment has no existing
+      # candidate to map against for a "missing" sample, so decide_rescue()
+      # blocks that specific combination regardless of this list (a hard
+      # structural guard, not a policy choice; see utils/rescue/trigger.py).
       trigger_statuses:
       - fragmented
       - partial
+      - missing
       getorganelle_profiles:
       - name: candidate_guided
         recruitment: candidate_mapped

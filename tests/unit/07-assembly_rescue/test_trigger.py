@@ -29,14 +29,37 @@ def test_fragmented_triggers_rescue_on_first_attempt() -> None:
     assert decision.terminal is False
     assert decision.max_attempts == 2
 
-def test_missing_triggers_rescue_same_as_fragmented() -> None:
-    decision = decide_rescue("missing", attempt = 0, config = CONFIG)
+def test_missing_triggers_rescue_under_full_pool_recruitment() -> None:
+    decision = decide_rescue("missing", attempt = 0, config = CONFIG, recruitment = "full_pool")
     assert decision.should_rescue is True
     assert decision.terminal is False
 
+def test_missing_never_triggers_rescue_under_candidate_mapped_recruitment() -> None:
+    # Even though "missing" is in trigger_statuses, candidate_mapped
+    # recruitment has no existing candidate to map against -- a hard
+    # structural block, not a policy choice, so this stays terminal
+    # regardless of config.
+    decision = decide_rescue("missing", attempt = 0, config = CONFIG, recruitment = "candidate_mapped")
+    assert decision.should_rescue is False
+    assert decision.terminal is True
+    assert "no existing candidate" in decision.reason
+
+def test_missing_under_full_pool_still_respects_trigger_statuses() -> None:
+    config = dict(CONFIG, trigger_statuses = ["fragmented"])
+    decision = decide_rescue("missing", attempt = 0, config = config, recruitment = "full_pool")
+    assert decision.should_rescue is False
+    assert decision.terminal is True
+    assert "not in trigger_statuses" in decision.reason
+
+def test_recruitment_defaults_to_candidate_mapped_for_callers_that_omit_it() -> None:
+    decision = decide_rescue("missing", attempt = 0, config = CONFIG)
+    assert decision.should_rescue is False
+    assert decision.terminal is True
+    assert "no existing candidate" in decision.reason
+
 def test_status_not_in_trigger_statuses_is_terminal_and_not_rescued() -> None:
     config = dict(CONFIG, trigger_statuses = ["fragmented"])
-    decision = decide_rescue("missing", attempt = 0, config = config)
+    decision = decide_rescue("partial", attempt = 0, config = config)
     assert decision.should_rescue is False
     assert decision.terminal is True
     assert "not in trigger_statuses" in decision.reason

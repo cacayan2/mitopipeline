@@ -159,7 +159,7 @@ def main() -> int:
         # their content -- a list of that length stands in for it.
         "getorganelle_profiles": [None] * args.max_attempts,
     }
-    decision = decide_rescue(args.status, args.attempt, config)
+    decision = decide_rescue(args.status, args.attempt, config, recruitment = args.recruitment)
     logger.info(f"{context} Rescue decision: should_rescue={decision.should_rescue}, "
                 f"terminal={decision.terminal}, reason: {decision.reason}")
 
