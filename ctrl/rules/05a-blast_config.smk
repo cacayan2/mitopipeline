@@ -51,7 +51,18 @@ rule blast_database_setup:
         """
         if [ {params.run_setup:q} = "true" ]; then
             API_KEY_ARGS=""
-            if [ -n {params.entrez_api_key:q} ]; then
+            # Explicit double-quotes around the bare substitution, not
+            # `{{params.entrez_api_key:q}}` -- when the value is "" (the
+            # default, no API key configured), Snakemake's own `:q`
+            # quoting renders as literally nothing, collapsing this to
+            # `[ -n ]`. With only one token, POSIX test reads a lone
+            # "-n" as the non-empty string being tested, not the
+            # operator -- so the check was always true. That set
+            # API_KEY_ARGS to a bare, valueless "--entrez-api-key",
+            # which argparse rejects ("expected one argument") before
+            # the script's own logger (or anything else) ever runs --
+            # the real cause of the silent, log-free, instant failure.
+            if [ -n "{params.entrez_api_key}" ]; then
                 API_KEY_ARGS="--entrez-api-key {params.entrez_api_key:q}"
             fi
             {PYTHON_BIN:q} {params.exec_script:q} \
