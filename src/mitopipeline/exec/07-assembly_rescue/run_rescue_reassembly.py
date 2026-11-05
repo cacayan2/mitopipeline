@@ -192,10 +192,12 @@ def main() -> int:
         _write_status(args.output_dir, args.sample_id, status.status, success = False,
                      profile_name = args.profile_name, seed_file = seed_file_used)
         runner.cleanup_failed_output()
+        _cleanup_rescued_reads(args.r1, args.r2, logger, context)
         return 1
     except Exception as e:
         logger.error(f"{context} Rescue reassembly (profile '{args.profile_name}') failed unexpectedly: {e}.")
         runner.cleanup_failed_output()
+        _cleanup_rescued_reads(args.r1, args.r2, logger, context)
         return 1
 
     if not result.success:
@@ -204,6 +206,7 @@ def main() -> int:
         _write_status(args.output_dir, args.sample_id, status.status, success = False,
                      profile_name = args.profile_name, seed_file = seed_file_used)
         runner.cleanup_failed_output()
+        _cleanup_rescued_reads(args.r1, args.r2, logger, context)
         return result.return_code or 1
 
     # Same reasoning as run_getorganelle_assembly.py: postprocess_outputs()
@@ -216,7 +219,35 @@ def main() -> int:
                 f"{result.runtime_seconds:.1f}s; classified as '{status.status}' ({status.candidate_count} native candidate(s)).")
     _write_status(args.output_dir, args.sample_id, status.status, success = True,
                  profile_name = args.profile_name, seed_file = seed_file_used)
+    _cleanup_rescued_reads(args.r1, args.r2, logger, context)
     return 0
+
+def _cleanup_rescued_reads(r1: Path, r2: Path, logger: Logger, context: str) -> None:
+    """
+    Deletes this attempt's own rescued R1/R2 FASTQ (rescue_mapping's
+    real output, this script's own --r1/--r2) once GetOrganelle has
+    consumed them -- whether it succeeded or not. Nothing downstream
+    ever reads these again (they're deliberately NOT declared as
+    Snakemake outputs -- see 07-assembly_rescue.smk's own comment),
+    and a full_pool attempt's copy is the ENTIRE sample's trimmed read
+    pool duplicated verbatim: confirmed as the dominant real cause of
+    the disk filling to 100% (2.5TB total across every attempt/sample
+    on the live run, dwarfing everything else combined).
+
+    Args:
+        r1 (Path): This attempt's rescued R1 FASTQ.
+        r2 (Path): This attempt's rescued R2 FASTQ.
+        logger (Logger): The logger to use.
+        context (str): The log line's sample-id prefix.
+
+    Returns:
+        None
+    """
+    for path in (r1, r2):
+        try:
+            path.unlink(missing_ok = True)
+        except OSError as e:
+            logger.warning(f"{context} Could not remove rescued reads {path}: {e}.")
 
 def _write_status(output_dir: Path, sample_id: str, status: str, success: bool, profile_name: str,
                   seed_file: str | None = None) -> None:

@@ -124,6 +124,39 @@ def test_no_native_candidate_is_classified_missing_and_fails(tmp_path: Path, mon
     assert status["status"] == "missing"
     assert status["success"] is False
 
+def test_rescued_reads_are_deleted_after_a_successful_attempt(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """A full_pool attempt's rescued R1/R2 is a complete copy of the
+    sample's own trimmed reads -- confirmed as the dominant real cause
+    of the live run filling its disk to 100%. Nothing downstream ever
+    reads them again once GetOrganelle has consumed them, success or
+    not, so main() must always remove them."""
+    sample_id = "SAMPLE_04"
+    output_dir = tmp_path / "rescue_attempt_1"
+    monkeypatch.setattr(GetOrganelleRunner, "run", _stub_run_success)
+    argv = _argv(tmp_path, sample_id, output_dir)
+    r1, r2 = Path(argv[argv.index("--r1") + 1]), Path(argv[argv.index("--r2") + 1])
+    monkeypatch.setattr(sys, "argv", argv)
+
+    assert r1.is_file() and r2.is_file()
+    assert run_rescue_reassembly.main() == 0
+    assert not r1.exists() and not r2.exists()
+
+def test_rescued_reads_are_deleted_after_a_failed_attempt(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    sample_id = "SAMPLE_05"
+    output_dir = tmp_path / "rescue_attempt_1"
+
+    def _stub_run(self: GetOrganelleRunner) -> CommandResult:
+        self.output_dir.mkdir(parents = True, exist_ok = True)
+        raise SystemExit(1)
+
+    monkeypatch.setattr(GetOrganelleRunner, "run", _stub_run)
+    argv = _argv(tmp_path, sample_id, output_dir)
+    r1, r2 = Path(argv[argv.index("--r1") + 1]), Path(argv[argv.index("--r2") + 1])
+    monkeypatch.setattr(sys, "argv", argv)
+
+    assert run_rescue_reassembly.main() == 1
+    assert not r1.exists() and not r2.exists()
+
 def test_two_rescue_attempts_never_collide(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """Different attempts must write to different output dirs -- the
     caller's job (a Snakemake rule/orchestrator), but this confirms
