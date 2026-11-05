@@ -6,7 +6,12 @@ across one or more GetOrganelle assembly attempts: reads each
 attempt's recorded status (the `.assembly_status.json` run_getorganelle_
 assembly.py writes) and its standardized output (`data.fasta`/
 `graph.gfa`, same directory), then records the winning selection as a
-JSON manifest.
+JSON manifest. The winning candidate's FASTA is also resolved down to
+a single record here (the longest, when the native file holds more
+than one disjoint scaffold) -- every later single-sequence consumer
+(phylogeny dataset construction, MITOS2 annotation) gets exactly one
+real sequence to work with, never a multi-record file it has to
+reject.
 
 Doesn't run GetOrganelle or rescue itself -- those are earlier stages'
 jobs. This step exists so later stages (BLAST,
@@ -18,6 +23,7 @@ instead of re-deriving "which attempt won" themselves.
 import argparse
 import json
 from pathlib import Path
+from Bio import SeqIO
 from mitopipeline.logging.logger_factory import make_logger
 from mitopipeline.utils.contig_selection.models import ContigCandidate
 from mitopipeline.utils.contig_selection.selector import select_mitochondrial_contig
@@ -80,6 +86,33 @@ def _load_candidate(attempt: int, sample_id: str, attempt_dir: Path, logger) -> 
     return ContigCandidate(attempt = attempt, status = status, fasta_path = fasta_path,
                            gfa_path = gfa_path if gfa_path.is_file() else None)
 
+def _write_resolved_fasta(source_fasta: Path, output_path: Path) -> None:
+    """
+    Writes the single longest record from source_fasta to output_path.
+
+    A normal single-record candidate (the common case) round-trips
+    through unchanged. A "fragmented" candidate can hold multiple
+    disjoint scaffold records when GetOrganelle couldn't link them
+    into one contig (confirmed live: a 5-scaffold, 374-854bp-each
+    primary assembly) -- every downstream single-sequence consumer
+    (phylogeny dataset construction, MITOS2 annotation) expects
+    exactly one record and rejects the whole file otherwise. This
+    resolves that ambiguity here, once, the same way this step
+    already resolves which ATTEMPT won -- so nothing downstream has
+    to special-case a multi-record FASTA itself.
+
+    Args:
+        source_fasta (Path): The selected candidate's native FASTA (one or more records).
+        output_path (Path): Where to write the single resolved record.
+
+    Returns:
+        None
+    """
+    records = list(SeqIO.parse(source_fasta, "fasta"))
+    longest = max(records, key = lambda r: len(r.seq))
+    output_path.parent.mkdir(parents = True, exist_ok = True)
+    SeqIO.write([longest], output_path, "fasta")
+
 def main() -> int:
     """
     Selects and records one sample's final mitochondrial contig.
@@ -113,12 +146,14 @@ def main() -> int:
 
     logger.info(f"{context} Selected attempt {selection.source_attempt} "
                 f"({selection.status}, {selection.length_bp}bp): {selection.reason}")
+    resolved_fasta = args.output_dir / f"{args.sample_id}.selected.fasta"
+    _write_resolved_fasta(selection.fasta_path, resolved_fasta)
     with output_path.open("w", encoding = "utf-8") as handle:
         json.dump({
             "sample_id": args.sample_id,
             "selected": True,
             "status": selection.status,
-            "fasta_path": str(selection.fasta_path),
+            "fasta_path": str(resolved_fasta),
             "gfa_path": str(selection.gfa_path) if selection.gfa_path else None,
             "source_attempt": selection.source_attempt,
             "length_bp": selection.length_bp,

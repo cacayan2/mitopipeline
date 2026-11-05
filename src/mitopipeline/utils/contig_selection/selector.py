@@ -29,15 +29,26 @@ _STATUS_PRIORITY = {"circular": 0, "fragmented": 1}
 
 def _sequence_length(fasta_path: Path) -> int:
     """
-    Returns the total base count across every record in a FASTA file.
+    Returns the LONGEST single record's length in a FASTA file -- not
+    the sum of every record. A normal, single-record candidate is
+    unaffected (sum and max are identical). A "fragmented" candidate
+    can hold multiple disjoint scaffold records when GetOrganelle
+    couldn't link them into one contig (confirmed live: a 5-scaffold,
+    374-854bp-each primary assembly, summing to a misleading 2899bp);
+    summing them would rank that messy result as if it were one
+    longer, more complete sequence, when no single usable piece is
+    anywhere near that long. This also keeps ranking consistent with
+    run_contig_selection.py, which resolves the winning candidate down
+    to this same longest record as the one answer every downstream
+    single-sequence consumer gets.
 
     Args:
         fasta_path (Path): The FASTA file to measure.
 
     Returns:
-        int: The total sequence length, in base pairs.
+        int: The longest record's length, in base pairs.
     """
-    return sum(len(record.seq) for record in SeqIO.parse(fasta_path, "fasta"))
+    return max((len(record.seq) for record in SeqIO.parse(fasta_path, "fasta")), default = 0)
 
 def select_mitochondrial_contig(candidates: list[ContigCandidate],
                                  logger: Logger | None = None) -> ContigSelection | None:

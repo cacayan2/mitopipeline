@@ -85,6 +85,52 @@ def test_missing_status_file_is_treated_as_missing_not_a_crash(tmp_path: Path, m
     result = json.loads((tmp_path / "selection" / f"{sample_id}.contig_selection.json").read_text())
     assert result["selected"] is False
 
+def test_multi_scaffold_candidate_is_resolved_to_its_longest_record(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    # Confirmed live (etheostoma_tippecanoe_run_may2026_115): GetOrganelle
+    # can leave multiple disjoint scaffold records in one data.fasta when
+    # it can't link them into a single contig. Every downstream single-
+    # sequence consumer (phylogeny dataset construction, MITOS2 annotation)
+    # rejects a multi-record FASTA outright, so this step must resolve it
+    # down to one real record -- the longest -- rather than pass the raw
+    # multi-record file through.
+    sample_id = "SAMPLE_06"
+    attempt0 = tmp_path / "attempt0"
+    attempt0.mkdir(parents = True)
+    (attempt0 / f"{sample_id}.assembly_status.json").write_text(
+        json.dumps({"sample_id": sample_id, "status": "fragmented", "success": True}))
+    (attempt0 / "data.fasta").write_text(
+        ">scaffold_1\n" + ("A" * 374) + "\n"
+        ">scaffold_2\n" + ("C" * 414) + "\n"
+        ">scaffold_5\n" + ("T" * 854) + "\n"
+    )
+    (attempt0 / "graph.gfa").write_text("H\tVN:Z:1.0\n")
+
+    monkeypatch.setattr(sys, "argv", _argv(tmp_path, sample_id, [attempt0]))
+    assert run_contig_selection.main() == 0
+
+    result = json.loads((tmp_path / "selection" / f"{sample_id}.contig_selection.json").read_text())
+    assert result["length_bp"] == 854
+
+    resolved_fasta = Path(result["fasta_path"])
+    assert resolved_fasta != attempt0 / "data.fasta"
+    resolved_text = resolved_fasta.read_text()
+    assert resolved_text.count(">") == 1
+    assert "scaffold_5" in resolved_text
+    assert "A" * 374 not in resolved_text
+
+def test_single_record_candidate_round_trips_unchanged(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    sample_id = "SAMPLE_07"
+    attempt0 = tmp_path / "attempt0"
+    _write_attempt(attempt0, sample_id, "circular", length = 16_596)
+
+    monkeypatch.setattr(sys, "argv", _argv(tmp_path, sample_id, [attempt0]))
+    assert run_contig_selection.main() == 0
+
+    result = json.loads((tmp_path / "selection" / f"{sample_id}.contig_selection.json").read_text())
+    resolved_text = Path(result["fasta_path"]).read_text()
+    assert resolved_text.count(">") == 1
+    assert resolved_text.count("A") == 16_596
+
 def test_status_says_circular_but_fasta_missing_is_treated_as_missing(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     sample_id = "SAMPLE_05"
     attempt0 = tmp_path / "attempt0"

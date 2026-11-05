@@ -41,6 +41,24 @@ def test_circular_always_beats_fragmented_regardless_of_length(tmp_path: Path):
     assert selected.source_attempt == 1
     assert selected.length_bp == 100
 
+def test_ranking_uses_the_longest_record_not_the_sum_of_records(tmp_path: Path):
+    # A "fragmented" candidate can hold multiple disjoint scaffold
+    # records when GetOrganelle couldn't link them into one contig --
+    # summing them would let 5 small scaffolds (374-854bp each, ~2.9kb
+    # combined) outrank a genuine single 3000bp candidate purely by
+    # total length. Ranking must use the longest single record instead.
+    multi_scaffold = tmp_path / "multi.fasta"
+    multi_scaffold.write_text(">s1\n" + ("A" * 400) + "\n>s2\n" + ("C" * 800) + "\n>s3\n" + ("G" * 850) + "\n")
+    single_scaffold = _write_fasta(tmp_path / "single.fasta", length = 3_000)
+    candidates = [
+        ContigCandidate(attempt = 0, status = "fragmented", fasta_path = multi_scaffold, gfa_path = None),
+        ContigCandidate(attempt = 1, status = "fragmented", fasta_path = single_scaffold, gfa_path = None),
+    ]
+    selected = select_mitochondrial_contig(candidates)
+    assert selected is not None
+    assert selected.source_attempt == 1
+    assert selected.length_bp == 3_000
+
 def test_longer_sequence_wins_among_same_status(tmp_path: Path):
     shorter = _write_fasta(tmp_path / "shorter.fasta", length = 1_000)
     longer = _write_fasta(tmp_path / "longer.fasta", length = 15_000)
