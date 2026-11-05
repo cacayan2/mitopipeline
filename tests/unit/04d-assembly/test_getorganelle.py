@@ -193,6 +193,37 @@ def test_postprocess_outputs_exits_on_ambiguous_native_fasta(tmp_path: Path, pai
     with pytest.raises(SystemExit):
         runner.postprocess_outputs()
 
+def test_cleanup_failed_output_removes_everything_but_log_and_json(tmp_path: Path, paired_sample: Sample) -> None:
+    """
+    A failed attempt never produces a real native fasta/gfa, so
+    postprocess_outputs() never runs -- cleanup_failed_output() is the
+    only thing standing between a failure and GetOrganelle's full
+    scratch directory (SPAdes working dirs, bowtie2 indices, extended
+    read files) being retained forever. Confirmed against real failed
+    attempts on disk before this fix: 17-34GB each, vs ~2MB for an
+    equivalent success.
+    """
+    runner = _make_runner(tmp_path, paired_sample)
+    runner.output_dir.mkdir(parents = True, exist_ok = True)
+    (runner.output_dir / "get_org.log.txt").write_text("the real diagnostic log")
+    (runner.output_dir / "SAMPLE_01.assembly_status.json").write_text("{}")
+    (runner.output_dir / "extended_1_paired.fq").write_text("x" * 100)
+    (runner.output_dir / "temp.indices.1").mkdir()
+    (runner.output_dir / "temp.indices.1" / "scratch.bin").write_text("y")
+    runner.cleanup_failed_output()
+    remaining = {p.name for p in runner.output_dir.iterdir()}
+    assert remaining == {"get_org.log.txt", "SAMPLE_01.assembly_status.json"}
+
+def test_cleanup_failed_output_is_a_noop_when_output_dir_never_existed(tmp_path: Path, paired_sample: Sample) -> None:
+    """
+    A GetOrganelle invocation that fails before ever creating its own
+    -o directory (e.g. a crash during argument validation) must not
+    make cleanup_failed_output() itself raise.
+    """
+    runner = _make_runner(tmp_path, paired_sample)
+    assert not runner.output_dir.exists()
+    runner.cleanup_failed_output()
+
 def test_validate_outputs_exits_on_missing_output(tmp_path: Path, paired_sample: Sample) -> None:
     """
     validate_outputs should exit if the standardized FASTA/GFA are missing.

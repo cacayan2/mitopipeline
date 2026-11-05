@@ -108,15 +108,18 @@ def main() -> int:
         logger.warning(f"{context} GetOrganelle assembly did not produce a usable output (exit {e.code}); classifying as missing.")
         status = discover_assembly_artifacts(output_dir, logger)
         _write_status(output_dir, args.sample_id, status.status, success = False)
+        runner.cleanup_failed_output()
         return 1
     except Exception as e:
         logger.error(f"{context} GetOrganelle assembly failed unexpectedly: {e}.")
+        runner.cleanup_failed_output()
         return 1
 
     if not result.success:
         logger.error(f"{context} GetOrganelle assembly exited with return code {result.return_code} after {result.runtime_seconds:.1f}s.")
         status = discover_assembly_artifacts(output_dir, logger)
         _write_status(output_dir, args.sample_id, status.status, success = False)
+        runner.cleanup_failed_output()
         return result.return_code or 1
 
     # Not re-deriving the classification here: postprocess_outputs()

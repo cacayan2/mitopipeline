@@ -191,9 +191,11 @@ def main() -> int:
         status = discover_assembly_artifacts(args.output_dir, logger)
         _write_status(args.output_dir, args.sample_id, status.status, success = False,
                      profile_name = args.profile_name, seed_file = seed_file_used)
+        runner.cleanup_failed_output()
         return 1
     except Exception as e:
         logger.error(f"{context} Rescue reassembly (profile '{args.profile_name}') failed unexpectedly: {e}.")
+        runner.cleanup_failed_output()
         return 1
 
     if not result.success:
@@ -201,6 +203,7 @@ def main() -> int:
         status = discover_assembly_artifacts(args.output_dir, logger)
         _write_status(args.output_dir, args.sample_id, status.status, success = False,
                      profile_name = args.profile_name, seed_file = seed_file_used)
+        runner.cleanup_failed_output()
         return result.return_code or 1
 
     # Same reasoning as run_getorganelle_assembly.py: postprocess_outputs()

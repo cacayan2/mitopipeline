@@ -380,6 +380,44 @@ class GetOrganelleRunner(BaseTool):
             else:
                 child.unlink()
 
+    def cleanup_failed_output(self) -> None:
+        """
+        Removes everything GetOrganelle left behind after a FAILED
+        attempt -- no path_sequence.fasta/selected_graph.gfa exist to
+        standardize in this case, so nothing in output_dir is a real
+        output worth keeping. postprocess_outputs() (above) only ever
+        runs on a successful BaseTool.run() -- a failed or crashed
+        attempt skips it entirely, so without this, GetOrganelle's own
+        multi-gigabyte working directory (SPAdes scratch, extended
+        read files, bowtie2 indices) is retained forever instead of
+        being pruned the same way a successful attempt's is. Confirmed
+        against real failed attempts on disk: 17-34GB each, vs ~2MB
+        for an equivalent successful one.
+
+        Callers (run_getorganelle_assembly.py / run_rescue_reassembly.py)
+        call this from their own failure branches, after writing this
+        attempt's status record -- get_org.log.txt and every small
+        *.json record already on disk (assembly_status, recruited-
+        reads QC, a rescue attempt's own reseed provenance) are kept
+        for diagnostics; everything else -- all of it genuine GetOrganelle
+        scratch, never a declared pipeline output -- goes.
+
+        Args:
+            None
+
+        Returns:
+            None
+        """
+        if not self.output_dir.is_dir():
+            return
+        for child in self.output_dir.iterdir():
+            if child.name == "get_org.log.txt" or child.suffix == ".json":
+                continue
+            if child.is_dir():
+                shutil.rmtree(child)
+            else:
+                child.unlink()
+
     def validate_outputs(self) -> None:
         """
         Validates the standardized outputs of GetOrganelle. This function
