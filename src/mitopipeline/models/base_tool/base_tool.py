@@ -190,12 +190,26 @@ class BaseTool(ABC):
             # GNU time prepends a human-readable notice line (e.g. "Command
             # exited with non-zero status 1") before the -f JSON line, so
             # the JSON line is parsed specifically rather than the whole file.
+            # When the wrapped command is killed by a signal (e.g. an
+            # external SIGKILL during a restart) rather than exiting
+            # normally, GNU time never writes this file at all -- it stays
+            # empty, and metrics are genuinely unavailable, not just hard
+            # to parse. Confirmed live: this previously raised a bare
+            # KeyError here, uncaught by anything downstream expecting a
+            # documented failure (run()'s own success/failure branch never
+            # even ran), so the caller's generic exception handler logged
+            # "failed unexpectedly: 'user_cpu_seconds'" and returned
+            # without writing any assembly status -- a real rescue attempt
+            # silently burned with no record at all, rather than a
+            # documented failure. Defaulting to None here instead lets the
+            # real completed.returncode (already non-zero for a killed
+            # process) drive the normal, already-correct failure path.
             with metrics_path.open("r", encoding = "utf-8") as handle:
                 metrics_lines = [line for line in handle.readlines() if line.strip()]
             metrics = json.loads(metrics_lines[-1]) if metrics_lines else {}
-            user_cpu_seconds = metrics["user_cpu_seconds"]
-            system_cpu_seconds = metrics["system_cpu_seconds"]
-            peak_memory_mb = metrics["peak_memory_mb"] / 1024
+            user_cpu_seconds = metrics.get("user_cpu_seconds")
+            system_cpu_seconds = metrics.get("system_cpu_seconds")
+            peak_memory_mb = metrics["peak_memory_mb"] / 1024 if "peak_memory_mb" in metrics else None
 
         finally:
             # Removing the tempfile.

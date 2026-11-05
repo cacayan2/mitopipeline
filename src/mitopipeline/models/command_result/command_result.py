@@ -80,10 +80,17 @@ class CommandResult:
     def cpu_time_seconds(self) -> float | None:
         """
         Property for the total CPU time of the command in seconds.
+        None when either component is unavailable (e.g. the command was
+        killed by a signal before GNU time could record anything) --
+        the type hint already promised this; the implementation just
+        didn't honor it, and would otherwise crash adding None to a
+        float the moment that case was ever actually reached.
 
         Returns:
-            float: The total CPU time of the command in seconds.
+            float | None: The total CPU time of the command in seconds, or None if unavailable.
         """
+        if self.user_cpu_seconds is None or self.system_cpu_seconds is None:
+            return None
         return self.user_cpu_seconds + self.system_cpu_seconds
 
     def to_dict(self) -> dict:
