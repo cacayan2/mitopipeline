@@ -164,6 +164,7 @@ stage_options:
       - name: full_pool_relaxed_graph
         recruitment: full_pool
         reseed: false
+        reuse_primary_seed: false
         kmer: 21,33,45,55,65,85,105,115
         target_coverage: inf
         max_rounds: 20

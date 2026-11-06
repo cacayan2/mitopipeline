@@ -193,6 +193,12 @@ rule rescue_reassembly:
         # A profile may override the job's seed mode for its reseed (e.g.
         # retry a whole-genome seed, or GetOrganelle's bundled set).
         reseed_mode = lambda wc: str(RESCUE_PROFILES[int(wc.attempt_num) - 1].get("seed_mode") or SEED_MODE),
+        # Defaults true (today's long-standing behavior for any profile
+        # that doesn't say otherwise); "full_pool_relaxed_graph" sets it
+        # false in config, since it's the true last-resort profile --
+        # see its own comment below for why reusing the primary seed
+        # there was never actually safe.
+        reuse_primary_seed = lambda wc: "1" if RESCUE_PROFILES[int(wc.attempt_num) - 1].get("reuse_primary_seed", True) else "",
         primary_seed_fasta = lambda wc: _primary_seed_info(wc.sample)[0],
         primary_seed_gene = lambda wc: _primary_seed_info(wc.sample)[1],
         scientific_name = lambda wc: SAMPLE_TABLE.loc[wc.sample, "organism"],
@@ -240,7 +246,20 @@ rule rescue_reassembly:
             SEED_ARGS=()
             if [ -n "{params.reseed_flag}" ]; then
                 SEED_ARGS=(--reseed --exclude-gene {params.primary_seed_gene:q} --scientific-name {params.scientific_name:q} --database-dir {params.database_dir:q} --seed-mode {params.reseed_mode:q})
-            elif [ -n "{params.primary_seed_fasta}" ]; then
+            elif [ -n "{params.reuse_primary_seed}" ] && [ -n "{params.primary_seed_fasta}" ]; then
+                # Reusing the primary's own seed only ever makes sense
+                # if that seed recruited SOMETHING -- a profile that
+                # declines reuse (reuse_primary_seed: false, currently
+                # just full_pool_relaxed_graph) is the true last resort,
+                # meant to fall back to GetOrganelle's own broad built-in
+                # animal_mt database exactly the way v0.1.0 always did.
+                # Confirmed live (2026-11-06): a seed that recruited
+                # ZERO reads in the primary attempt (bowtie2's own "No
+                # animal_mt seed reads found!") still recruits zero on
+                # a third try with the identical seed, no matter how
+                # much the graph parameters below are relaxed -- v0.1.0
+                # never had this failure mode because it never tried to
+                # be clever about the seed in the first place.
                 SEED_ARGS=(--seed-file {params.primary_seed_fasta:q})
             fi
             {PYTHON_BIN:q} {params.exec_script:q} \
