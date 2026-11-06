@@ -347,6 +347,30 @@ def test_collect_rescue_summary_reads_the_real_tuning_used(tmp_path: Path) -> No
     assert attempts[0].target_coverage == float("inf")
     assert attempts[0].max_rounds == 20
 
+def test_collect_rescue_summary_reads_the_real_candidate_count(tmp_path: Path) -> None:
+    """Regression (confirmed live, 2026-11-06, neogobius_melanostomus):
+    GetOrganelle can legitimately leave behind several equally valid
+    ".complete." candidates through a repeat region -- candidate_count
+    must flow through so the report can say one was chosen
+    deterministically, rather than looking like an unexplained single
+    result."""
+    rescue_dir = tmp_path / "07-assembly_rescue" / "sample1"
+    attempt_3 = rescue_dir / "attempt_3"
+    attempt_3.mkdir(parents = True)
+    _write_json(attempt_3 / "sample1.rescue_mapping.json", {
+        "sample_id": "sample1", "attempted": True,
+        "reason": "status 'missing' triggers rescue; attempt 3 of 3",
+    })
+    _write_json(attempt_3 / "reassembly" / "sample1.assembly_status.json", {
+        "sample_id": "sample1", "status": "circular", "success": True, "profile_name": "full_pool_relaxed_graph",
+        "seed_file": None, "candidate_count": 5,
+    })
+
+    attempts = collect_rescue_summary(rescue_dir)
+
+    assert len(attempts) == 1
+    assert attempts[0].candidate_count == 5
+
 def test_collect_rescue_summary_empty_when_no_rescue_dir(tmp_path: Path) -> None:
     assert collect_rescue_summary(None) == ()
     assert collect_rescue_summary(tmp_path / "does_not_exist") == ()

@@ -347,21 +347,25 @@ class GetOrganelleRunner(BaseTool):
         # they still exist. Callers read this back via self.assembly_status.
         self.assembly_status = discover_assembly_artifacts(self.output_dir, self.logger)
 
-        # Locating GetOrganelle's own native output files.
-        fasta_candidates = sorted(self.output_dir.glob("*.path_sequence.fasta"))
-        gfa_candidates = sorted(self.output_dir.glob("*.selected_graph.gfa"))
-
-        # Handling an unexpected number of native assembly outputs.
-        if len(fasta_candidates) != 1:
-            self.logger.error(f"{context} Expected exactly one GetOrganelle path_sequence FASTA in {self.output_dir}; found {len(fasta_candidates)}.")
+        # discover_assembly_artifacts() above already chose the single
+        # best candidate -- preferring a ".complete." one, since
+        # GetOrganelle can legitimately leave behind several equally
+        # valid circular path variants through a repeat region (e.g.
+        # neogobius_melanostomus: 5 complete repeat_pattern candidates
+        # from one real successful assembly, confirmed live 2026-11-06).
+        # Re-globbing here and demanding exactly one, as this used to,
+        # discarded a genuine circular result the moment GetOrganelle
+        # produced more than one valid candidate.
+        if self.assembly_status.fasta_path is None:
+            self.logger.error(f"{context} No GetOrganelle path_sequence FASTA found in {self.output_dir}.")
             sys.exit(1)
-        if len(gfa_candidates) != 1:
-            self.logger.error(f"{context} Expected exactly one GetOrganelle selected_graph GFA in {self.output_dir}; found {len(gfa_candidates)}.")
+        if self.assembly_status.gfa_path is None:
+            self.logger.error(f"{context} No GetOrganelle selected_graph GFA found in {self.output_dir}.")
             sys.exit(1)
 
         # Standardizing the native outputs to fixed filenames.
-        shutil.copy2(fasta_candidates[0], self.standardized_fasta)
-        shutil.copy2(gfa_candidates[0], self.standardized_gfa)
+        shutil.copy2(self.assembly_status.fasta_path, self.standardized_fasta)
+        shutil.copy2(self.assembly_status.gfa_path, self.standardized_gfa)
 
         # QC'ing the recruited reads BEFORE the cleanup below deletes
         # them -- they're GetOrganelle's own intermediate files, not

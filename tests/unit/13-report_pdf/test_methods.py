@@ -84,6 +84,43 @@ def test_rescue_attempt_describes_its_own_real_tuning_including_uncapped_coverag
     assert "no coverage cap" in text
     assert "max 20 extension round(s)" in text
 
+def test_rescue_attempt_states_multiple_candidates_were_resolved_deterministically() -> None:
+    """Regression (confirmed live, 2026-11-06, neogobius_melanostomus):
+    postprocess_outputs() used to exit(1) and discard a genuinely
+    complete assembly the moment GetOrganelle left behind more than one
+    ".complete." candidate (5, in the real case -- equally valid
+    repeat-pattern variants through a repeat region). Now that it picks
+    one deterministically instead, the report must say so explicitly,
+    not describe a 5-candidate outcome identically to an unambiguous
+    1-candidate one."""
+    sample = _sample(
+        assembly = AssemblyStatistics(sample_id = "s", status = "circular", source_attempt = 3,
+                                      length_bp = 16500, contig_count = 1, gc_content_percent = 44.0),
+        assembly_config = AssemblyConfigSummary(organelle_type = "animal_mt", seeded = False, seed_file = None),
+        rescue_attempts = (RescueAttemptSummary(
+            attempt = 3, attempted = True, reason = "triggered",
+            profile_name = "full_pool_relaxed_graph", status = "circular", recruitment = "full_pool",
+            seeded = False, candidate_count = 5,
+        ),),
+    )
+    text = render_methods_text(sample)
+    assert "5 equally valid native candidates found" in text
+    assert "one chosen deterministically" in text
+
+def test_rescue_attempt_omits_candidate_count_clause_when_unambiguous() -> None:
+    """A single candidate is the normal case and must not be
+    editorialized as if it were a resolved ambiguity."""
+    sample = _sample(
+        assembly = AssemblyStatistics(sample_id = "s", status = "fragmented", source_attempt = 1,
+                                      length_bp = 16000, contig_count = 1, gc_content_percent = 44.0),
+        assembly_config = AssemblyConfigSummary(organelle_type = "animal_mt", seeded = False, seed_file = None),
+        rescue_attempts = (RescueAttemptSummary(attempt = 1, attempted = True, reason = "triggered",
+                                                profile_name = "candidate_guided", status = "fragmented",
+                                                recruitment = "candidate_mapped", candidate_count = 1),),
+    )
+    text = render_methods_text(sample)
+    assert "equally valid native candidates" not in text
+
 def test_methods_text_mentions_rescue_when_it_happened() -> None:
     sample = _sample(
         assembly = AssemblyStatistics(sample_id = "s", status = "fragmented", source_attempt = 1,

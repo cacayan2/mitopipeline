@@ -107,7 +107,7 @@ def main() -> int:
     except SystemExit as e:
         logger.warning(f"{context} GetOrganelle assembly did not produce a usable output (exit {e.code}); classifying as missing.")
         status = discover_assembly_artifacts(output_dir, logger)
-        _write_status(output_dir, args.sample_id, downgrade_unverified_circular(status), success = False)
+        _write_status(output_dir, args.sample_id, downgrade_unverified_circular(status), success = False, candidate_count = status.candidate_count)
         runner.cleanup_failed_output()
         return 1
     except Exception as e:
@@ -118,7 +118,7 @@ def main() -> int:
     if not result.success:
         logger.error(f"{context} GetOrganelle assembly exited with return code {result.return_code} after {result.runtime_seconds:.1f}s.")
         status = discover_assembly_artifacts(output_dir, logger)
-        _write_status(output_dir, args.sample_id, downgrade_unverified_circular(status), success = False)
+        _write_status(output_dir, args.sample_id, downgrade_unverified_circular(status), success = False, candidate_count = status.candidate_count)
         runner.cleanup_failed_output()
         return result.return_code or 1
 
@@ -129,7 +129,7 @@ def main() -> int:
     # the classification captured before that cleanup happened.
     status = runner.assembly_status
     logger.info(f"{context} GetOrganelle assembly complete after {result.runtime_seconds:.1f}s; classified as '{status.status}' ({status.candidate_count} native candidate(s)).")
-    _write_status(output_dir, args.sample_id, status.status, success = True)
+    _write_status(output_dir, args.sample_id, status.status, success = True, candidate_count = status.candidate_count)
     return 0
 
 def _prior_success(output_dir: Path, sample_id: str) -> str | None:
@@ -166,7 +166,7 @@ def _prior_success(output_dir: Path, sample_id: str) -> str | None:
         return None
     return record.get("status")
 
-def _write_status(output_dir: Path, sample_id: str, status: str, success: bool) -> None:
+def _write_status(output_dir: Path, sample_id: str, status: str, success: bool, candidate_count: int | None = None) -> None:
     """
     Records this sample's assembly classification alongside its
     standardized output, for the rescue trigger and any later
@@ -177,6 +177,7 @@ def _write_status(output_dir: Path, sample_id: str, status: str, success: bool) 
         sample_id (str): The sample id.
         status (str): The classification from discover_assembly_artifacts() ("circular", "fragmented", or "missing").
         success (bool): Whether the GetOrganelle command itself completed successfully.
+        candidate_count (int | None): How many native path_sequence FASTA candidates GetOrganelle left behind -- more than one means postprocess_outputs() had to pick deterministically among several equally-valid outputs (e.g. several ".complete." repeat-pattern variants through a repeat region), worth surfacing in the report rather than silently resolved.
 
     Returns:
         None
@@ -184,7 +185,7 @@ def _write_status(output_dir: Path, sample_id: str, status: str, success: bool) 
     output_dir.mkdir(parents = True, exist_ok = True)
     status_path = output_dir / f"{sample_id}.assembly_status.json"
     with status_path.open("w", encoding = "utf-8") as handle:
-        json.dump({"sample_id": sample_id, "status": status, "success": success}, handle, indent = 4)
+        json.dump({"sample_id": sample_id, "status": status, "success": success, "candidate_count": candidate_count}, handle, indent = 4)
 
 if __name__ == "__main__":
     raise SystemExit(main())

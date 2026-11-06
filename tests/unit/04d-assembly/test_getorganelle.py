@@ -184,16 +184,43 @@ def test_postprocess_outputs_captures_assembly_status_before_cleanup(tmp_path: P
     # post-hoc discover_assembly_artifacts() call would be too late.
     assert not list(runner.output_dir.glob("*.path_sequence.fasta"))
 
-def test_postprocess_outputs_exits_on_ambiguous_native_fasta(tmp_path: Path, paired_sample: Sample) -> None:
+def test_postprocess_outputs_picks_one_candidate_deterministically_when_multiple_fasta_exist(tmp_path: Path, paired_sample: Sample) -> None:
     """
-    More than one candidate native FASTA means GetOrganelle produced
-    something unexpected; this must exit rather than silently pick one.
+    More than one candidate native FASTA is a real GetOrganelle outcome,
+    not just an edge case -- confirmed live 2026-11-06 on
+    neogobius_melanostomus, which legitimately produced 5 ".complete."
+    path_sequence FASTAs (one real successful assembly, 5 equally valid
+    repeat-pattern variants through a repeat region). This used to
+    re-glob independently of discover_assembly_artifacts() and exit(1)
+    on anything but exactly one candidate, discarding that genuine
+    circular result. It must now standardize whichever candidate
+    discover_assembly_artifacts() already chose (self.assembly_status),
+    the same deterministic lexical-first tiebreak used everywhere else.
     """
     runner = _make_runner(tmp_path, paired_sample)
     _write_native_outputs(runner.output_dir, prefix = "k75")
     (runner.output_dir / "k95.path_sequence.fasta").write_text(">seq2\nGGGG\n")
-    with pytest.raises(SystemExit):
-        runner.postprocess_outputs()
+    runner.postprocess_outputs()
+    assert runner.assembly_status is not None
+    assert runner.assembly_status.candidate_count == 2
+    assert runner.standardized_fasta.read_text() == ">seq\nACGT\n"  # k75, lexically first
+
+def test_postprocess_outputs_picks_one_complete_candidate_when_multiple_complete_exist(tmp_path: Path, paired_sample: Sample) -> None:
+    """
+    The exact neogobius_melanostomus scenario: several ".complete."
+    candidates from one real successful assembly. Must standardize the
+    chosen one and report "circular", not exit.
+    """
+    runner = _make_runner(tmp_path, paired_sample)
+    runner.output_dir.mkdir(parents = True, exist_ok = True)
+    for n in range(1, 6):
+        (runner.output_dir / f"animal_mt.K115.complete.graph1.{n}.repeat_pattern{n}.path_sequence.fasta").write_text(f">seq{n}\nACGT\n")
+        (runner.output_dir / f"animal_mt.K115.complete.graph1.{n}.repeat_pattern{n}.selected_graph.gfa").write_text("H\tVN:Z:1.0\n")
+    (runner.output_dir / "assembly.log").write_text("log")
+    runner.postprocess_outputs()
+    assert runner.assembly_status.status == "circular"
+    assert runner.assembly_status.candidate_count == 5
+    assert runner.standardized_fasta.read_text() == ">seq1\nACGT\n"
 
 def test_cleanup_failed_output_removes_everything_but_log_and_json(tmp_path: Path, paired_sample: Sample) -> None:
     """

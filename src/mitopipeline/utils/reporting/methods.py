@@ -174,6 +174,14 @@ def _assembly_sentence(report_data: SampleReportData) -> str:
         tuning = _tuning_clause(a)
         tuning_clause = f", {tuning}" if tuning else ""
         outcome = f"produced a {humanize_enum(a.status).lower()} result" if a.status else "did not complete"
+        # More than one native candidate means GetOrganelle left behind
+        # several equally valid path variants through a repeat region
+        # (confirmed live 2026-11-06, neogobius_melanostomus: 5 complete
+        # repeat-pattern variants from one real successful assembly) --
+        # worth stating explicitly, since one was picked deterministically
+        # rather than the attempt being genuinely ambiguous or unreliable.
+        if a.candidate_count and a.candidate_count > 1:
+            outcome += f" ({a.candidate_count} equally valid native candidates found; one chosen deterministically)"
         return (f"attempt {a.attempt} ({profile_clause}{recruitment_clause}, {seed_clause}{tuning_clause}, "
                 f"re-running GetOrganelle{rescue_getorganelle_version}) {outcome}")
 

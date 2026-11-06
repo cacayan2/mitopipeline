@@ -31,6 +31,7 @@ class AssemblyConfigSummary:
         kmer (str | None): A real per-sample -k override, if the config stage ever recorded one -- None means the primary attempt ran with GetOrganelle's own built-in default (today's config never overrides this), not an unknown/missing value.
         target_coverage (float | None): A real per-sample --reduce-reads-for-coverage override, if the config stage ever recorded one -- None means GetOrganelle's own built-in default, same reasoning as kmer.
         max_rounds (int | None): A real per-sample -R override, if the config stage ever recorded one -- None means GetOrganelle's own built-in default, same reasoning as kmer.
+        candidate_count (int | None): How many native path_sequence FASTA candidates GetOrganelle actually left behind for this attempt, from the real assembly_status.json -- more than one means a repeat region left several equally-valid paths and one was picked deterministically, not an ambiguous/unreliable result. None for an attempt that predates this field being recorded.
     """
     organelle_type: str
     seeded: bool
@@ -42,6 +43,7 @@ class AssemblyConfigSummary:
     kmer: str | None = None
     target_coverage: float | None = None
     max_rounds: int | None = None
+    candidate_count: int | None = None
 
 @dataclass(frozen = True, slots = True)
 class RescueAttemptSummary:
@@ -65,6 +67,7 @@ class RescueAttemptSummary:
         kmer (str | None): This attempt's own real -k value, as actually passed to GetOrganelle, or None if it never ran.
         target_coverage (float | None): This attempt's own real --reduce-reads-for-coverage value, as actually passed to GetOrganelle (a finite bound, or inf for genuinely uncapped), or None if it never ran.
         max_rounds (int | None): This attempt's own real -R value, as actually passed to GetOrganelle, or None if it never ran.
+        candidate_count (int | None): How many native path_sequence FASTA candidates GetOrganelle actually left behind, from the real assembly_status.json -- more than one means a repeat region left several equally-valid paths and one was picked deterministically. None if it never ran, or for an attempt that predates this field being recorded.
     """
     attempt: int
     attempted: bool
@@ -77,6 +80,7 @@ class RescueAttemptSummary:
     kmer: str | None = None
     target_coverage: float | None = None
     max_rounds: int | None = None
+    candidate_count: int | None = None
 
 @dataclass(frozen = True, slots = True)
 class BlastConfigSummary:

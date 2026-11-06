@@ -511,6 +511,7 @@ def collect_rescue_summary(rescue_dir: str | Path | None) -> tuple[RescueAttempt
             kmer = reassembly_status.get("kmer") if reassembly_status else None,
             target_coverage = reassembly_status.get("target_coverage") if reassembly_status else None,
             max_rounds = reassembly_status.get("max_rounds") if reassembly_status else None,
+            candidate_count = reassembly_status.get("candidate_count") if reassembly_status else None,
         ))
     return tuple(attempts)
 
