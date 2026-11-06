@@ -157,6 +157,11 @@ stage_options:
     #     the anchor itself -- not the read recruitment -- was the
     #     problem.
     assembly_rescue:
+      # Same real-utilization finding as prod_config.yaml's getorganelle
+      # block -- confirmed live (2026-11-06), real average usage across
+      # completed rescue reassembly runs is ~2.1 cores against a
+      # 4-thread default. Lowered to 2.
+      threads: 2
       trigger_statuses:
       - fragmented
       getorganelle_profiles:

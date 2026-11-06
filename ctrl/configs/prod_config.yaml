@@ -76,7 +76,17 @@ stage_options:
       version: null
       mode: mitofish_gene
     getorganelle:
-      threads: 8
+      # Was 8 -- confirmed live (2026-11-06) against 108+ real completed
+      # runs' own recorded CPU time that this job's real average
+      # utilization is ~2.5 cores, not 8 (SPAdes/bowtie2 only hit their
+      # full thread count in brief bursts; GetOrganelle's own graph-
+      # extension logic, which dominates wall-clock time on long runs,
+      # is mostly single-threaded). Reserving 8 per job capped
+      # Snakemake to only 3 concurrent primary assemblies under
+      # --cores 24, while the real chip sat mostly idle (load average
+      # 6-9 of 24). Lowered to better match real usage and let more
+      # samples run side by side within the same core budget.
+      threads: 4
       database_type: animal_mt
       # NOT YET WIRED: nothing in the pipeline currently reads this key.
       # GetOrganelle's own bundled label database (used to classify
@@ -140,6 +150,15 @@ stage_options:
     #     the anchor itself -- not the read recruitment -- was the
     #     problem.
     assembly_rescue:
+      # Was unset (defaulting to 4 via RESCUE_CONFIG.get("threads", 4))
+      # -- same real-utilization finding as the primary assembly
+      # getorganelle block above: confirmed live (2026-11-06) that
+      # real average usage across completed rescue reassembly runs is
+      # ~2.1 cores against a 4-thread reservation (53% utilization).
+      # Lowered to 2 for the same reason: let more samples run
+      # concurrently within the same --cores budget instead of
+      # reserving more than these jobs actually use on average.
+      threads: 2
       # "missing" is eligible here too, but only for full_pool-recruitment
       # profiles (below) -- candidate_mapped recruitment has no existing
       # candidate to map against for a "missing" sample, so decide_rescue()
