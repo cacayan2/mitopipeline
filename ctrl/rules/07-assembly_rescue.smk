@@ -219,11 +219,29 @@ rule rescue_reassembly:
     shell:
         """
         if [ -s {params.rescued_r1:q} ] && [ -s {params.rescued_r2:q} ]; then
-            SEED_ARGS=""
+            # A bash ARRAY, not a plain string -- {params.scientific_name:q}
+            # is a real "Genus species" binomial, always containing a
+            # space, and Snakemake's `:q` renders that as a single-quoted
+            # token (e.g. 'Etheostoma chlorosomum'). Those quote
+            # characters are only ever real shell quoting on the SAME
+            # parse pass that first sees them; assigning the whole
+            # thing into a plain string variable and expanding it
+            # unquoted later (the pattern every other rule in this repo
+            # uses safely, because none of their own values ever
+            # contain a space) makes bash word-split on the embedded
+            # space while treating the quote characters as plain text,
+            # splitting one argument into two. Confirmed live: every
+            # reseed attempt for every two-word species name crashed
+            # with "unrecognized arguments: <second word>'" -- reseed
+            # had never actually worked, the whole time, for any
+            # sample, masked until now by an unrelated resource-
+            # contention bug that killed these jobs even earlier.
+            # An array's own members are never re-parsed this way.
+            SEED_ARGS=()
             if [ -n "{params.reseed_flag}" ]; then
-                SEED_ARGS="--reseed --exclude-gene {params.primary_seed_gene:q} --scientific-name {params.scientific_name:q} --database-dir {params.database_dir:q} --seed-mode {params.reseed_mode:q}"
+                SEED_ARGS=(--reseed --exclude-gene {params.primary_seed_gene:q} --scientific-name {params.scientific_name:q} --database-dir {params.database_dir:q} --seed-mode {params.reseed_mode:q})
             elif [ -n "{params.primary_seed_fasta}" ]; then
-                SEED_ARGS="--seed-file {params.primary_seed_fasta:q}"
+                SEED_ARGS=(--seed-file {params.primary_seed_fasta:q})
             fi
             {PYTHON_BIN:q} {params.exec_script:q} \
                 --sample-id {wildcards.sample} \
@@ -232,7 +250,7 @@ rule rescue_reassembly:
                 --kmer {params.profile[kmer]:q} \
                 --target-coverage {params.profile[target_coverage]} \
                 --max-rounds {params.profile[max_rounds]} \
-                $SEED_ARGS \
+                "${{SEED_ARGS[@]}}" \
                 --output-dir {params.reassembly_dir:q} \
                 --working-dir {params.working_dir:q} \
                 --threads {threads} \
