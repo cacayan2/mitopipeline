@@ -117,6 +117,58 @@ def _write_decision(output_dir: Path, sample_id: str, status: str, attempted: bo
             "rescued_r2": str(rescued_r2) if rescued_r2 else None,
         }, handle, indent = 4)
 
+def _mapping_scratch_paths(output_dir: Path, sample_id: str) -> list[Path]:
+    """
+    Computes the candidate_mapped chain's own scratch file paths
+    independently of whether the runner objects that normally derive
+    them were ever constructed -- a failure can strike as early as the
+    minimap2 stage itself, before `sorter`/`indexer` exist at all, so
+    cleanup can't rely on reading their attributes back. Matches
+    Minimap2Runner.output_sam and SamtoolsRunner.sorted_bam/.bam_index
+    exactly (same sample_id + output_dir naming); unlink's own
+    missing_ok handles whichever of these never actually got created.
+
+    Args:
+        output_dir (Path): This attempt's own output directory.
+        sample_id (str): The sample id.
+
+    Returns:
+        list[Path]: The SAM, sorted BAM, and BAM index paths.
+    """
+    sorted_bam = output_dir / f"{sample_id}.rescue.sorted.bam"
+    return [
+        output_dir / f"{sample_id}.rescue_mapping.sam",
+        sorted_bam,
+        Path(str(sorted_bam) + ".bai"),
+    ]
+
+def _cleanup_mapping_scratch(paths: list[Path], logger, context: str) -> None:
+    """
+    Deletes the candidate_mapped chain's own intermediate mapping
+    artifacts (minimap2's raw SAM, samtools sort's BAM, its .bai index)
+    once the chain is done with them -- on success AND failure alike,
+    since neither outcome leaves anything downstream reading them.
+    Confirmed against the actual codebase and this rule's own declared
+    Snakemake outputs: only the decision JSON and `.done` marker are
+    ever tracked, nothing reads these three files back. Previously kept
+    indefinitely ("for provenance"); found to total ~470GB across every
+    already-resolved sample on the live run, more than the drive's free
+    space -- not a crash leak, a permanent, unbounded cost by design.
+
+    Args:
+        paths (list[Path]): The mapping-chain scratch files to remove, whichever of them exist.
+        logger (Logger): The logger to use.
+        context (str): The log line's sample-id prefix.
+
+    Returns:
+        None
+    """
+    for path in paths:
+        try:
+            path.unlink(missing_ok = True)
+        except OSError as e:
+            logger.warning(f"{context} Could not remove mapping scratch file {path}: {e}.")
+
 def _full_pool_passthrough(output_dir: Path, sample_id: str, r1_src: Path, r2_src: Path) -> tuple[Path, Path]:
     """
     Copies the sample's complete original read pool into rescue's own
@@ -231,20 +283,25 @@ def main() -> int:
         # than failing loudly. Confirmed directly: the same input through
         # samtools fastq straight from minimap2's SAM correctly yields all
         # 1659 read pairs; through the sorted BAM, it yields zero.
-        # Sort+index remain for provenance (a standard mapping artifact
-        # to have on record); nothing downstream of rescue actually reads
-        # them, only the extracted FASTQ.
+        # Sort+index are a standard mapping artifact, kept only long
+        # enough for samtools fastq (below) and the index command
+        # itself to run -- nothing downstream of rescue ever reads them
+        # back (confirmed against the whole codebase and this rule's
+        # own declared Snakemake outputs), so _cleanup_mapping_scratch()
+        # removes sort+index+the raw SAM below, success or failure.
         extractor = SamtoolsRunner(working_dir = args.working_dir, output_dir = args.output_dir, sample = sample,
                                    operation = "fastq", input_path = mapper.output_sam,
                                    threads = args.threads, logger = logger, metrics_dir = args.metrics_dir)
         _run_stage(extractor, "samtools fastq")
     except (SystemExit, RuntimeError) as e:
         logger.error(f"{context} Rescue mapping chain failed ({e}).")
+        _cleanup_mapping_scratch(_mapping_scratch_paths(args.output_dir, args.sample_id), logger, context)
         _write_decision(args.output_dir, args.sample_id, status = args.status, attempted = True,
                         reason = f"mapping chain failed: {decision.reason}", recruitment = args.recruitment)
         return 1
 
     logger.info(f"{context} Rescue mapping chain complete: {extractor.rescued_r1.name}, {extractor.rescued_r2.name}")
+    _cleanup_mapping_scratch(_mapping_scratch_paths(args.output_dir, args.sample_id), logger, context)
     _write_decision(args.output_dir, args.sample_id, status = args.status, attempted = True, reason = decision.reason,
                     recruitment = args.recruitment, rescued_r1 = extractor.rescued_r1, rescued_r2 = extractor.rescued_r2)
     return 0

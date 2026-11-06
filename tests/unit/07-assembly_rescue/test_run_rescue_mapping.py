@@ -139,6 +139,51 @@ def test_a_failed_but_non_raising_stage_is_also_caught(tmp_path: Path, monkeypat
     # attempted=True -- nothing here is fabricated.
     assert not (tmp_path / "rescue" / f"{sample_id}.rescue.R1.fastq").exists()
 
+def test_successful_chain_cleans_up_its_own_sam_and_bam_scratch(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """The raw SAM, sorted BAM, and its .bai index are intermediate
+    mapping artifacts -- nothing downstream of rescue reads them back
+    (confirmed against the whole codebase and this rule's own declared
+    Snakemake outputs), so a successful chain must not leave them
+    behind. Previously kept forever "for provenance"; found to total
+    ~470GB across the live run's already-resolved samples."""
+    monkeypatch.setattr(Minimap2Runner, "run", _stub_minimap2_run)
+    monkeypatch.setattr(SamtoolsRunner, "run", _stub_samtools_run)
+    sample_id = "SAMPLE_10"
+    monkeypatch.setattr(sys, "argv", _argv(tmp_path, sample_id, "fragmented"))
+
+    assert run_rescue_mapping.main() == 0
+
+    rescue_dir = tmp_path / "rescue"
+    assert not (rescue_dir / f"{sample_id}.rescue_mapping.sam").exists()
+    assert not (rescue_dir / f"{sample_id}.rescue.sorted.bam").exists()
+    assert not (rescue_dir / f"{sample_id}.rescue.sorted.bam.bai").exists()
+    # The real output -- the extracted FASTQ -- must survive the cleanup.
+    assert (rescue_dir / f"{sample_id}.rescue.R1.fastq").is_file()
+
+def test_failed_chain_also_cleans_up_whatever_scratch_it_managed_to_write(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """A failure partway through (minimap2 and sort succeed, index
+    fails) must not leave the SAM/BAM it did manage to produce behind
+    either -- a failed attempt is just as useless to keep as a
+    successful one once nothing downstream will ever read it."""
+    monkeypatch.setattr(Minimap2Runner, "run", _stub_minimap2_run)
+
+    def _sort_then_fail_index(self: SamtoolsRunner):
+        if self.operation == "sort":
+            self.output_dir.mkdir(parents = True, exist_ok = True)
+            self.sorted_bam.write_bytes(b"fake bam")
+            return _fake_result()
+        return _fake_result(success = False, return_code = 1)
+    monkeypatch.setattr(SamtoolsRunner, "run", _sort_then_fail_index)
+
+    sample_id = "SAMPLE_11"
+    monkeypatch.setattr(sys, "argv", _argv(tmp_path, sample_id, "fragmented"))
+
+    assert run_rescue_mapping.main() == 1
+
+    rescue_dir = tmp_path / "rescue"
+    assert not (rescue_dir / f"{sample_id}.rescue_mapping.sam").exists()
+    assert not (rescue_dir / f"{sample_id}.rescue.sorted.bam").exists()
+
 def test_status_not_in_trigger_list_is_not_rescued(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     sample_id = "SAMPLE_05"
     monkeypatch.setattr(sys, "argv", _argv(tmp_path, sample_id, "missing"))
