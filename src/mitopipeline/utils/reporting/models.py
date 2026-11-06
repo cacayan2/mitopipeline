@@ -28,6 +28,9 @@ class AssemblyConfigSummary:
         seed_accession (str | None): The real source accession for the selected seed, or the fallback marker when GetOrganelle's own default database was used instead.
         seed_source (str | None): Which reference source produced the seed ("mitofish" or "fallback_default_database"), or None when unavailable.
         seed_fallback_reason (str | None): Why a MitoFish seed couldn't be used, when seeded is False and a real reason was recorded (never fabricated).
+        kmer (str | None): A real per-sample -k override, if the config stage ever recorded one -- None means the primary attempt ran with GetOrganelle's own built-in default (today's config never overrides this), not an unknown/missing value.
+        target_coverage (float | None): A real per-sample --reduce-reads-for-coverage override, if the config stage ever recorded one -- None means GetOrganelle's own built-in default, same reasoning as kmer.
+        max_rounds (int | None): A real per-sample -R override, if the config stage ever recorded one -- None means GetOrganelle's own built-in default, same reasoning as kmer.
     """
     organelle_type: str
     seeded: bool
@@ -36,6 +39,9 @@ class AssemblyConfigSummary:
     seed_accession: str | None = None
     seed_source: str | None = None
     seed_fallback_reason: str | None = None
+    kmer: str | None = None
+    target_coverage: float | None = None
+    max_rounds: int | None = None
 
 @dataclass(frozen = True, slots = True)
 class RescueAttemptSummary:
@@ -56,6 +62,9 @@ class RescueAttemptSummary:
         recruitment (str | None): This attempt's real recruitment strategy -- "candidate_mapped" (minimap2/samtools against the current best candidate) or "full_pool" (the complete original read pool, no narrowing) -- or None if it never ran.
         seeded (bool): Whether this attempt's reassembly actually ran with a real seed FASTA (reused from the primary attempt or freshly re-derived), as opposed to GetOrganelle's own default database.
         reseeded (bool): Whether this attempt's seed was freshly re-derived (a genuinely different locus than the primary attempt used), as opposed to reusing the primary's own seed as-is.
+        kmer (str | None): This attempt's own real -k value, as actually passed to GetOrganelle, or None if it never ran.
+        target_coverage (float | None): This attempt's own real --reduce-reads-for-coverage value, as actually passed to GetOrganelle (a finite bound, or inf for genuinely uncapped), or None if it never ran.
+        max_rounds (int | None): This attempt's own real -R value, as actually passed to GetOrganelle, or None if it never ran.
     """
     attempt: int
     attempted: bool
@@ -65,6 +74,9 @@ class RescueAttemptSummary:
     recruitment: str | None = None
     seeded: bool = False
     reseeded: bool = False
+    kmer: str | None = None
+    target_coverage: float | None = None
+    max_rounds: int | None = None
 
 @dataclass(frozen = True, slots = True)
 class BlastConfigSummary:

@@ -190,7 +190,8 @@ def main() -> int:
         logger.warning(f"{context} Rescue reassembly (profile '{args.profile_name}') did not produce a usable output (exit {e.code}); classifying as missing.")
         status = discover_assembly_artifacts(args.output_dir, logger)
         _write_status(args.output_dir, args.sample_id, downgrade_unverified_circular(status), success = False,
-                     profile_name = args.profile_name, seed_file = seed_file_used)
+                     profile_name = args.profile_name, seed_file = seed_file_used,
+                     kmer = args.kmer, target_coverage = args.target_coverage, max_rounds = args.max_rounds)
         runner.cleanup_failed_output()
         _cleanup_rescued_reads(args.r1, args.r2, logger, context)
         return 1
@@ -208,7 +209,8 @@ def main() -> int:
         # ever created.
         status = discover_assembly_artifacts(args.output_dir, logger)
         _write_status(args.output_dir, args.sample_id, downgrade_unverified_circular(status), success = False,
-                     profile_name = args.profile_name, seed_file = seed_file_used)
+                     profile_name = args.profile_name, seed_file = seed_file_used,
+                     kmer = args.kmer, target_coverage = args.target_coverage, max_rounds = args.max_rounds)
         runner.cleanup_failed_output()
         _cleanup_rescued_reads(args.r1, args.r2, logger, context)
         return 1
@@ -217,7 +219,8 @@ def main() -> int:
         logger.error(f"{context} Rescue reassembly exited with return code {result.return_code} after {result.runtime_seconds:.1f}s.")
         status = discover_assembly_artifacts(args.output_dir, logger)
         _write_status(args.output_dir, args.sample_id, downgrade_unverified_circular(status), success = False,
-                     profile_name = args.profile_name, seed_file = seed_file_used)
+                     profile_name = args.profile_name, seed_file = seed_file_used,
+                     kmer = args.kmer, target_coverage = args.target_coverage, max_rounds = args.max_rounds)
         runner.cleanup_failed_output()
         _cleanup_rescued_reads(args.r1, args.r2, logger, context)
         return result.return_code or 1
@@ -231,7 +234,8 @@ def main() -> int:
     logger.info(f"{context} Rescue reassembly (profile '{args.profile_name}') complete after "
                 f"{result.runtime_seconds:.1f}s; classified as '{status.status}' ({status.candidate_count} native candidate(s)).")
     _write_status(args.output_dir, args.sample_id, status.status, success = True,
-                 profile_name = args.profile_name, seed_file = seed_file_used)
+                 profile_name = args.profile_name, seed_file = seed_file_used,
+                     kmer = args.kmer, target_coverage = args.target_coverage, max_rounds = args.max_rounds)
     _cleanup_rescued_reads(args.r1, args.r2, logger, context)
     return 0
 
@@ -263,13 +267,22 @@ def _cleanup_rescued_reads(r1: Path, r2: Path, logger: Logger, context: str) -> 
             logger.warning(f"{context} Could not remove rescued reads {path}: {e}.")
 
 def _write_status(output_dir: Path, sample_id: str, status: str, success: bool, profile_name: str,
-                  seed_file: str | None = None) -> None:
+                  seed_file: str | None = None, kmer: str | None = None,
+                  target_coverage: float | None = None, max_rounds: int | None = None) -> None:
     """
     Records this rescue attempt's classification, same shape as the
-    primary attempt's (plus which profile produced it and whether/
-    which seed it actually used), for contig selection's cross-attempt
+    primary attempt's (plus which profile produced it, whether/which
+    seed it actually used, and the real GetOrganelle tuning this
+    specific attempt ran with), for contig selection's cross-attempt
     ranking and the report's own rescue narrative to both read without
     re-deriving either.
+
+    kmer/target_coverage/max_rounds were previously only ever visible
+    in this attempt's own log line, not recorded anywhere a report
+    could read them back -- confirmed live (2026-11-06) that this
+    left no way for the report to explain, e.g., that a coverage cap
+    change is what fixed (or didn't fix) a given attempt, only that
+    the outcome itself changed.
 
     Args:
         output_dir (Path): This attempt's own output directory.
@@ -278,6 +291,9 @@ def _write_status(output_dir: Path, sample_id: str, status: str, success: bool, 
         success (bool): Whether the GetOrganelle command itself completed successfully.
         profile_name (str): Which getorganelle_profiles entry produced this attempt.
         seed_file (str | None): The real seed FASTA this attempt actually ran with (reused or freshly re-derived), or None if it ran unseeded.
+        kmer (str | None): This attempt's own -k value, as actually passed to GetOrganelle.
+        target_coverage (float | None): This attempt's own --reduce-reads-for-coverage value, as actually passed to GetOrganelle.
+        max_rounds (int | None): This attempt's own -R value, as actually passed to GetOrganelle.
 
     Returns:
         None
@@ -286,7 +302,8 @@ def _write_status(output_dir: Path, sample_id: str, status: str, success: bool, 
     status_path = output_dir / f"{sample_id}.assembly_status.json"
     with status_path.open("w", encoding = "utf-8") as handle:
         json.dump({"sample_id": sample_id, "status": status, "success": success,
-                  "profile_name": profile_name, "seed_file": seed_file}, handle, indent = 4)
+                  "profile_name": profile_name, "seed_file": seed_file,
+                  "kmer": kmer, "target_coverage": target_coverage, "max_rounds": max_rounds}, handle, indent = 4)
 
 if __name__ == "__main__":
     raise SystemExit(main())

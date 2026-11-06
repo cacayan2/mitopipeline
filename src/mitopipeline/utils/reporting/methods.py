@@ -98,10 +98,29 @@ def _assembly_sentence(report_data: SampleReportData) -> str:
     else:
         seed_clause = "run unseeded, against GetOrganelle's own default reference database"
 
+    if config.kmer or config.target_coverage is not None or config.max_rounds is not None:
+        parts = []
+        if config.kmer:
+            parts.append(f"k-mer sweep {config.kmer}")
+        if config.target_coverage is not None:
+            cov = "no coverage cap" if config.target_coverage == float("inf") else f"coverage capped at {config.target_coverage:g}x"
+            parts.append(cov)
+        if config.max_rounds is not None:
+            parts.append(f"max {config.max_rounds} extension round(s)")
+        tuning_clause = f", {', '.join(parts)}"
+    else:
+        # The primary attempt's own resolved config has never overridden
+        # these (confirmed directly: run_getorganelle_assembly.py's own
+        # tool_options only ever sets seed_file) -- stated explicitly
+        # rather than silently omitted, since "ran with the tool's own
+        # defaults" is itself a real, specific fact worth citing, not
+        # an unknown value.
+        tuning_clause = ", using GetOrganelle's own default k-mer/coverage/round tuning (no per-sample override configured)"
+
     primary_version = _version_clause(report_data, "04d-assembly", "getorganelle")
     sentence = (
         f"Mitochondrial genome assembly was performed with GetOrganelle{primary_version} "
-        f"(organelle type `{config.organelle_type}`), {seed_clause}."
+        f"(organelle type `{config.organelle_type}`), {seed_clause}{tuning_clause}."
     )
 
     # Rescue mapping/reassembly genuinely runs as its own invocation
@@ -117,10 +136,28 @@ def _assembly_sentence(report_data: SampleReportData) -> str:
     samtools_version = _version_clause(report_data, "07-assembly_rescue", "samtools")
     rescue_getorganelle_version = _version_clause(report_data, "07-assembly_rescue", "getorganelle")
 
+    def _tuning_clause(a) -> str:
+        """Describes the real GetOrganelle tuning this specific attempt
+        ran with -- kmer sweep, coverage bound, round cap -- so a
+        parameter change (e.g. capping an unbounded coverage target)
+        is visible in the report as the real cause of a changed
+        outcome, not just an unexplained change in the outcome itself.
+        Omitted entirely when nothing was recorded (older attempts,
+        predating this field, or an attempt that never ran)."""
+        parts = []
+        if a.kmer:
+            parts.append(f"k-mer sweep {a.kmer}")
+        if a.target_coverage is not None:
+            coverage = "no coverage cap" if a.target_coverage == float("inf") else f"coverage capped at {a.target_coverage:g}x"
+            parts.append(coverage)
+        if a.max_rounds is not None:
+            parts.append(f"max {a.max_rounds} extension round(s)")
+        return ", ".join(parts)
+
     def _attempt_clause(a) -> str:
         """Describes one real rescue attempt's own actual strategy --
-        recruitment and seeding -- never a generic phrase that could
-        misrepresent what this specific attempt did."""
+        recruitment, seeding, and tuning -- never a generic phrase that
+        could misrepresent what this specific attempt did."""
         if a.recruitment == "full_pool":
             recruitment_clause = "the complete original read pool (no recruitment narrowing)"
         elif a.recruitment == "candidate_mapped":
@@ -134,8 +171,10 @@ def _assembly_sentence(report_data: SampleReportData) -> str:
         else:
             seed_clause = "no seed (GetOrganelle's own default database)"
         profile_clause = f"profile `{a.profile_name}`, " if a.profile_name else ""
+        tuning = _tuning_clause(a)
+        tuning_clause = f", {tuning}" if tuning else ""
         outcome = f"produced a {humanize_enum(a.status).lower()} result" if a.status else "did not complete"
-        return (f"attempt {a.attempt} ({profile_clause}{recruitment_clause}, {seed_clause}, "
+        return (f"attempt {a.attempt} ({profile_clause}{recruitment_clause}, {seed_clause}{tuning_clause}, "
                 f"re-running GetOrganelle{rescue_getorganelle_version}) {outcome}")
 
     attempts = report_data.rescue_attempts

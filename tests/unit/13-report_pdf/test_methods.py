@@ -44,6 +44,46 @@ def test_methods_text_describes_unseeded_assembly() -> None:
     text = render_methods_text(sample)
     assert "run unseeded" in text
 
+def test_primary_assembly_states_default_tuning_explicitly_when_none_configured() -> None:
+    """Regression: a prior version silently said nothing about kmer/
+    coverage/round tuning for the primary attempt, which never
+    overrides any of the three -- confirmed live (2026-11-06) that
+    this is itself a real fact worth stating, not just an absence."""
+    sample = _sample(assembly_config = AssemblyConfigSummary(organelle_type = "animal_mt", seeded = False, seed_file = None))
+    text = render_methods_text(sample)
+    assert "GetOrganelle's own default k-mer/coverage/round tuning (no per-sample override configured)" in text
+
+def test_primary_assembly_states_real_tuning_when_configured() -> None:
+    sample = _sample(assembly_config = AssemblyConfigSummary(
+        organelle_type = "animal_mt", seeded = False, seed_file = None,
+        kmer = "21,33,55,85,115", target_coverage = 500.0, max_rounds = 10,
+    ))
+    text = render_methods_text(sample)
+    assert "k-mer sweep 21,33,55,85,115" in text
+    assert "coverage capped at 500x" in text
+    assert "max 10 extension round(s)" in text
+
+def test_rescue_attempt_describes_its_own_real_tuning_including_uncapped_coverage() -> None:
+    """Regression (confirmed live, 2026-11-06): the real bug this field
+    was added to make visible -- an uncapped coverage target on a
+    genuinely seed-free rescue attempt let extension balloon
+    unbounded. The report must say "no coverage cap", not silently
+    omit the setting that actually mattered."""
+    sample = _sample(
+        assembly = AssemblyStatistics(sample_id = "s", status = "missing", source_attempt = 3,
+                                      length_bp = 0, contig_count = 0, gc_content_percent = 0.0),
+        assembly_config = AssemblyConfigSummary(organelle_type = "animal_mt", seeded = False, seed_file = None),
+        rescue_attempts = (RescueAttemptSummary(
+            attempt = 3, attempted = True, reason = "triggered",
+            profile_name = "full_pool_relaxed_graph", status = "missing", recruitment = "full_pool",
+            seeded = False, kmer = "21,33,45,55,65,85,105,115", target_coverage = float("inf"), max_rounds = 20,
+        ),),
+    )
+    text = render_methods_text(sample)
+    assert "k-mer sweep 21,33,45,55,65,85,105,115" in text
+    assert "no coverage cap" in text
+    assert "max 20 extension round(s)" in text
+
 def test_methods_text_mentions_rescue_when_it_happened() -> None:
     sample = _sample(
         assembly = AssemblyStatistics(sample_id = "s", status = "fragmented", source_attempt = 1,

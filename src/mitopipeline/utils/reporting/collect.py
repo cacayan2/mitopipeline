@@ -313,6 +313,16 @@ def collect_sample_report_data(sample_id: str, runtime_manifest_path: str | Path
             seed_accession = seed_selection.get("accession") if (seed_selection and seeded) else None,
             seed_source = seed_selection.get("source") if seed_selection else None,
             seed_fallback_reason = seed_selection.get("fallback_reason") if (seed_selection and not seeded) else None,
+            # None today -- the primary attempt's own resolved config
+            # never overrides these (confirmed: run_getorganelle_assembly.py's
+            # own tool_options only ever sets seed_file), so it always
+            # runs with GetOrganelle's own built-in tuning. Reading them
+            # here regardless, rather than hardcoding that fact, so this
+            # starts reporting real values the moment the config stage
+            # ever does start recording a per-sample override.
+            kmer = go_config.get("kmer"),
+            target_coverage = go_config.get("target_coverage"),
+            max_rounds = go_config.get("max_rounds"),
         )
 
     blast_config = None
@@ -498,6 +508,9 @@ def collect_rescue_summary(rescue_dir: str | Path | None) -> tuple[RescueAttempt
             recruitment = mapping.get("recruitment"),
             seeded = bool(reassembly_status and reassembly_status.get("seed_file")),
             reseeded = bool(reseed_record and reseed_record.get("fasta_path")),
+            kmer = reassembly_status.get("kmer") if reassembly_status else None,
+            target_coverage = reassembly_status.get("target_coverage") if reassembly_status else None,
+            max_rounds = reassembly_status.get("max_rounds") if reassembly_status else None,
         ))
     return tuple(attempts)
 

@@ -321,6 +321,32 @@ def test_collect_rescue_summary_reads_every_real_attempt(tmp_path: Path) -> None
     assert attempts[1].attempted is False
     assert attempts[1].profile_name is None
 
+def test_collect_rescue_summary_reads_the_real_tuning_used(tmp_path: Path) -> None:
+    """Regression (confirmed live, 2026-11-06): kmer/target_coverage/
+    max_rounds were previously written to assembly_status.json but
+    never read back here, so the report had no way to show which
+    real tuning an attempt ran with -- including an uncapped (inf)
+    coverage target, the exact value behind a real unbounded-
+    extension bug found the same day."""
+    rescue_dir = tmp_path / "07-assembly_rescue" / "sample1"
+    attempt_3 = rescue_dir / "attempt_3"
+    attempt_3.mkdir(parents = True)
+    _write_json(attempt_3 / "sample1.rescue_mapping.json", {
+        "sample_id": "sample1", "attempted": True,
+        "reason": "status 'missing' triggers rescue; attempt 3 of 3",
+    })
+    _write_json(attempt_3 / "reassembly" / "sample1.assembly_status.json", {
+        "sample_id": "sample1", "status": "missing", "success": True, "profile_name": "full_pool_relaxed_graph",
+        "seed_file": None, "kmer": "21,33,45,55,65,85,105,115", "target_coverage": float("inf"), "max_rounds": 20,
+    })
+
+    attempts = collect_rescue_summary(rescue_dir)
+
+    assert len(attempts) == 1
+    assert attempts[0].kmer == "21,33,45,55,65,85,105,115"
+    assert attempts[0].target_coverage == float("inf")
+    assert attempts[0].max_rounds == 20
+
 def test_collect_rescue_summary_empty_when_no_rescue_dir(tmp_path: Path) -> None:
     assert collect_rescue_summary(None) == ()
     assert collect_rescue_summary(tmp_path / "does_not_exist") == ()
