@@ -177,7 +177,11 @@ stage_options:
         reseed: false
         reuse_primary_seed: false
         kmer: 21,33,45,55,65,85,105,115
-        target_coverage: 150
+        # Aligned to prod_config.yaml's own value and reasoning
+        # (2026-11-06) -- GetOrganelle's own documented default,
+        # confirmed live to prevent unbounded extension now that this
+        # profile is genuinely seed-free.
+        target_coverage: 500
         max_rounds: 20
   annotation:
     mitos2:

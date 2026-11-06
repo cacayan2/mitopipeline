@@ -166,7 +166,21 @@ stage_options:
         reseed: false
         reuse_primary_seed: false
         kmer: 21,33,45,55,65,85,105,115
-        target_coverage: inf
+        # Was `inf` -- confirmed live (2026-11-06) that, now that this
+        # profile is genuinely seed-free (reuse_primary_seed: false,
+        # above), an uncapped coverage bound lets extension balloon with
+        # no anchor at all: one real sample's word/read counters jumped
+        # 7-20x between rounds, consistent with recruiting off-target
+        # (likely nuclear) sequence rather than converging on the
+        # mitochondrial genome -- round 20 was very unlikely to ever
+        # "fix" that, just burn an hour-plus more doing it. 500 is
+        # GetOrganelle's own documented default ("extremely sufficient
+        # for most cases"), more generous than the other two profiles'
+        # 100 (keeping this one's real last-resort intent), and a SOFT
+        # bound -- it only engages once estimated coverage is already
+        # excessive, so a genuinely low-coverage sample's own extension
+        # is untouched by this change.
+        target_coverage: 500
         max_rounds: 20
   annotation:
     mitos2:
