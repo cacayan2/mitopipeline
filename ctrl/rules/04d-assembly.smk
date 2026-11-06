@@ -35,6 +35,19 @@ rule assembly:
         exec_script = str(SRC_DIR / "mitopipeline" / "exec" / "04d-assembly" / "run_getorganelle_assembly.py")
     threads:
         ASSEMBLY_CONFIG.get("threads", 4)
+    resources:
+        # A real GetOrganelle/SPAdes run can be memory-heavy enough
+        # that `--cores`-based thread accounting alone doesn't bound
+        # how many run concurrently -- confirmed live: resuming with a
+        # large backlog launched a burst of these plus rescue
+        # reassembly jobs within seconds of each other, and the kernel
+        # logged real memory pressure in that window while many
+        # reassembly attempts died before writing any log at all.
+        # This caps concurrent GetOrganelle-class jobs regardless of
+        # how many idle threads are otherwise available; the matching
+        # `--resources getorganelle_slots=N` on the launch command sets
+        # the real ceiling (see the launch documentation/scripts).
+        getorganelle_slots = 1
     conda:
         "../../envs/04c-assembly.yaml"
     shell:

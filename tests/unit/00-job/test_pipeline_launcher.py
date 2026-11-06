@@ -105,6 +105,14 @@ def test_run_snakemake_resolves_the_binary_against_sys_executable(tmp_path: Path
     # Regression: "entrez = 1" (with spaces) is not a valid Snakemake
     # --resources identifier and raised a real WorkflowError.
     assert command[command.index("--resources") + 1] == "entrez=1"
+    # Regression (2026-11-06): resuming with a large backlog let a
+    # burst of GetOrganelle-class jobs (primary assembly, rescue
+    # reassembly) launch within seconds of each other, and the kernel
+    # logged real memory pressure while many reassembly attempts died
+    # before writing any log at all. This caps their concurrency
+    # regardless of idle --cores, matching the rules' own
+    # `resources: getorganelle_slots = 1`.
+    assert "getorganelle_slots=8" in command
     # Regression: the default 5s --latency-wait was too tight once
     # --use-conda's real per-job activation overhead was ever actually
     # exercised, raising a real MissingOutputException.

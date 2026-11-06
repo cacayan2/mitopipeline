@@ -479,7 +479,17 @@ def run_snakemake(
         # left for whoever restarts it.
         "--rerun-incomplete",
         "--resources",
-        "entrez=1"
+        "entrez=1",
+        # Caps concurrent GetOrganelle-class jobs (primary assembly,
+        # rescue reassembly -- see their own rules' matching
+        # `resources: getorganelle_slots = 1`) regardless of how many
+        # idle threads `--cores` would otherwise allow. Confirmed live:
+        # resuming with a large backlog let a burst of these jobs
+        # launch within seconds of each other, and the kernel logged
+        # real memory pressure in that window while many reassembly
+        # attempts died before writing any log at all. 8 matches the
+        # concurrency level that ran without issue the rest of the day.
+        "getorganelle_slots=8"
     ]
     if use_conda: command.append("--use-conda")
     if dry_run: command.append("--dry-run")

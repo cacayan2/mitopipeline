@@ -194,6 +194,13 @@ rule rescue_reassembly:
         exec_script = str(SRC_DIR / "mitopipeline" / "exec" / "07-assembly_rescue" / "run_rescue_reassembly.py")
     threads:
         RESCUE_CONFIG.get("threads", 4)
+    resources:
+        # Same real concern as 04d-assembly.smk's primary assembly rule
+        # (see its own comment) -- a full_pool rescue reassembly runs
+        # the identical memory-heavy GetOrganelle/SPAdes chain, and
+        # shares the same concurrency ceiling so a large backlog can
+        # never again launch an unbounded number of these at once.
+        getorganelle_slots = 1
     conda:
         "../../envs/04c-assembly.yaml"
     shell:
