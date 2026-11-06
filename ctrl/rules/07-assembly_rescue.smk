@@ -139,6 +139,19 @@ rule rescue_mapping:
         exec_script = str(SRC_DIR / "mitopipeline" / "exec" / "07-assembly_rescue" / "run_rescue_mapping.py")
     threads:
         RESCUE_CONFIG.get("threads", 4)
+    resources:
+        # Confirmed live, 2026-11-06: capping rescue_reassembly's own
+        # concurrency (its own rule, below) wasn't enough on its own --
+        # a full_pool attempt's mapping step copies the sample's ENTIRE
+        # trimmed read pool (7.5GB+ per side) before reassembly ever
+        # runs, and with nothing bounding how many of THESE could race
+        # ahead in parallel, mapping jobs piled up hundreds of GB of
+        # ready-but-not-yet-consumed scratch while the (correctly
+        # capped) reassembly stage worked through it one batch at a
+        # time. Sharing the same `getorganelle_slots` budget as
+        # reassembly keeps mapping from ever running meaningfully ahead
+        # of what reassembly can actually keep up with.
+        getorganelle_slots = 1
     conda:
         "../../envs/07-assembly_rescue.yaml"
     shell:
