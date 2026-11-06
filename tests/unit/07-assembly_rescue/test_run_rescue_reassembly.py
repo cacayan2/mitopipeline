@@ -124,6 +124,34 @@ def test_no_native_candidate_is_classified_missing_and_fails(tmp_path: Path, mon
     assert status["status"] == "missing"
     assert status["success"] is False
 
+def test_an_unanticipated_exception_still_writes_a_status_record(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Regression: the generic `except Exception` branch previously
+    returned 1 without ever calling _write_status() -- unlike its
+    SystemExit sibling, any genuinely unexpected crash here (the real
+    historical trigger was a KeyError on 'user_cpu_seconds', fixed in
+    f39ea8e, but this branch catches ANY Exception subclass, not just
+    that one) left no status record at all, just a `.done` marker the
+    .smk rule's own `|| true` touches regardless. A missing status
+    record is indistinguishable from "never even ran" to every caller
+    downstream (contig_selection, the next rescue attempt's own
+    previous-status lookup), so this must always leave a real,
+    readable classification behind, the same as every other failure
+    path does."""
+    sample_id = "SAMPLE_03C"
+    output_dir = tmp_path / "rescue_attempt_1c"
+
+    def _stub_run(self: GetOrganelleRunner) -> CommandResult:
+        self.output_dir.mkdir(parents = True, exist_ok = True)
+        raise KeyError("user_cpu_seconds")
+
+    monkeypatch.setattr(GetOrganelleRunner, "run", _stub_run)
+    monkeypatch.setattr(sys, "argv", _argv(tmp_path, sample_id, output_dir))
+
+    assert run_rescue_reassembly.main() == 1
+    status = json.loads((output_dir / f"{sample_id}.assembly_status.json").read_text())
+    assert status["status"] == "missing"
+    assert status["success"] is False
+
 def test_interrupted_attempt_never_records_circular_even_with_a_complete_checkpoint_present(
         tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """Regression (confirmed live, 2026-11-06): the same failure mode

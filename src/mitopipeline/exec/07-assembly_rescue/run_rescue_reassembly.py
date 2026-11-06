@@ -196,6 +196,19 @@ def main() -> int:
         return 1
     except Exception as e:
         logger.error(f"{context} Rescue reassembly (profile '{args.profile_name}') failed unexpectedly: {e}.")
+        # Unlike the SystemExit branch above, this one previously never
+        # called _write_status() -- any unanticipated exception here
+        # (not just the specific one this pattern was first noticed for)
+        # left no status record at all, just a `.done` marker touched
+        # by the .smk rule's own `|| true`. Writing one here closes
+        # that gap the same way: discover_assembly_artifacts() globs
+        # output_dir regardless of whether it exists (Path.glob on a
+        # missing directory yields nothing, not an error), so this is
+        # safe even when the exception struck before output_dir was
+        # ever created.
+        status = discover_assembly_artifacts(args.output_dir, logger)
+        _write_status(args.output_dir, args.sample_id, downgrade_unverified_circular(status), success = False,
+                     profile_name = args.profile_name, seed_file = seed_file_used)
         runner.cleanup_failed_output()
         _cleanup_rescued_reads(args.r1, args.r2, logger, context)
         return 1
