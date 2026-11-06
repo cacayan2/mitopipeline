@@ -124,6 +124,30 @@ def test_no_native_candidate_is_classified_missing_and_fails(tmp_path: Path, mon
     assert status["status"] == "missing"
     assert status["success"] is False
 
+def test_interrupted_attempt_never_records_circular_even_with_a_complete_checkpoint_present(
+        tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Regression (confirmed live, 2026-11-06): the same failure mode
+    as run_getorganelle_assembly.py's primary attempt -- a rescue
+    reassembly killed mid-run right after GetOrganelle wrote a
+    ".complete." checkpoint must never report "circular" with
+    success=False, which would permanently block every later attempt."""
+    sample_id = "SAMPLE_03B"
+    output_dir = tmp_path / "rescue_attempt_1b"
+
+    def _stub_run(self: GetOrganelleRunner) -> CommandResult:
+        self.output_dir.mkdir(parents = True, exist_ok = True)
+        (self.output_dir / "k95.complete.path_sequence.fasta").write_text(">seq\nAAAA\n")
+        (self.output_dir / "k95.complete.selected_graph.gfa").write_text("H\tVN:Z:1.0\n")
+        raise SystemExit(1)
+
+    monkeypatch.setattr(GetOrganelleRunner, "run", _stub_run)
+    monkeypatch.setattr(sys, "argv", _argv(tmp_path, sample_id, output_dir))
+
+    assert run_rescue_reassembly.main() == 1
+    status = json.loads((output_dir / f"{sample_id}.assembly_status.json").read_text())
+    assert status["status"] != "circular"
+    assert status["success"] is False
+
 def test_rescued_reads_are_deleted_after_a_successful_attempt(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """A full_pool attempt's rescued R1/R2 is a complete copy of the
     sample's own trimmed reads -- confirmed as the dominant real cause

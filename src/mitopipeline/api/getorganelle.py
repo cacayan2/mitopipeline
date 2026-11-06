@@ -575,6 +575,37 @@ def discover_assembly_artifacts(output_dir: Path, logger: Logger) -> AssemblyArt
     return AssemblyArtifacts(status = status, fasta_path = chosen_fasta, gfa_path = chosen_gfa,
                               candidate_count = len(fasta_candidates))
 
+def downgrade_unverified_circular(status: AssemblyArtifacts) -> str:
+    """
+    Returns status.status, except "circular" is downgraded to
+    "fragmented" -- for a caller reporting a FAILED or interrupted
+    run's leftover native output (discover_assembly_artifacts() run
+    against an output_dir after an exception or a non-zero exit, not
+    a clean success). "circular" carries a real downstream
+    consequence (rescue permanently stops once a sample is classified
+    circular -- see utils.rescue.trigger's _NEVER_RESCUED_STATUS) that
+    an unverified leftover checkpoint file from a run that never
+    actually finished should never be able to grant.
+
+    Confirmed live: a primary assembly killed mid-run (an external
+    restart's kill sweep) right after GetOrganelle had already written
+    a ".complete." checkpoint file internally, but before the process
+    could exit normally, left behind a status.json recording
+    status="circular" with success=false -- permanently blocking
+    every configured rescue attempt for a sample that never actually
+    produced a trustworthy result. The leftover file isn't discarded
+    (still reported as "fragmented", real candidate data worth
+    keeping), just never allowed to grant "circular"'s special,
+    structural guarantee from an unverified run.
+
+    Args:
+        status (AssemblyArtifacts): The classification discover_assembly_artifacts() returned.
+
+    Returns:
+        str: status.status, or "fragmented" if it was "circular".
+    """
+    return "fragmented" if status.status == "circular" else status.status
+
 @dataclass(frozen = True, slots = True)
 class RecruitedReadsQCRecord:
     """

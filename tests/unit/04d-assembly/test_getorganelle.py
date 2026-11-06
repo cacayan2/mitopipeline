@@ -10,9 +10,11 @@ import logging
 from pathlib import Path
 import pytest
 from mitopipeline.api.getorganelle import (
+    AssemblyArtifacts,
     GetOrganelleRunner,
     build_runner_from_seed_result,
     discover_assembly_artifacts,
+    downgrade_unverified_circular,
 )
 from mitopipeline.models.sample.sample import Sample
 from mitopipeline.utils.seed.models import SeedSelectionResult
@@ -307,6 +309,21 @@ def test_discover_assembly_artifacts_multiple_complete_candidates_picks_one_dete
     assert first.candidate_count == 3
     assert first.fasta_path == second.fasta_path  # deterministic across repeat calls
     assert first.fasta_path == output_dir / "k85.complete.path_sequence.fasta"  # lexically first
+
+def test_downgrade_unverified_circular_demotes_circular_to_fragmented() -> None:
+    # Confirmed live: a primary assembly killed mid-run (an external
+    # restart's kill sweep) right after GetOrganelle wrote a
+    # ".complete." checkpoint left a stale "circular" classification
+    # with success=False, permanently blocking every configured rescue
+    # attempt. "circular" must never survive a failure path uncapped.
+    status = AssemblyArtifacts(status = "circular", fasta_path = None, gfa_path = None, candidate_count = 1)
+    assert downgrade_unverified_circular(status) == "fragmented"
+
+def test_downgrade_unverified_circular_leaves_other_statuses_unchanged() -> None:
+    fragmented = AssemblyArtifacts(status = "fragmented", fasta_path = None, gfa_path = None, candidate_count = 1)
+    missing = AssemblyArtifacts(status = "missing", fasta_path = None, gfa_path = None, candidate_count = 0)
+    assert downgrade_unverified_circular(fragmented) == "fragmented"
+    assert downgrade_unverified_circular(missing) == "missing"
 
 def _seed_result(fasta_path: Path | None, fallback_used: bool) -> SeedSelectionResult:
     """

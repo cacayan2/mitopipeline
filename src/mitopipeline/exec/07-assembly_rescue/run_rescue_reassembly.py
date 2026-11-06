@@ -29,7 +29,7 @@ import argparse
 import json
 from logging import Logger
 from pathlib import Path
-from mitopipeline.api.getorganelle import GetOrganelleRunner, discover_assembly_artifacts
+from mitopipeline.api.getorganelle import GetOrganelleRunner, discover_assembly_artifacts, downgrade_unverified_circular
 from mitopipeline.logging.logger_factory import make_logger
 from mitopipeline.models.sample.sample import Sample
 from mitopipeline.utils.seed.models import DEFAULT_SEED_MODE, LOCUS_FALLBACK_ORDER, SEED_MODES
@@ -189,7 +189,7 @@ def main() -> int:
     except SystemExit as e:
         logger.warning(f"{context} Rescue reassembly (profile '{args.profile_name}') did not produce a usable output (exit {e.code}); classifying as missing.")
         status = discover_assembly_artifacts(args.output_dir, logger)
-        _write_status(args.output_dir, args.sample_id, status.status, success = False,
+        _write_status(args.output_dir, args.sample_id, downgrade_unverified_circular(status), success = False,
                      profile_name = args.profile_name, seed_file = seed_file_used)
         runner.cleanup_failed_output()
         _cleanup_rescued_reads(args.r1, args.r2, logger, context)
@@ -203,7 +203,7 @@ def main() -> int:
     if not result.success:
         logger.error(f"{context} Rescue reassembly exited with return code {result.return_code} after {result.runtime_seconds:.1f}s.")
         status = discover_assembly_artifacts(args.output_dir, logger)
-        _write_status(args.output_dir, args.sample_id, status.status, success = False,
+        _write_status(args.output_dir, args.sample_id, downgrade_unverified_circular(status), success = False,
                      profile_name = args.profile_name, seed_file = seed_file_used)
         runner.cleanup_failed_output()
         _cleanup_rescued_reads(args.r1, args.r2, logger, context)

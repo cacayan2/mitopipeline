@@ -115,6 +115,36 @@ def test_assembly_with_no_native_candidate_is_classified_missing_and_fails(tmp_p
     status = json.loads((assembly_dir / f"{sample_id}.assembly_status.json").read_text())
     assert status == {"sample_id": sample_id, "status": "missing", "success": False}
 
+def test_interrupted_run_never_records_circular_even_with_a_complete_checkpoint_present(
+        tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Regression (confirmed live, 2026-11-06): a primary assembly
+    killed mid-run by an external restart's kill sweep, right after
+    GetOrganelle had already written a ".complete." checkpoint file
+    internally but before the process could exit normally, left
+    behind status="circular" with success=False -- permanently
+    blocking every configured rescue attempt for a sample that never
+    actually finished. The failure path must never report "circular",
+    regardless of what discover_assembly_artifacts() finds on disk."""
+    sample_id = "SAMPLE_03B"
+    assembly_dir = tmp_path / "assembly" / sample_id
+    config_json = _write_config(tmp_path, sample_id, assembly_dir)
+
+    def _stub_run(self: GetOrganelleRunner) -> CommandResult:
+        self.output_dir.mkdir(parents = True, exist_ok = True)
+        # A leftover ".complete." checkpoint, as if GetOrganelle had
+        # just written it before the process was killed.
+        (self.output_dir / "k95.complete.path_sequence.fasta").write_text(">seq\nAAAA\n")
+        (self.output_dir / "k95.complete.selected_graph.gfa").write_text("H\tVN:Z:1.0\n")
+        raise SystemExit(1)
+
+    monkeypatch.setattr(GetOrganelleRunner, "run", _stub_run)
+    monkeypatch.setattr(sys, "argv", _argv(tmp_path, sample_id, config_json))
+
+    assert run_getorganelle_assembly.main() == 1
+    status = json.loads((assembly_dir / f"{sample_id}.assembly_status.json").read_text())
+    assert status["status"] != "circular"
+    assert status["success"] is False
+
 def test_nonzero_return_code_is_recorded_as_failure(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     sample_id = "SAMPLE_04"
     assembly_dir = tmp_path / "assembly" / sample_id
