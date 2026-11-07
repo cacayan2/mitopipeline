@@ -12,8 +12,10 @@ that points Snakemake to that manifest for the duration of the run.
 from __future__ import  annotations
 import argparse
 import logging
+import os
 from pathlib import Path
 import re
+import shutil
 import subprocess
 import pandas as pd
 import yaml
@@ -21,7 +23,17 @@ import sys
 from mitopipeline.utils.manifest.manifest_parser import parse_sample_manifest
 from mitopipeline.models.pipeline_job.pipeline_job import PipelineJob
 from mitopipeline.models.sample.sample import Sample
-from mitopipeline.utils.system.resources import recommended_concurrent_slots
+from mitopipeline.utils.system.resources import (
+    cgroup_memory_max_mb,
+    current_cgroup_path,
+    oom_monitor_threshold_mb,
+    recommended_concurrent_slots,
+)
+
+# Set on the environment of the re-launched (wrapped) child process by
+# _reexec_under_memory_cgroup, so that child's own main() knows not to
+# wrap itself again -- the outer, unwrapped invocation never has this set.
+_CGROUP_WRAPPED_ENV = "MITOPIPELINE_CGROUP_WRAPPED"
 
 # Matches a paired-end FASTQ filename and captures the sample ID (everything
 # before the read-pair token) and the mate number. Recognises Illumina-style
@@ -615,6 +627,124 @@ def _rerender_run_report_with_final_status(config: dict, job: PipelineJob, runti
             f"original mid-run status. stderr: {result.stderr[-2000:]}"
         )
 
+def _systemd_user_scope_available(systemd_run_binary: str) -> bool:
+    """
+    Whether `systemd-run --user --scope` can actually launch a real
+    scope on this machine right now -- false on a machine with no
+    reachable user systemd/D-Bus session even if the systemd-run
+    binary itself exists. Checked with a real, trivial scope rather
+    than assumed from the binary's mere presence, so a genuine
+    environment failure here is never confused with the later wrapped
+    pipeline's own legitimate nonzero exit.
+
+    Args:
+        systemd_run_binary (str): Path to the systemd-run binary (see shutil.which).
+
+    Returns:
+        bool: True if a real scope was launched and exited cleanly.
+    """
+    try:
+        result = subprocess.run(
+            [systemd_run_binary, "--user", "--scope", "--quiet", "--", "true"],
+            capture_output = True, text = True, timeout = 15
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+    return result.returncode == 0
+
+def _reexec_under_memory_cgroup() -> int | None:
+    """
+    Re-launches this exact invocation (same interpreter, same argv)
+    inside a memory-capped `systemd --user --scope` cgroup sized by
+    cgroup_memory_max_mb, so a plain
+    `python pipeline_launcher.py --config ...` gets the same OOM
+    containment that previously required a separate, manual
+    systemd-run wrapper. Fails open -- returns None (meaning: the
+    caller should proceed directly, uncontained, no OOM monitor
+    started) rather than guessing when systemd-run isn't installed, no
+    user systemd session is reachable, or real total RAM is
+    undetectable (e.g. local macOS development) -- matching every
+    other function in utils.system.resources.
+
+    Returns:
+        int | None: The wrapped run's own real exit code if re-launched, or None if containment isn't available on this machine.
+    """
+    ceiling_mb = cgroup_memory_max_mb()
+    systemd_run_binary = shutil.which("systemd-run")
+    if ceiling_mb is None or systemd_run_binary is None or not _systemd_user_scope_available(systemd_run_binary):
+        logging.warning(
+            "Running without memory-cgroup containment on this machine (systemd-run unavailable, no "
+            "reachable user systemd session, or real total RAM undetectable) -- the proactive OOM "
+            "monitor will not be started either."
+        )
+        return None
+
+    command = [
+        systemd_run_binary, "--user", "--scope", "--quiet", "--collect",
+        "-p", f"MemoryMax={ceiling_mb}M",
+        "--", sys.executable, str(Path(__file__).resolve()), *sys.argv[1:]
+    ]
+    logging.info(f"Re-launching inside a memory-capped cgroup (MemoryMax={ceiling_mb}M).")
+    result = subprocess.run(command, cwd = Path.cwd(), env = {**os.environ, _CGROUP_WRAPPED_ENV: "1"})
+    return result.returncode
+
+def _start_oom_monitor(cgroup_path: Path, job: PipelineJob) -> subprocess.Popen | None:
+    """
+    Starts launcher/oom_monitor.py as a standalone background process
+    watching this job's own real cgroup, scoped to this one launch --
+    see oom_monitor.py's own module docstring. Returns None (logging
+    why) rather than starting anything when the real proactive
+    threshold can't be computed, so a caller never watches a cgroup
+    with no real ceiling to react to.
+
+    Args:
+        cgroup_path (Path): This process's own real cgroup directory (see utils.system.resources.current_cgroup_path), only meaningful once already placed inside a fresh systemd-run --user --scope by _reexec_under_memory_cgroup.
+        job (PipelineJob): The current pipeline job -- supplies the job root (oom_monitor's own state file lives under its sanctioned mlr_<job_id> scratch folder) and the logger.
+
+    Returns:
+        subprocess.Popen | None: The running monitor process, or None if it wasn't started.
+    """
+    threshold_mb = oom_monitor_threshold_mb()
+    if threshold_mb is None:
+        job.job_logger.warning("OOM monitor not started: real total RAM is undetectable on this machine.")
+        return None
+
+    monitor_script = Path(__file__).resolve().parent / "oom_monitor.py"
+    log_file = job.job_dir / "logs" / "00-job" / f"{job.job_id}.oom_monitor.log"
+    command = [
+        sys.executable, str(monitor_script),
+        "--cgroup-path", str(cgroup_path),
+        "--threshold-mb", str(threshold_mb),
+        "--job-root", str(job.job_dir),
+        "--log-file", str(log_file),
+    ]
+    job.job_logger.info(f"Starting OOM monitor: cgroup={cgroup_path}, threshold={threshold_mb}MB.")
+    return subprocess.Popen(command, cwd = Path.cwd())
+
+def _stop_oom_monitor(process: subprocess.Popen, logger: logging.Logger) -> None:
+    """
+    Stops a monitor process started by _start_oom_monitor -- it runs
+    forever on its own (see oom_monitor.run_monitor's own polling
+    loop), so this launcher must be the one to end its lifetime once
+    this one pipeline run is actually done, success or failure alike.
+
+    Args:
+        process (subprocess.Popen): The monitor process to stop.
+        logger (logging.Logger): Where to log the shutdown.
+
+    Returns:
+        None
+    """
+    if process.poll() is not None:
+        return
+    logger.info("Stopping OOM monitor.")
+    process.terminate()
+    try:
+        process.wait(timeout = 10)
+    except subprocess.TimeoutExpired:
+        process.kill()
+        process.wait()
+
 def launch_pipeline(
         config_path: Path,
         snakefile: Path = Path("ctrl/Snakefile"),
@@ -622,7 +752,8 @@ def launch_pipeline(
         use_conda: bool = True,
         dry_run: bool = False,
         printshellcmds: bool = False,
-        rerun_triggers: list[str] | None = None
+        rerun_triggers: list[str] | None = None,
+        cgroup_path: Path | None = None
 ):
     """
     Launch a single pipeline run.
@@ -635,6 +766,7 @@ def launch_pipeline(
         dry_run (bool, optional): Whether to run the pipeline in dry-run mode. Defaults to False.
         printshellcmds (bool, optional): Whether to print shell commands. Defaults to False.
         rerun_triggers (list[str] | None, optional): Passed through to Snakemake's own --rerun-triggers. Defaults to None (Snakemake's default).
+        cgroup_path (Path | None, optional): This process's own real cgroup directory, once already placed inside a memory-capped systemd scope by _reexec_under_memory_cgroup -- starts the proactive OOM monitor against it for the duration of this run. None (the default) skips the monitor entirely, e.g. when cgroup containment isn't available on this machine.
 
     Returns:
         None
@@ -647,69 +779,74 @@ def launch_pipeline(
     job_id = _configured_job_id(job_configuration.get("job_id"))
     job = PipelineJob(parent_dir = output_root, job_id = job_id)
 
-    # Running the pipeline - the try block 
-    # creates the runtime manifest, obtains the samples, and then runs snakemake. 
-    # If any error occurs, the job is marked as failed. 
+    oom_monitor_process = _start_oom_monitor(cgroup_path, job) if cgroup_path is not None else None
     try:
-        if job_id is not None:
-            job.job_logger.info(f"Resuming configured pipeline job: {job_id}.")
-        runtime_manifest, samples = prepare_runtime_manifest(config = config, job = job)
-        job.set_samples([sample.sample_id for sample in samples])
-        job.mark_created()
+        # Running the pipeline - the try block
+        # creates the runtime manifest, obtains the samples, and then runs snakemake.
+        # If any error occurs, the job is marked as failed.
+        try:
+            if job_id is not None:
+                job.job_logger.info(f"Resuming configured pipeline job: {job_id}.")
+            runtime_manifest, samples = prepare_runtime_manifest(config = config, job = job)
+            job.set_samples([sample.sample_id for sample in samples])
+            job.mark_created()
 
-        # Resolving the real concurrency ceiling for GetOrganelle-class
-        # jobs ONCE here, so the exact same number ends up on both the
-        # `--resources getorganelle_slots=N` launch flag (run_snakemake)
-        # AND in the written runtime_config.yaml (read by each rule as
-        # `--concurrent-slots`, to size that job's own live memory
-        # budget) -- never two independently-derived numbers that could
-        # drift apart. An explicit `resources.getorganelle_slots` in the
-        # user's own config always wins over the live auto-detected
-        # recommendation, matching this config's existing convention of
-        # explicit values overriding computed defaults.
-        configured_slots = (config.get("resources") or {}).get("getorganelle_slots")
-        concurrent_slots = int(configured_slots) if configured_slots is not None else recommended_concurrent_slots()
-        runtime_config_values = dict(config)
-        runtime_config_values["resources"] = {**(config.get("resources") or {}), "getorganelle_slots": concurrent_slots}
+            # Resolving the real concurrency ceiling for GetOrganelle-class
+            # jobs ONCE here, so the exact same number ends up on both the
+            # `--resources getorganelle_slots=N` launch flag (run_snakemake)
+            # AND in the written runtime_config.yaml (read by each rule as
+            # `--concurrent-slots`, to size that job's own live memory
+            # budget) -- never two independently-derived numbers that could
+            # drift apart. An explicit `resources.getorganelle_slots` in the
+            # user's own config always wins over the live auto-detected
+            # recommendation, matching this config's existing convention of
+            # explicit values overriding computed defaults.
+            configured_slots = (config.get("resources") or {}).get("getorganelle_slots")
+            concurrent_slots = int(configured_slots) if configured_slots is not None else recommended_concurrent_slots()
+            runtime_config_values = dict(config)
+            runtime_config_values["resources"] = {**(config.get("resources") or {}), "getorganelle_slots": concurrent_slots}
 
-        runtime_config = write_runtime_config(config = runtime_config_values,
-                                              job = job,
-                                              runtime_manifest = runtime_manifest)
-        result, snakemake_output = run_snakemake(
-            snakefile = snakefile,
-            runtime_config = runtime_config,
-            cores = cores,
-            use_conda = use_conda,
-            logger = job.job_logger,
-            dry_run = dry_run,
-            printshellcmds = printshellcmds,
-            rerun_triggers = rerun_triggers,
-            output_log_path = job.job_dir / "logs" / "00-job" / f"{job.job_id}.snakemake_output.log",
-            concurrent_slots = concurrent_slots,
-            # The exact same path every exec script's own make_logger()
-            # already appends to (see ctrl/Snakefile's GLOBAL_LOG_FILE) --
-            # so a single tail on this one file shows scheduler dispatch
-            # and per-sample application activity together, live.
-            global_log_path = job.job_dir / "logs" / "00-job" / f"{job.job_id}.global.log"
-        )
-        if result.returncode == 0:
-            job.mark_completed()
-        else:
-            # The last ~40 lines are usually enough to see the actual
-            # error without dumping an entire multi-hour run's output
-            # into the job's metadata file; the full output is still on
-            # disk at output_log_path for anyone who needs more.
-            log_tail = "\n".join(snakemake_output.splitlines()[-40:])
-            job.mark_failed(
-                failure_reason = _extract_failure_reason(snakemake_output, result.returncode),
-                log_tail = log_tail
+            runtime_config = write_runtime_config(config = runtime_config_values,
+                                                  job = job,
+                                                  runtime_manifest = runtime_manifest)
+            result, snakemake_output = run_snakemake(
+                snakefile = snakefile,
+                runtime_config = runtime_config,
+                cores = cores,
+                use_conda = use_conda,
+                logger = job.job_logger,
+                dry_run = dry_run,
+                printshellcmds = printshellcmds,
+                rerun_triggers = rerun_triggers,
+                output_log_path = job.job_dir / "logs" / "00-job" / f"{job.job_id}.snakemake_output.log",
+                concurrent_slots = concurrent_slots,
+                # The exact same path every exec script's own make_logger()
+                # already appends to (see ctrl/Snakefile's GLOBAL_LOG_FILE) --
+                # so a single tail on this one file shows scheduler dispatch
+                # and per-sample application activity together, live.
+                global_log_path = job.job_dir / "logs" / "00-job" / f"{job.job_id}.global.log"
             )
-        _rerender_run_report_with_final_status(config, job, runtime_manifest, samples)
-        return result.returncode
-    except Exception as error:
-        job.job_logger.exception(f"Pipeline launch failed: {error}.")
-        job.mark_failed(failure_reason = f"{type(error).__name__}: {error}")
-        return 1
+            if result.returncode == 0:
+                job.mark_completed()
+            else:
+                # The last ~40 lines are usually enough to see the actual
+                # error without dumping an entire multi-hour run's output
+                # into the job's metadata file; the full output is still on
+                # disk at output_log_path for anyone who needs more.
+                log_tail = "\n".join(snakemake_output.splitlines()[-40:])
+                job.mark_failed(
+                    failure_reason = _extract_failure_reason(snakemake_output, result.returncode),
+                    log_tail = log_tail
+                )
+            _rerender_run_report_with_final_status(config, job, runtime_manifest, samples)
+            return result.returncode
+        except Exception as error:
+            job.job_logger.exception(f"Pipeline launch failed: {error}.")
+            job.mark_failed(failure_reason = f"{type(error).__name__}: {error}")
+            return 1
+    finally:
+        if oom_monitor_process is not None:
+            _stop_oom_monitor(oom_monitor_process, job.job_logger)
 
 def _configured_job_id(value: object) -> str | None:
     """
@@ -734,9 +871,26 @@ def main() -> int:
     """
     Runs the pipeline launcher from the command line.
 
+    On a real systemd/cgroup-v2 Linux machine, the first (unwrapped)
+    invocation transparently re-launches itself inside a memory-capped
+    `systemd --user --scope` cgroup and starts the proactive OOM
+    monitor against that same cgroup -- see
+    _reexec_under_memory_cgroup and _start_oom_monitor. A plain
+    `python pipeline_launcher.py --config ...` is therefore enough on
+    its own; no separate accessory script or manual systemd-run
+    wrapper is required. Fails open to a direct, uncontained run (no
+    monitor) on any machine where that containment genuinely isn't
+    available (e.g. local macOS development).
+
     Returns:
         int: Pipeline process return code.
     """
+    already_wrapped = os.environ.get(_CGROUP_WRAPPED_ENV) == "1"
+    if not already_wrapped:
+        wrapped_returncode = _reexec_under_memory_cgroup()
+        if wrapped_returncode is not None:
+            return wrapped_returncode
+
     args = parse_args()
     return launch_pipeline(
         config_path = Path(args.config),
@@ -745,7 +899,8 @@ def main() -> int:
         use_conda = not args.no_conda,
         dry_run = args.dry_run,
         printshellcmds = args.printshellcmds,
-        rerun_triggers = args.rerun_triggers
+        rerun_triggers = args.rerun_triggers,
+        cgroup_path = current_cgroup_path() if already_wrapped else None
     )
 
 # Running the main command.

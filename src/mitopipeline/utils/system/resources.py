@@ -305,6 +305,28 @@ def oom_monitor_threshold_mb() -> int | None:
         return None
     return max(1024, ceiling_mb - _OOM_MONITOR_SAFETY_GAP_MB)
 
+def current_cgroup_path() -> Path | None:
+    """
+    This process's own real cgroup v2 directory, read fresh from
+    /proc/self/cgroup -- lets a process placed inside a fresh
+    `systemd-run --user --scope` cgroup discover that cgroup's real
+    path itself, without the caller already having to know it. None
+    on non-Linux, a cgroup v1-only system (no unified "0::" line), or
+    any other unreadable/unparseable case -- never a guess.
+
+    Returns:
+        Path | None: The real absolute cgroup directory under /sys/fs/cgroup, or None if undetectable.
+    """
+    try:
+        with open("/proc/self/cgroup", "r", encoding = "utf-8") as handle:
+            for line in handle:
+                parts = line.strip().split(":", 2)
+                if len(parts) == 3 and parts[0] == "0" and parts[1] == "":
+                    return Path("/sys/fs/cgroup") / parts[2].lstrip("/")
+    except OSError:
+        return None
+    return None
+
 def job_root_from_global_log(global_log_file: Path) -> Path:
     """
     Derives this job's own output root from its global log file path

@@ -18,9 +18,10 @@ import sys
 import pytest
 from mitopipeline.launcher import pipeline_launcher
 from mitopipeline.launcher.pipeline_launcher import (
-    _configured_job_id, _job_configuration, _rerender_run_report_with_final_status,
-    discover_fastq_pairs, load_config, parse_args, prepare_runtime_manifest, run_snakemake,
-    write_validated_manifest,
+    _configured_job_id, _job_configuration, _reexec_under_memory_cgroup,
+    _rerender_run_report_with_final_status, _start_oom_monitor, _stop_oom_monitor,
+    _systemd_user_scope_available, discover_fastq_pairs, load_config, parse_args,
+    prepare_runtime_manifest, run_snakemake, write_validated_manifest,
 )
 from mitopipeline.models.sample.sample import Sample
 
@@ -364,3 +365,139 @@ def test_rerender_run_report_omits_phylogeny_model_when_not_configured(
     _rerender_run_report_with_final_status({}, job, tmp_path / "manifest.tsv", [_FakeSample("s1")])
 
     assert "--phylogeny-model" not in captured["command"]
+
+def test_systemd_user_scope_available_reflects_a_real_clean_exit(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(subprocess, "run",
+        lambda command, **kwargs: subprocess.CompletedProcess(args = command, returncode = 0))
+    assert _systemd_user_scope_available("/usr/bin/systemd-run") is True
+
+def test_systemd_user_scope_available_is_false_on_a_real_nonzero_exit(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(subprocess, "run",
+        lambda command, **kwargs: subprocess.CompletedProcess(args = command, returncode = 1))
+    assert _systemd_user_scope_available("/usr/bin/systemd-run") is False
+
+def test_systemd_user_scope_available_is_false_when_no_bus_is_reachable(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A real environment failure (no reachable user systemd session) raises
+    OSError from subprocess.run itself, not just a nonzero return code."""
+    def _raise(command, **kwargs):
+        raise OSError("Failed to connect to bus")
+    monkeypatch.setattr(subprocess, "run", _raise)
+    assert _systemd_user_scope_available("/usr/bin/systemd-run") is False
+
+def test_reexec_fails_open_when_total_ram_is_undetectable(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(pipeline_launcher, "cgroup_memory_max_mb", lambda: None)
+    assert _reexec_under_memory_cgroup() is None
+
+def test_reexec_fails_open_when_systemd_run_is_not_installed(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(pipeline_launcher, "cgroup_memory_max_mb", lambda: 32000)
+    monkeypatch.setattr(pipeline_launcher.shutil, "which", lambda name: None)
+    assert _reexec_under_memory_cgroup() is None
+
+def test_reexec_fails_open_when_no_user_systemd_session_is_reachable(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(pipeline_launcher, "cgroup_memory_max_mb", lambda: 32000)
+    monkeypatch.setattr(pipeline_launcher.shutil, "which", lambda name: "/usr/bin/systemd-run")
+    monkeypatch.setattr(pipeline_launcher, "_systemd_user_scope_available", lambda binary: False)
+    assert _reexec_under_memory_cgroup() is None
+
+def test_reexec_wraps_the_real_argv_in_a_memory_capped_scope(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The whole point: a plain `python pipeline_launcher.py --config ...` must
+    re-launch itself, unchanged, inside a systemd --user --scope cgroup sized
+    by cgroup_memory_max_mb -- no separate, manual systemd-run step."""
+    monkeypatch.setattr(pipeline_launcher, "cgroup_memory_max_mb", lambda: 32000)
+    monkeypatch.setattr(pipeline_launcher.shutil, "which", lambda name: "/usr/bin/systemd-run")
+    monkeypatch.setattr(pipeline_launcher, "_systemd_user_scope_available", lambda binary: True)
+    monkeypatch.setattr(sys, "argv", ["pipeline_launcher.py", "--config", "config.yaml", "--cores", "4"])
+
+    captured: dict = {}
+    def _fake_run(command, **kwargs):
+        captured["command"] = command
+        captured["env"] = kwargs.get("env")
+        return subprocess.CompletedProcess(args = command, returncode = 0)
+    monkeypatch.setattr(subprocess, "run", _fake_run)
+
+    returncode = _reexec_under_memory_cgroup()
+
+    assert returncode == 0
+    command = captured["command"]
+    assert command[0] == "/usr/bin/systemd-run"
+    assert "--user" in command and "--scope" in command
+    assert command[command.index("-p") + 1] == "MemoryMax=32000M"
+    assert command[-6:] == [sys.executable, str(Path(pipeline_launcher.__file__).resolve()),
+                            "--config", "config.yaml", "--cores", "4"]
+    assert captured["env"][pipeline_launcher._CGROUP_WRAPPED_ENV] == "1"
+
+class _FakeJobForMonitor:
+    def __init__(self, job_dir: Path) -> None:
+        self.job_dir = job_dir
+        self.job_id = "job1"
+        self.job_logger = logging.getLogger("test_oom_monitor_launcher")
+
+def test_start_oom_monitor_skips_when_threshold_is_undetectable(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(pipeline_launcher, "oom_monitor_threshold_mb", lambda: None)
+    job = _FakeJobForMonitor(tmp_path / "job")
+    assert _start_oom_monitor(Path("/sys/fs/cgroup/some.scope"), job) is None
+
+def test_start_oom_monitor_builds_the_real_command(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(pipeline_launcher, "oom_monitor_threshold_mb", lambda: 29000)
+    job = _FakeJobForMonitor(tmp_path / "job")
+
+    captured: dict = {}
+    class _FakeProcess:
+        def poll(self): return None
+    def _fake_popen(command, **kwargs):
+        captured["command"] = command
+        return _FakeProcess()
+    monkeypatch.setattr(subprocess, "Popen", _fake_popen)
+
+    process = _start_oom_monitor(Path("/sys/fs/cgroup/some.scope"), job)
+
+    assert process is not None
+    command = captured["command"]
+    assert command[0] == sys.executable
+    assert "oom_monitor.py" in command[1]
+    assert command[command.index("--cgroup-path") + 1] == "/sys/fs/cgroup/some.scope"
+    assert command[command.index("--threshold-mb") + 1] == "29000"
+    assert command[command.index("--job-root") + 1] == str(tmp_path / "job")
+
+def test_stop_oom_monitor_is_a_no_op_once_already_exited() -> None:
+    class _AlreadyExited:
+        def __init__(self) -> None:
+            self.terminated = False
+        def poll(self): return 0
+        def terminate(self): self.terminated = True
+    process = _AlreadyExited()
+    _stop_oom_monitor(process, logging.getLogger("test"))
+    assert process.terminated is False
+
+def test_stop_oom_monitor_terminates_a_real_running_process() -> None:
+    class _StillRunning:
+        def __init__(self) -> None:
+            self.terminated = False
+            self.waited = False
+        def poll(self): return None
+        def terminate(self): self.terminated = True
+        def wait(self, timeout = None): self.waited = True
+    process = _StillRunning()
+    _stop_oom_monitor(process, logging.getLogger("test"))
+    assert process.terminated is True
+    assert process.waited is True
+
+def test_stop_oom_monitor_escalates_to_kill_on_a_real_timeout() -> None:
+    class _HangingProcess:
+        def __init__(self) -> None:
+            self.killed = False
+            self._wait_calls = 0
+        def poll(self): return None
+        def terminate(self): pass
+        def wait(self, timeout = None):
+            self._wait_calls += 1
+            if self._wait_calls == 1:
+                raise subprocess.TimeoutExpired(cmd = "oom_monitor.py", timeout = timeout)
+        def kill(self): self.killed = True
+    process = _HangingProcess()
+    _stop_oom_monitor(process, logging.getLogger("test"))
+    assert process.killed is True

@@ -186,6 +186,7 @@ def main() -> int:
 
     logger = logging.getLogger("oom_monitor")
     logger.setLevel(logging.INFO)
+    args.log_file.parent.mkdir(parents = True, exist_ok = True)
     handler = logging.FileHandler(args.log_file)
     handler.setFormatter(logging.Formatter("%(asctime)s [%(levelname)s] %(message)s"))
     logger.addHandler(handler)
