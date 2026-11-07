@@ -127,6 +127,35 @@ def test_run_snakemake_resolves_the_binary_against_sys_executable(tmp_path: Path
     # own, not require a manual --cleanup-metadata/--rerun-incomplete step.
     assert "--rerun-incomplete" in command
 
+def test_run_snakemake_streams_output_live_into_the_global_log(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """global_log_path must be appended to AS EACH LINE ARRIVES, not just
+    captured for the end-of-run output_log_path -- that's the whole point
+    (a live `tail -f` on the global log should show scheduler dispatch
+    alongside each exec script's own application logging)."""
+    class _StreamingFakeProcess:
+        returncode = 0
+        def __init__(self) -> None:
+            self.stdout = iter(["line one\n", "line two\n"])
+        def wait(self) -> None:
+            pass
+
+    monkeypatch.setattr(subprocess, "Popen", lambda command, **kwargs: _StreamingFakeProcess())
+
+    global_log = tmp_path / "global.log"
+    run_snakemake(runtime_config = tmp_path / "runtime_config.yaml", cores = 2, use_conda = True,
+                  logger = logging.getLogger("test"), concurrent_slots = 8, global_log_path = global_log)
+
+    content = global_log.read_text()
+    assert "[SNAKEMAKE] line one" in content
+    assert "[SNAKEMAKE] line two" in content
+
+def test_run_snakemake_without_global_log_path_behaves_exactly_as_before(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Every existing caller that doesn't pass global_log_path must see no change at all."""
+    monkeypatch.setattr(subprocess, "Popen", lambda command, **kwargs: _FakeProcess())
+    result, output = run_snakemake(runtime_config = tmp_path / "runtime_config.yaml", cores = 2, use_conda = True,
+                                   logger = logging.getLogger("test"), concurrent_slots = 8)
+    assert result.returncode == 0
+
 def test_run_snakemake_defaults_concurrent_slots_to_a_live_detection(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """Omitting concurrent_slots must never fall back to a number
     hardcoded for one specific machine -- it has to come from a real,

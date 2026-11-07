@@ -424,7 +424,8 @@ def run_snakemake(
         printshellcmds: bool = False,
         output_log_path: Path | None = None,
         rerun_triggers: list[str] | None = None,
-        concurrent_slots: int | None = None
+        concurrent_slots: int | None = None,
+        global_log_path: Path | None = None
 ) -> tuple[subprocess.CompletedProcess, str]:
     """
     Run Snakemake using the runtime configuration.
@@ -438,8 +439,9 @@ def run_snakemake(
         dry_run (bool, optional): Whether to run Snakemake in dry-run mode. Defaults to False.
         printshellcmds (bool, optional): Whether to print shell commands. Defaults to False.
         rerun_triggers (list[str] | None): Passed through to Snakemake's own --rerun-triggers. None leaves Snakemake's default (every trigger) in effect.
-        output_log_path (Path | None): Where to durably save Snakemake's full captured stdout/stderr, for later inspection after a crash. When None, output is still captured and returned but not saved to its own file.
+        output_log_path (Path | None): Where to durably save Snakemake's full captured stdout/stderr, for later inspection after a crash. When None, output is still captured and returned but not saved to its own file. Written ONCE, after the whole run finishes -- not useful for watching a live run.
         concurrent_slots (int | None): The real ceiling on concurrent GetOrganelle-class jobs (see utils.system.resources.recommended_concurrent_slots) -- sets the `getorganelle_slots` resource pool. None falls back to this machine's own live-detected recommendation, computed fresh right here rather than ever hardcoded to one specific box.
+        global_log_path (Path | None): The same global log file every exec script's own logger already writes to (see logger_factory.make_logger) -- when given, Snakemake's own scheduler output (job dispatch, "N of M steps done", rule reasons) is appended here LIVE, line by line, as it's produced, not just captured for the end-of-run output_log_path. Lets a single `tail -f` on the global log show both per-sample application activity and scheduler-level dispatch together. None skips this entirely (every prior caller that doesn't pass it keeps working exactly as before).
 
     Returns:
         tuple[subprocess.CompletedProcess, str]: The result of the Snakemake run, and its full captured stdout+stderr (Snakemake's own output is still streamed live to the console as it runs -- capturing it doesn't silence it).
@@ -515,13 +517,34 @@ def run_snakemake(
     # past it or the session wasn't attended.
     logger.info(f"Running Snakemake with command: {' '.join(command)}")
     captured_lines: list[str] = []
-    process = subprocess.Popen(command, cwd = Path.cwd(), stdout = subprocess.PIPE,
-                               stderr = subprocess.STDOUT, text = True, bufsize = 1)
-    assert process.stdout is not None
-    for line in process.stdout:
-        print(line, end = "")
-        captured_lines.append(line)
-    process.wait()
+
+    # Opened once, before the subprocess starts, and appended to for the
+    # entire run -- every exec script's own make_logger() FileHandler
+    # already appends to this same path concurrently from its own
+    # subprocess; a line-buffered append-mode handle here is safe
+    # alongside those for the same reason multiple exec scripts already
+    # write to it safely today (each individual line write is small
+    # enough that the OS's own O_APPEND write stays atomic).
+    global_log_handle = None
+    if global_log_path is not None:
+        global_log_path.parent.mkdir(parents = True, exist_ok = True)
+        global_log_handle = global_log_path.open("a", encoding = "utf-8")
+
+    try:
+        process = subprocess.Popen(command, cwd = Path.cwd(), stdout = subprocess.PIPE,
+                                   stderr = subprocess.STDOUT, text = True, bufsize = 1)
+        assert process.stdout is not None
+        for line in process.stdout:
+            print(line, end = "")
+            captured_lines.append(line)
+            if global_log_handle is not None:
+                global_log_handle.write(f"[SNAKEMAKE] {line}")
+                global_log_handle.flush()
+        process.wait()
+    finally:
+        if global_log_handle is not None:
+            global_log_handle.close()
+
     output = "".join(captured_lines)
 
     result = subprocess.CompletedProcess(args = command, returncode = process.returncode)
@@ -662,7 +685,12 @@ def launch_pipeline(
             printshellcmds = printshellcmds,
             rerun_triggers = rerun_triggers,
             output_log_path = job.job_dir / "logs" / "00-job" / f"{job.job_id}.snakemake_output.log",
-            concurrent_slots = concurrent_slots
+            concurrent_slots = concurrent_slots,
+            # The exact same path every exec script's own make_logger()
+            # already appends to (see ctrl/Snakefile's GLOBAL_LOG_FILE) --
+            # so a single tail on this one file shows scheduler dispatch
+            # and per-sample application activity together, live.
+            global_log_path = job.job_dir / "logs" / "00-job" / f"{job.job_id}.global.log"
         )
         if result.returncode == 0:
             job.mark_completed()
