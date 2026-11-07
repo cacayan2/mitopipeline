@@ -70,7 +70,8 @@ def read_available_ram_mb() -> int | None:
     """
     return read_meminfo_mb("MemAvailable")
 
-def recommended_concurrent_slots(min_mb_per_job: int = 6144, max_slots: int | None = None) -> int:
+def recommended_concurrent_slots(min_mb_per_job: int = 8192, reserved_fraction: float = 0.15,
+                                 max_slots: int | None = None) -> int:
     """
     A live, RAM-aware concurrency ceiling for GetOrganelle-class jobs
     (primary assembly, rescue mapping/reassembly) -- how many of them
@@ -80,12 +81,26 @@ def recommended_concurrent_slots(min_mb_per_job: int = 6144, max_slots: int | No
     total RAM right now and divides by a configurable "comfortable
     minimum per job" anchor.
 
+    min_mb_per_job's default (8192, 8GB) and reserved_fraction (0.15)
+    deliberately match compute_job_memory_budget_mb's own defaults --
+    confirmed live, 2026-11-06, that an EARLIER mismatch here (a lower
+    6GB anchor with no reserved_fraction applied at all) let this
+    function recommend more slots than the live per-job budget
+    function could actually honor once it divided the same real RAM
+    pool, producing a per-job ceiling (~5GB) below real GetOrganelle's
+    own measured need (median 6.3GB, p75 8.4GB across 145 real runs) --
+    a real, confirmed regression: two samples that assembled cleanly
+    under the old, uncapped system failed with a genuine MemoryError
+    under the new one. Keeping both functions' math consistent is what
+    actually matters, not either number in isolation.
+
     Falls back to a conservative value of 1 when RAM is undetectable
     -- correctness over throughput when this machine's real headroom
     is simply unknown.
 
     Args:
-        min_mb_per_job (int): How much RAM one job should comfortably be able to claim without the whole pool already being oversubscribed at idle. Defaults to 6144 (6GB), informed by real completed-run peak memory on this pipeline's actual workload.
+        min_mb_per_job (int): How much RAM one job should comfortably be able to claim without the whole pool already being oversubscribed at idle. Defaults to 8192 (8GB) -- real measured p75 peak memory across 145 completed primary-assembly runs, 2026-11-06.
+        reserved_fraction (float): The same safety margin compute_job_memory_budget_mb reserves for the OS/other processes -- kept identical here so the two functions agree on how much RAM is actually being divided up.
         max_slots (int | None): An optional hard ceiling (e.g. to leave headroom for other users/processes on a shared machine); None applies no extra ceiling beyond the machine's own real CPU count.
 
     Returns:
@@ -97,7 +112,8 @@ def recommended_concurrent_slots(min_mb_per_job: int = 6144, max_slots: int | No
     if total_ram_mb is None:
         slots = 1
     else:
-        slots = max(1, total_ram_mb // max(1, min_mb_per_job))
+        usable_mb = total_ram_mb * (1.0 - reserved_fraction)
+        slots = max(1, int(usable_mb // max(1, min_mb_per_job)))
 
     slots = min(slots, cpu_count)
     if max_slots is not None:

@@ -77,9 +77,15 @@ class GetOrganelleRunner(BaseTool):
         Returns:
             None
         """
-        # Using the parent class constructor and setting the output file names.
+        # growth_monitor_log is GetOrganelle's own native log, which it
+        # always writes to exactly this path inside its -o directory
+        # (confirmed directly, 2026-11-06) -- always on for this runner
+        # specifically (never for any other BaseTool subclass), since
+        # only GetOrganelle produces the real per-round "AI ... AW ..."
+        # output the monitor watches for. No caller plumbing needed:
+        # this is fully determined by output_dir alone.
         super().__init__(tool_name = tool_name, working_dir = working_dir, logger = logger, metrics_dir = metrics_dir,
-                         memory_limit_mb = memory_limit_mb)
+                         memory_limit_mb = memory_limit_mb, growth_monitor_log = Path(output_dir) / "get_org.log.txt")
         self.output_dir = Path(output_dir)
         self.sample = sample
         self.organelle_type = organelle_type

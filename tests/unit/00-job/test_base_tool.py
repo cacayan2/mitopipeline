@@ -8,6 +8,7 @@ Unit tests for the BaseTool class.
 import json
 import logging
 import resource
+import time
 from pathlib import Path
 import pytest
 from mitopipeline.models.base_tool.base_tool import BaseTool
@@ -19,9 +20,9 @@ class _EchoTool(BaseTool):
     exercise BaseTool.run() without depending on any real pipeline tool.
     """
     def __init__(self, working_dir: Path, logger: logging.Logger, message: str = "hello",
-                 memory_limit_mb: int | None = None) -> None:
+                 memory_limit_mb: int | None = None, growth_monitor_log: Path | None = None) -> None:
         super().__init__(tool_name = "echo", working_dir = working_dir, logger = logger,
-                         memory_limit_mb = memory_limit_mb)
+                         memory_limit_mb = memory_limit_mb, growth_monitor_log = growth_monitor_log)
         self.message = message
         self.postprocessed = False
 
@@ -254,6 +255,64 @@ def test_run_applies_no_memory_limit_by_default(tmp_path: Path) -> None:
     assert tool.memory_limit_mb is None
     result = tool.run()
     assert result.success is True
+
+class _SleepTool(BaseTool):
+    """A real, slow (but harmless) command -- used to test the growth
+    monitor against a process that's actually still running when a
+    dangerous round shows up, unlike _EchoTool which exits instantly."""
+    def __init__(self, working_dir: Path, logger: logging.Logger, seconds: int = 30,
+                 growth_monitor_log: Path | None = None) -> None:
+        super().__init__(tool_name = "sleep", working_dir = working_dir, logger = logger,
+                         growth_monitor_log = growth_monitor_log)
+        self.seconds = seconds
+
+    def validate_inputs(self) -> None:
+        pass
+
+    def build_command(self) -> list[str]:
+        return ["sleep", str(self.seconds)]
+
+    def validate_outputs(self) -> None:
+        pass
+
+def test_growth_monitor_terminates_a_real_runaway_round(tmp_path: Path) -> None:
+    """A real round-growth jump past the threshold must actually stop
+    the real running command -- not a mock, a genuine `sleep 30`
+    that would otherwise still be running when this test ends."""
+    log_path = tmp_path / "get_org.log.txt"
+    log_path.write_text(
+        "2026-11-07 00:00:00,000 - INFO: Round 1: 10/10 AI 100 AW 1000\n"
+        "2026-11-07 00:00:05,000 - INFO: Round 2: 10/10 AI 50000 AW 500000\n"
+    )
+    tool = _SleepTool(working_dir = tmp_path, logger = logging.getLogger("test"), seconds = 30, growth_monitor_log = log_path)
+    start = time.perf_counter()
+    result = tool.run()
+    elapsed = time.perf_counter() - start
+
+    assert result.success is False
+    assert elapsed < 15, "the real sleep 30 should have been terminated early by the monitor, not run to completion"
+
+def test_growth_monitor_does_not_trigger_on_survivable_growth(tmp_path: Path) -> None:
+    """A real but modest round-over-round jump (well under the real
+    explosive-recruitment threshold) must never be treated as runaway."""
+    log_path = tmp_path / "get_org.log.txt"
+    log_path.write_text(
+        "2026-11-07 00:00:00,000 - INFO: Round 1: 10/10 AI 100 AW 1000000\n"
+        "2026-11-07 00:00:05,000 - INFO: Round 2: 10/10 AI 200 AW 2800000\n"
+    )
+    tool = _EchoTool(working_dir = tmp_path, logger = logging.getLogger("test"), growth_monitor_log = log_path)
+    result = tool.run()
+    assert result.success is True
+    assert result.stdout.strip() == "hello"
+
+def test_run_without_growth_monitor_log_behaves_exactly_as_before(tmp_path: Path) -> None:
+    """Every existing caller that never sets growth_monitor_log (every
+    tool wrapper except GetOrganelleRunner) must see no change at all."""
+    tool = _EchoTool(working_dir = tmp_path, logger = logging.getLogger("test"))
+    assert tool.growth_monitor_log is None
+    result = tool.run()
+    assert result.success is True
+    assert result.stdout.strip() == "hello"
 
 def test_run_succeeds_under_a_generous_memory_limit(tmp_path: Path) -> None:
     """A real end-to-end run with memory_limit_mb set -- confirms the preexec_fn wiring itself doesn't break a normal, well-within-budget command."""

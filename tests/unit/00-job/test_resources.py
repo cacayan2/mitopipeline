@@ -50,17 +50,28 @@ def test_read_meminfo_mb_returns_none_for_a_missing_key(tmp_path: Path, monkeypa
 def test_recommended_concurrent_slots_scales_with_detected_ram(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(resources, "read_total_ram_mb", lambda: 49152)   # 48GB
     monkeypatch.setattr(resources.os, "cpu_count", lambda: 64)
-    assert resources.recommended_concurrent_slots(min_mb_per_job = 6144) == 8
+    assert resources.recommended_concurrent_slots(min_mb_per_job = 6144, reserved_fraction = 0.0) == 8
+
+def test_recommended_concurrent_slots_applies_the_same_reserved_fraction_as_the_budget_function(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Confirmed live, 2026-11-06: a mismatch here (slots sized off raw
+    total RAM while the live per-job budget divided RESERVED RAM) let
+    this function recommend more slots than the budget function could
+    actually honor, producing a per-job ceiling below what GetOrganelle
+    actually needed and causing a real regression. Both must agree."""
+    monkeypatch.setattr(resources, "read_total_ram_mb", lambda: 49152)   # 48GB
+    monkeypatch.setattr(resources.os, "cpu_count", lambda: 64)
+    # 49152 * 0.85 = 41779.2; // 6144 = 6
+    assert resources.recommended_concurrent_slots(min_mb_per_job = 6144, reserved_fraction = 0.15) == 6
 
 def test_recommended_concurrent_slots_never_exceeds_cpu_count(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(resources, "read_total_ram_mb", lambda: 1_000_000)   # ~977GB, plenty
     monkeypatch.setattr(resources.os, "cpu_count", lambda: 4)
-    assert resources.recommended_concurrent_slots(min_mb_per_job = 6144) == 4
+    assert resources.recommended_concurrent_slots(min_mb_per_job = 6144, reserved_fraction = 0.0) == 4
 
 def test_recommended_concurrent_slots_respects_an_explicit_max(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(resources, "read_total_ram_mb", lambda: 1_000_000)
     monkeypatch.setattr(resources.os, "cpu_count", lambda: 64)
-    assert resources.recommended_concurrent_slots(min_mb_per_job = 6144, max_slots = 3) == 3
+    assert resources.recommended_concurrent_slots(min_mb_per_job = 6144, reserved_fraction = 0.0, max_slots = 3) == 3
 
 def test_recommended_concurrent_slots_falls_back_to_one_when_ram_undetectable(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(resources, "read_total_ram_mb", lambda: None)
