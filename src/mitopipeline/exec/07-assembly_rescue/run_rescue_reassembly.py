@@ -336,7 +336,7 @@ def _write_status(output_dir: Path, sample_id: str, status: str, success: bool, 
         target_coverage (float | None): This attempt's own --reduce-reads-for-coverage value, as actually passed to GetOrganelle.
         max_rounds (int | None): This attempt's own -R value, as actually passed to GetOrganelle.
         candidate_count (int | None): How many native path_sequence FASTA candidates GetOrganelle left behind -- more than one means postprocess_outputs() had to pick deterministically among several equally-valid outputs.
-        killed_by_signal (int | None): The real signal number that terminated the command, if any (e.g. 9 for SIGKILL) -- see run_getorganelle_assembly.py's identical field and utils.system.oom_requeue.
+        killed_by_signal (int | None): The real signal number that terminated the command, if any (e.g. 9 for SIGKILL) -- see run_getorganelle_assembly.py's identical field; also already retried in place, bounded, by BaseTool.run()'s own max_oom_retries before this status is ever written.
 
     Returns:
         None

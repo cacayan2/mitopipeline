@@ -437,10 +437,13 @@ def record_oom_kill(sample_id: str, peak_mb: float, state_path: Path, total_slot
     is capped at running completely alone, as the final escalation
     step. If a sample that already ran alone gets killed again, that
     is real, definitive proof this sample's need exceeds the whole
-    machine's real capacity -- recorded as exceeds_machine_capacity so
-    the requeue watcher stops retrying it rather than looping forever
-    (see utils.system.oom_requeue, which checks this field before ever
-    clearing this sample's done marker again).
+    machine's real capacity -- recorded as exceeds_machine_capacity.
+    This is the cross-dispatch backstop: BaseTool.run()'s own
+    max_oom_retries already gives a killed job a bounded number of
+    real in-place retries first (same dispatch); this escalation only
+    matters once that budget is exhausted and a later, separate
+    dispatch (the next rescue attempt) needs its own real reservation
+    sized off what was actually observed.
 
     Args:
         sample_id (str): The sample id.

@@ -22,10 +22,10 @@ class _EchoTool(BaseTool):
     """
     def __init__(self, working_dir: Path, logger: logging.Logger, message: str = "hello",
                  memory_limit_mb: int | None = None, dynamic_memory_limit_mb = None,
-                 dispatch_admission_wait = None) -> None:
+                 dispatch_admission_wait = None, max_oom_retries: int = 0) -> None:
         super().__init__(tool_name = "echo", working_dir = working_dir, logger = logger,
                          memory_limit_mb = memory_limit_mb, dynamic_memory_limit_mb = dynamic_memory_limit_mb,
-                         dispatch_admission_wait = dispatch_admission_wait)
+                         dispatch_admission_wait = dispatch_admission_wait, max_oom_retries = max_oom_retries)
         self.message = message
         self.postprocessed = False
 
@@ -386,3 +386,98 @@ def test_run_succeeds_under_a_generous_memory_limit(tmp_path: Path) -> None:
     result = tool.run()
     assert result.success is True
     assert result.stdout.strip() == "hello"
+
+class _SelfKillingTool(_EchoTool):
+    """
+    A real _EchoTool whose own command genuinely SIGKILLs itself the
+    first N real invocations (tracked via a real counter file on disk,
+    since each retry is a genuinely separate subprocess with no shared
+    in-memory state), then succeeds on the real invocation after that
+    -- a real, non-mocked exercise of BaseTool.run()'s own retry loop,
+    not a simulated return code.
+    """
+    def __init__(self, working_dir: Path, logger: logging.Logger, counter_path: Path,
+                 kills_before_success: int, max_oom_retries: int = 0, dispatch_admission_wait = None) -> None:
+        super().__init__(working_dir = working_dir, logger = logger,
+                         max_oom_retries = max_oom_retries, dispatch_admission_wait = dispatch_admission_wait)
+        self.counter_path = counter_path
+        self.kills_before_success = kills_before_success
+
+    def build_command(self) -> list[str]:
+        # "kill -9 0" (pid 0 means "my own process group" to kill(2)),
+        # not "kill -9 $$" (just this one bash) -- real production
+        # kills (launcher.oom_monitor's own os.killpg) take out the
+        # WHOLE wrapped process group, including the /usr/bin/time
+        # wrapper BaseTool.run() actually invokes as subprocess.run's
+        # own direct child (see its own start_new_session=True), which
+        # is what makes completed.returncode itself come back as -9
+        # rather than time's own propagated exit status.
+        return ["bash", "-c",
+               f'n=$(cat "{self.counter_path}" 2>/dev/null || echo 0); n=$((n+1)); '
+               f'echo $n > "{self.counter_path}"; '
+               f'if [ $n -le {self.kills_before_success} ]; then kill -9 0; '
+               f'else echo recovered; fi']
+
+def test_run_requeues_in_place_after_a_real_sigkill_and_succeeds(tmp_path: Path) -> None:
+    """The real gap this closes: a killed job used to be recorded as a
+    permanent "missing" result with no retry at all. With a real
+    budget of 2 retries and a command that genuinely kills itself only
+    once, the second real attempt must succeed -- 3 genuine subprocess
+    invocations total, not a mock."""
+    counter_path = tmp_path / "counter.txt"
+    tool = _SelfKillingTool(working_dir = tmp_path, logger = logging.getLogger("test"),
+                            counter_path = counter_path, kills_before_success = 1, max_oom_retries = 2)
+    result = tool.run()
+    assert result.success is True
+    assert result.stdout.strip() == "recovered"
+    assert counter_path.read_text().strip() == "2"  # 1 real kill + 1 real success
+
+def test_run_calls_dispatch_admission_wait_again_before_each_retry(tmp_path: Path) -> None:
+    """Confirms a retry only actually starts once real system state is
+    re-checked -- not immediately on the kill."""
+    counter_path = tmp_path / "counter.txt"
+    wait_calls = []
+    tool = _SelfKillingTool(working_dir = tmp_path, logger = logging.getLogger("test"),
+                            counter_path = counter_path, kills_before_success = 1, max_oom_retries = 2,
+                            dispatch_admission_wait = lambda: wait_calls.append(1))
+    result = tool.run()
+    assert result.success is True
+    # Once before the very first attempt, once more before the retry
+    # that actually succeeds.
+    assert len(wait_calls) == 2
+
+def test_run_gives_up_after_exhausting_real_oom_retries(tmp_path: Path) -> None:
+    """A sample that keeps genuinely getting killed past its real
+    retry budget must still end in the documented, honest failure
+    path -- never retried forever."""
+    counter_path = tmp_path / "counter.txt"
+    tool = _SelfKillingTool(working_dir = tmp_path, logger = logging.getLogger("test"),
+                            counter_path = counter_path, kills_before_success = 10, max_oom_retries = 2)
+    result = tool.run()
+    assert result.success is False
+    assert result.return_code == -9
+    assert counter_path.read_text().strip() == "3"  # 1 real attempt + 2 real retries, then gives up
+
+def test_run_never_retries_a_non_sigkill_failure(tmp_path: Path) -> None:
+    """max_oom_retries must only ever trigger on a real signal-9 --
+    a normal nonzero exit (e.g. a genuine tool failure, not a kill)
+    must behave exactly as before, with zero retries attempted."""
+    counter_path = tmp_path / "counter.txt"
+    tool = _EchoTool(working_dir = tmp_path, logger = logging.getLogger("test"), max_oom_retries = 2)
+    tool.build_command = lambda: ["bash", "-c", "exit 1"]
+    result = tool.run()
+    assert result.success is False
+    assert result.return_code == 1
+
+def test_run_with_zero_max_oom_retries_behaves_exactly_as_before(tmp_path: Path) -> None:
+    """Every existing caller that never sets max_oom_retries (every
+    tool wrapper except GetOrganelleRunner) must see no change -- a
+    real kill still just produces the same documented failure result,
+    first try, no retry attempted."""
+    counter_path = tmp_path / "counter.txt"
+    tool = _SelfKillingTool(working_dir = tmp_path, logger = logging.getLogger("test"),
+                            counter_path = counter_path, kills_before_success = 1, max_oom_retries = 0)
+    result = tool.run()
+    assert result.success is False
+    assert result.return_code == -9
+    assert counter_path.read_text().strip() == "1"  # exactly one real attempt, no retry

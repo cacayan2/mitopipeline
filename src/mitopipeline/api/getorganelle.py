@@ -26,6 +26,19 @@ from mitopipeline.utils.system.resources import (
 )
 from mitopipeline.api.fastqc import FastQCRunner
 
+# How many times BaseTool.run() requeues this exact same GetOrganelle
+# invocation, in place, after a real SIGKILL -- see max_oom_retries'
+# own docstring. Closes a real gap: several docstrings used to
+# reference a utils.system.oom_requeue module by name as the thing
+# that would do this, but that module was never actually built -- a
+# sample killed for a real memory reason deserves
+# a genuine second fair try once real headroom opens up, not an
+# immediate "missing" result with no retry at all. 2 (so up to 3 total
+# real attempts per real dispatch) -- bounded, not unbounded, since a
+# sample that's still too large after every in-place retry here is a
+# question for record_oom_kill's own cross-dispatch escalation instead.
+GETORGANELLE_MAX_OOM_RETRIES = 2
+
 # The organelle types GetOrganelle itself supports via -F.
 VALID_ORGANELLE_TYPES = {
     "animal_mt",
@@ -103,8 +116,11 @@ class GetOrganelleRunner(BaseTool):
         # and the kernel's own OOM killer is scoped to that cgroup alone,
         # never able to touch anything outside the pipeline's own
         # processes. A real OOM kill is then caught and intelligently
-        # escalated-and-requeued (see utils.system.oom_requeue), rather
-        # than guessed at or prevented in advance.
+        # requeued in place first (BaseTool.run()'s own max_oom_retries,
+        # GETORGANELLE_MAX_OOM_RETRIES below) and escalated across
+        # future dispatches once that's exhausted (record_oom_kill, see
+        # utils.system.resources), rather than guessed at or prevented
+        # in advance.
         #
         # dispatch_admission_wait stays on -- it still avoids wasting the
         # shared pool on simultaneous cold starts, which is a real,
@@ -129,7 +145,8 @@ class GetOrganelleRunner(BaseTool):
 
         super().__init__(tool_name = tool_name, working_dir = working_dir, logger = logger, metrics_dir = metrics_dir,
                          dispatch_admission_wait = lambda: wait_for_dispatch_admission(
-                             logger = self.logger, floor_mb = _admission_floor_mb()))
+                             logger = self.logger, floor_mb = _admission_floor_mb()),
+                         max_oom_retries = GETORGANELLE_MAX_OOM_RETRIES)
         self.output_dir = Path(output_dir)
         self.sample = sample
         self.organelle_type = organelle_type

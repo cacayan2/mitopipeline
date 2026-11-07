@@ -47,7 +47,8 @@ class BaseTool(ABC):
                  metrics_dir: Path | None = None,
                  memory_limit_mb: int | None = None,
                  dynamic_memory_limit_mb: Callable[[], int | None] | None = None,
-                 dispatch_admission_wait: Callable[[], None] | None = None) -> None:
+                 dispatch_admission_wait: Callable[[], None] | None = None,
+                 max_oom_retries: int = 0) -> None:
         """
         Instantiation method for the BaseTool class.
 
@@ -58,7 +59,8 @@ class BaseTool(ABC):
             metrics_dir (Path | None): Where to persist this run's CommandResult as JSON (organized, report-ready per-step compute metrics). run() already measures CPU/memory/runtime for every tool call via GNU time. None (the default) skips persistence entirely -- existing callers that don't pass it keep working exactly as before.
             memory_limit_mb (int | None): A hard, INITIAL ceiling on this command's own virtual address space, in MB, enforced via RLIMIT_AS at process start (see run()). None (the default) applies no limit -- every existing tool wrapper that doesn't pass this keeps working exactly as before. Exists so one runaway process (e.g. GetOrganelle recruiting off-target reads) hits its OWN clean allocation failure instead of triggering the kernel's global OOM killer, which can claim an unrelated process on a shared machine. Never stops a command based on a PREDICTED pattern -- only once it's genuinely out of its real budget (Emil's explicit call, 2026-11-06, after an earlier version also tried to predict and pre-empt runaway growth from its own round-over-round pattern alone; removed).
             dynamic_memory_limit_mb (Callable[[], int | None] | None): A callback run() calls periodically (every _DYNAMIC_MEMORY_RECHECK_SECONDS) WHILE the command is still running, to re-apply a FRESH ceiling to the already-running process via resource.prlimit -- not a one-time value fixed at launch. Lets a command's own real headroom grow as sibling jobs finish and free up RAM (rather than being stuck forever at whatever a static initial division happened to allow), while still genuinely capping it against real, current system RAM -- Emil's own explicit point, 2026-11-06: a statically-divided ceiling can cut off a job that would have reached a real, natural conclusion if given the room that was genuinely free at the time. None (the default) skips this entirely -- only GetOrganelleRunner sets it.
-            dispatch_admission_wait (Callable[[], None] | None): A blocking call made at the very start of run(), before this command is even built, let alone started -- lets a caller defer STARTING a new job entirely until real system state says there's genuinely enough headroom, rather than only adjusting an already-running job's own ceiling. No count-based cap on how many jobs may run at once; purely a live check of real current conditions (Emil's own explicit call, 2026-11-07, after a flat concurrency ceiling sized for worst-case safety measurably starved real throughput). None (the default) skips this entirely -- only GetOrganelleRunner sets it.
+            dispatch_admission_wait (Callable[[], None] | None): A blocking call made at the very start of run(), before this command is even built, let alone started -- lets a caller defer STARTING a new job entirely until real system state says there's genuinely enough headroom, rather than only adjusting an already-running job's own ceiling. No count-based cap on how many jobs may run at once; purely a live check of real current conditions (Emil's own explicit call, 2026-11-07, after a flat concurrency ceiling sized for worst-case safety measurably starved real throughput). None (the default) skips this entirely -- only GetOrganelleRunner sets it. Also reused by max_oom_retries below, to wait for real headroom again before each in-place retry.
+            max_oom_retries (int): How many times run() retries the EXACT SAME command, in place, after it's killed by signal 9 (the real, confirmed signature of our own oom_monitor or the kernel's own OOM killer -- never retried on any other signal, e.g. a deliberate SIGTERM during a real pipeline stop). 0 (the default) disables this entirely -- every existing tool wrapper that doesn't pass this keeps working exactly as before. Real gap this closes, 2026-11-07: `utils.system.oom_requeue` was referenced by name in several docstrings as the mechanism that requeues a killed job once real headroom opens up, but no such module was ever actually built -- a killed attempt was simply recorded as a real "missing" result and the rescue chain moved on to its next attempt, never giving the killed one itself a second, fair try. Each retry calls dispatch_admission_wait() again first (when set) so a retry only actually starts once real system state says it's safe, not immediately. Bounded, not unbounded: record_oom_kill's own cross-dispatch escalation (see utils.system.resources) is the real backstop for a sample that's still too large even after every in-place retry here is exhausted.
 
         Returns:
             None
@@ -70,6 +72,7 @@ class BaseTool(ABC):
         self.dispatch_admission_wait = dispatch_admission_wait
         self.metrics_dir = Path(metrics_dir) if metrics_dir is not None else None
         self.memory_limit_mb = memory_limit_mb
+        self.max_oom_retries = max_oom_retries
 
     def version_command(self) -> list[str] | None:
         """
@@ -182,126 +185,159 @@ class BaseTool(ABC):
         self.logger.info(f"{context} Successfully built command.")
         self.logger.debug(f"{context} Command: {shlex.join(command)}")
 
-        # Creating a tempfile for GNU time statistics.
-        with tempfile.NamedTemporaryFile(mode = "w", suffix = ".json", delete = False) as handle:
-            metrics_path = Path(handle.name)
-            timed_command = [
-                "/usr/bin/time",
-                "-f",
-                (
-                    '{"user_cpu_seconds": %U, '
-                    '"system_cpu_seconds": %S, '
-                    '"peak_memory_mb": %M}'
-                ),
-                "-o",
-                str(metrics_path),
-                "--",
-                *command,
-            ]
+        # Real retry budget for an in-place requeue after a genuine
+        # SIGKILL (see max_oom_retries' own docstring) -- a plain "if"
+        # around the whole execution block below would only ever
+        # attempt once more; a loop is needed so a sample that keeps
+        # getting killed can genuinely use every retry it was given,
+        # not just one.
+        oom_retries_left = self.max_oom_retries
 
-        # Logging and executing run portion.
-        start_time = time.perf_counter()
-        started_at = datetime.now()
-        self.logger.info(f"{context} Running command.")
-        self.logger.debug(f"{context} Command: {shlex.join(command)}")
-        self.logger.debug(f"{context} Working directory: {self.working_dir}.")
-        if self.memory_limit_mb is not None:
-            self.logger.debug(f"{context} Enforcing a {self.memory_limit_mb}MB memory ceiling (RLIMIT_AS) on this command.")
+        while True:
+            # Creating a tempfile for GNU time statistics.
+            with tempfile.NamedTemporaryFile(mode = "w", suffix = ".json", delete = False) as handle:
+                metrics_path = Path(handle.name)
+                timed_command = [
+                    "/usr/bin/time",
+                    "-f",
+                    (
+                        '{"user_cpu_seconds": %U, '
+                        '"system_cpu_seconds": %S, '
+                        '"peak_memory_mb": %M}'
+                    ),
+                    "-o",
+                    str(metrics_path),
+                    "--",
+                    *command,
+                ]
 
-        try:
-            # Running the command. preexec_fn runs in the forked child,
-            # after fork() but before exec() -- setting RLIMIT_AS there
-            # caps only this one subprocess's own address space, so a
-            # runaway job (e.g. GetOrganelle recruiting off-target
-            # reads) hits its own clean allocation failure instead of
-            # triggering the kernel's global OOM killer, which could
-            # otherwise claim an unrelated process on a shared machine
-            # (confirmed as a real risk, 2026-11-06 -- the kernel killed
-            # a 32GB GetOrganelle process with no per-job ceiling in
-            # place at all).
-            #
-            # Deliberately never terminates a command early based on its
-            # own growth pattern alone (an earlier version of this did,
-            # on a live-tailed round-growth heuristic) -- Emil's explicit
-            # call, 2026-11-06: a predicted-but-unconfirmed "this might
-            # get worse" is not reason enough to cut off a run that could
-            # still reach a real, usable assembly. memory_limit_mb above
-            # is the only thing allowed to stop a command early, and only
-            # once it's genuinely, actually out of its real budget -- see
-            # getorganelle.py's own post-hoc growth-pattern logging for
-            # the (observe-only, never-acts) replacement.
-            if self.dynamic_memory_limit_mb is not None:
-                # A separate path from the plain subprocess.run() below,
-                # used only when a caller (GetOrganelleRunner) wants its
-                # ceiling re-adjusted LIVE while the command keeps
-                # running, rather than fixed once at launch. Every other
-                # tool wrapper never sets dynamic_memory_limit_mb, so
-                # this branch never runs for them.
-                process = subprocess.Popen(timed_command, cwd = self.working_dir, stdout = subprocess.PIPE,
-                                           stderr = subprocess.PIPE, text = True, start_new_session = True,
-                                           preexec_fn = self._apply_memory_limit if self.memory_limit_mb is not None else None)
-                stop_event = threading.Event()
-                adjuster = threading.Thread(target = self._adjust_memory_limit_periodically,
-                                            args = (process, stop_event), daemon = True)
-                adjuster.start()
-                stdout, stderr = process.communicate()
-                stop_event.set()
-                adjuster.join(timeout = 2)
-                completed = subprocess.CompletedProcess(args = timed_command, returncode = process.returncode,
-                                                        stdout = stdout, stderr = stderr)
-            else:
-                # start_new_session=True puts the wrapped command (GNU
-                # time + the real tool, plus every real descendant it
-                # forks -- SPAdes, bowtie2, etc.) into its own process
-                # group, separate from this exec script's own. This is
-                # what lets an external killer (e.g. launcher.oom_monitor)
-                # safely take out the ENTIRE real command subtree via a
-                # single process-group kill without ever touching this
-                # calling process itself -- the same proven pattern
-                # already used for every real pipeline-stop tonight,
-                # just scoped to one job instead of the whole pipeline.
-                # Without this, a killed child's own orphaned
-                # grandchildren (e.g. a bowtie2 or spades-core process
-                # that doesn't die with its immediate parent) could keep
-                # writing into this sample's own output directory even
-                # after cleanup_failed_output() has already run --
-                # confirmed as a real, recurring risk earlier this same
-                # night (an orphaned bowtie2 process survived an
-                # earlier pipeline-stop's own group kill).
-                completed = subprocess.run(timed_command, cwd = self.working_dir, capture_output = True, text = True,
-                                           start_new_session = True,
-                                           preexec_fn = self._apply_memory_limit if self.memory_limit_mb is not None else None)
-            runtime_seconds = time.perf_counter() - start_time
-            ended_at = datetime.now()
+            # Logging and executing run portion.
+            start_time = time.perf_counter()
+            started_at = datetime.now()
+            self.logger.info(f"{context} Running command.")
+            self.logger.debug(f"{context} Command: {shlex.join(command)}")
+            self.logger.debug(f"{context} Working directory: {self.working_dir}.")
+            if self.memory_limit_mb is not None:
+                self.logger.debug(f"{context} Enforcing a {self.memory_limit_mb}MB memory ceiling (RLIMIT_AS) on this command.")
 
-            # Reading the execution resource statistics. On a non-zero exit,
-            # GNU time prepends a human-readable notice line (e.g. "Command
-            # exited with non-zero status 1") before the -f JSON line, so
-            # the JSON line is parsed specifically rather than the whole file.
-            # When the wrapped command is killed by a signal (e.g. an
-            # external SIGKILL during a restart) rather than exiting
-            # normally, GNU time never writes this file at all -- it stays
-            # empty, and metrics are genuinely unavailable, not just hard
-            # to parse. Confirmed live: this previously raised a bare
-            # KeyError here, uncaught by anything downstream expecting a
-            # documented failure (run()'s own success/failure branch never
-            # even ran), so the caller's generic exception handler logged
-            # "failed unexpectedly: 'user_cpu_seconds'" and returned
-            # without writing any assembly status -- a real rescue attempt
-            # silently burned with no record at all, rather than a
-            # documented failure. Defaulting to None here instead lets the
-            # real completed.returncode (already non-zero for a killed
-            # process) drive the normal, already-correct failure path.
-            with metrics_path.open("r", encoding = "utf-8") as handle:
-                metrics_lines = [line for line in handle.readlines() if line.strip()]
-            metrics = json.loads(metrics_lines[-1]) if metrics_lines else {}
-            user_cpu_seconds = metrics.get("user_cpu_seconds")
-            system_cpu_seconds = metrics.get("system_cpu_seconds")
-            peak_memory_mb = metrics["peak_memory_mb"] / 1024 if "peak_memory_mb" in metrics else None
+            try:
+                # Running the command. preexec_fn runs in the forked child,
+                # after fork() but before exec() -- setting RLIMIT_AS there
+                # caps only this one subprocess's own address space, so a
+                # runaway job (e.g. GetOrganelle recruiting off-target
+                # reads) hits its own clean allocation failure instead of
+                # triggering the kernel's global OOM killer, which could
+                # otherwise claim an unrelated process on a shared machine
+                # (confirmed as a real risk, 2026-11-06 -- the kernel killed
+                # a 32GB GetOrganelle process with no per-job ceiling in
+                # place at all).
+                #
+                # Deliberately never terminates a command early based on its
+                # own growth pattern alone (an earlier version of this did,
+                # on a live-tailed round-growth heuristic) -- Emil's explicit
+                # call, 2026-11-06: a predicted-but-unconfirmed "this might
+                # get worse" is not reason enough to cut off a run that could
+                # still reach a real, usable assembly. memory_limit_mb above
+                # is the only thing allowed to stop a command early, and only
+                # once it's genuinely, actually out of its real budget -- see
+                # getorganelle.py's own post-hoc growth-pattern logging for
+                # the (observe-only, never-acts) replacement.
+                if self.dynamic_memory_limit_mb is not None:
+                    # A separate path from the plain subprocess.run() below,
+                    # used only when a caller (GetOrganelleRunner) wants its
+                    # ceiling re-adjusted LIVE while the command keeps
+                    # running, rather than fixed once at launch. Every other
+                    # tool wrapper never sets dynamic_memory_limit_mb, so
+                    # this branch never runs for them.
+                    process = subprocess.Popen(timed_command, cwd = self.working_dir, stdout = subprocess.PIPE,
+                                               stderr = subprocess.PIPE, text = True, start_new_session = True,
+                                               preexec_fn = self._apply_memory_limit if self.memory_limit_mb is not None else None)
+                    stop_event = threading.Event()
+                    adjuster = threading.Thread(target = self._adjust_memory_limit_periodically,
+                                                args = (process, stop_event), daemon = True)
+                    adjuster.start()
+                    stdout, stderr = process.communicate()
+                    stop_event.set()
+                    adjuster.join(timeout = 2)
+                    completed = subprocess.CompletedProcess(args = timed_command, returncode = process.returncode,
+                                                            stdout = stdout, stderr = stderr)
+                else:
+                    # start_new_session=True puts the wrapped command (GNU
+                    # time + the real tool, plus every real descendant it
+                    # forks -- SPAdes, bowtie2, etc.) into its own process
+                    # group, separate from this exec script's own. This is
+                    # what lets an external killer (e.g. launcher.oom_monitor)
+                    # safely take out the ENTIRE real command subtree via a
+                    # single process-group kill without ever touching this
+                    # calling process itself -- the same proven pattern
+                    # already used for every real pipeline-stop tonight,
+                    # just scoped to one job instead of the whole pipeline.
+                    # Without this, a killed child's own orphaned
+                    # grandchildren (e.g. a bowtie2 or spades-core process
+                    # that doesn't die with its immediate parent) could keep
+                    # writing into this sample's own output directory even
+                    # after cleanup_failed_output() has already run --
+                    # confirmed as a real, recurring risk earlier this same
+                    # night (an orphaned bowtie2 process survived an
+                    # earlier pipeline-stop's own group kill).
+                    completed = subprocess.run(timed_command, cwd = self.working_dir, capture_output = True, text = True,
+                                               start_new_session = True,
+                                               preexec_fn = self._apply_memory_limit if self.memory_limit_mb is not None else None)
+                runtime_seconds = time.perf_counter() - start_time
+                ended_at = datetime.now()
 
-        finally:
-            # Removing the tempfile.
-            metrics_path.unlink(missing_ok = True)
+                # Reading the execution resource statistics. On a non-zero exit,
+                # GNU time prepends a human-readable notice line (e.g. "Command
+                # exited with non-zero status 1") before the -f JSON line, so
+                # the JSON line is parsed specifically rather than the whole file.
+                # When the wrapped command is killed by a signal (e.g. an
+                # external SIGKILL during a restart) rather than exiting
+                # normally, GNU time never writes this file at all -- it stays
+                # empty, and metrics are genuinely unavailable, not just hard
+                # to parse. Confirmed live: this previously raised a bare
+                # KeyError here, uncaught by anything downstream expecting a
+                # documented failure (run()'s own success/failure branch never
+                # even ran), so the caller's generic exception handler logged
+                # "failed unexpectedly: 'user_cpu_seconds'" and returned
+                # without writing any assembly status -- a real rescue attempt
+                # silently burned with no record at all, rather than a
+                # documented failure. Defaulting to None here instead lets the
+                # real completed.returncode (already non-zero for a killed
+                # process) drive the normal, already-correct failure path.
+                with metrics_path.open("r", encoding = "utf-8") as handle:
+                    metrics_lines = [line for line in handle.readlines() if line.strip()]
+                metrics = json.loads(metrics_lines[-1]) if metrics_lines else {}
+                user_cpu_seconds = metrics.get("user_cpu_seconds")
+                system_cpu_seconds = metrics.get("system_cpu_seconds")
+                peak_memory_mb = metrics["peak_memory_mb"] / 1024 if "peak_memory_mb" in metrics else None
+
+            finally:
+                # Removing the tempfile.
+                metrics_path.unlink(missing_ok = True)
+
+            # A real SIGKILL (-9) is the confirmed signature of our own
+            # oom_monitor or the kernel's own OOM killer (never a
+            # deliberate SIGTERM-based pipeline stop -- that signal
+            # reaches this exec script's own process directly, which
+            # would already be dead before ever reaching this check, so
+            # a real operator-initiated stop can never trigger a retry
+            # here). Requeue in place: wait for real headroom again
+            # (same dispatch_admission_wait used before the very first
+            # attempt), then loop back and run the exact same command
+            # again -- a genuine second (or third) fair try, not just a
+            # "missing" result recorded on the first interruption.
+            if completed.returncode == -9 and oom_retries_left > 0:
+                oom_retries_left -= 1
+                self.logger.warning(
+                    f"{context} Command was killed by signal 9 (likely a real OOM kill) after "
+                    f"{runtime_seconds:.1f}s -- waiting for real headroom and requeuing in place "
+                    f"({self.max_oom_retries - oom_retries_left}/{self.max_oom_retries} retries used)."
+                )
+                if self.dispatch_admission_wait is not None:
+                    self.dispatch_admission_wait()
+                continue
+
+            break
 
         # Obtaining the CommandResult.
         command_result = CommandResult(command = command,
