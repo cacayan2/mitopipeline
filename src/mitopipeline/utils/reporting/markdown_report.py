@@ -314,12 +314,17 @@ def render_aggregated_data_section(report_data: SampleReportData, report_path: P
     else:
         lines += ["_No aggregated files were available for this sample._", ""]
 
-    genbank_dir = aggregated_dir / "archival" / "genbank" / sample_id
+    # archival/<sample_id>/ is organized per organism first, then by
+    # record type (Emil's own direct ask, 2026-11-06) -- this sample's
+    # own report links to its own extracted SRA/BioSample row and its
+    # own BioProject reference copy, not the run-wide combined table.
+    sample_archival_dir = aggregated_dir / "archival" / sample_id
+    genbank_dir = sample_archival_dir / "genbank"
     archival_links = [
         link for link in [
-            file_link("SRA metadata table", aggregated_dir / "archival" / "sra" / "sra_metadata.tsv", report_path),
-            file_link("BioSample metadata table", aggregated_dir / "archival" / "biosample" / "biosample_metadata.tsv", report_path),
-            file_link("BioProject metadata record", aggregated_dir / "archival" / "bioproject" / "bioproject_metadata.json", report_path),
+            file_link("SRA metadata", sample_archival_dir / "sra" / "sra_metadata.tsv", report_path),
+            file_link("BioSample metadata", sample_archival_dir / "biosample" / "biosample_metadata.tsv", report_path),
+            file_link("BioProject metadata record", sample_archival_dir / "bioproject" / "bioproject_metadata.json", report_path),
             file_link("GenBank assembly FASTA", genbank_dir / f"{sample_id}.fasta", report_path),
             file_link("GenBank annotation GFF", genbank_dir / f"{sample_id}.gff", report_path),
             file_link("GenBank feature table", genbank_dir / f"{sample_id}.tbl", report_path),

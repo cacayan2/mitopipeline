@@ -83,7 +83,7 @@ def test_aggregate_sample_data_copies_the_real_genbank_submission_folder(tmp_pat
     output_root = tmp_path / "aggregated_data"
     result = aggregate_sample_data("sample1", output_root, genbank_submission_dir = submission_folder)
 
-    assert result.genbank_submission_dir_path == output_root / "archival" / "genbank" / "sample1"
+    assert result.genbank_submission_dir_path == output_root / "archival" / "sample1" / "genbank"
     assert (result.genbank_submission_dir_path / "sample1.fasta").read_text() == ">sample1\nACGT\n"
     assert (result.genbank_submission_dir_path / "sample1.gff").is_file()
 
@@ -113,7 +113,7 @@ def test_aggregate_sample_data_copies_table2asn_files_into_the_same_genbank_fold
         table2asn_discrepancy = dr, table2asn_genbank_flatfile = gbf,
     )
 
-    genbank_dir = output_root / "archival" / "genbank" / "sample1"
+    genbank_dir = output_root / "archival" / "sample1" / "genbank"
     assert result.table2asn_sqn_path == genbank_dir / "sample1.sqn"
     assert result.table2asn_validation_path == genbank_dir / "sample1.val"
     assert result.table2asn_stats_path == genbank_dir / "sample1.stats"

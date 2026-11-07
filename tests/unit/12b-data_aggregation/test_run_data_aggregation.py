@@ -147,14 +147,22 @@ def test_aggregates_real_archival_materials(tmp_path: Path, monkeypatch: pytest.
     assert (output_dir / "archival" / "archival_validation.tsv").is_file()
     assert (output_dir / "archival" / "submission_checklist.md").is_file()
     assert (output_dir / "archival" / "md5_checksums.tsv").is_file()
-    assert (output_dir / "archival" / "genbank" / "sample1" / "sample1.fasta").read_text() == ">sample1\nACGT\n"
-    assert (output_dir / "archival" / "genbank" / "sample1" / "sample1.gff").is_file()
-    assert (output_dir / "archival" / "genbank" / "sample1" / "sample1.sqn").read_text() == "fake sqn"
-    assert (output_dir / "archival" / "genbank" / "sample1" / "sample1.gbf").is_file()
+    # archival/<sample_id>/ -- per organism first, then record type
+    # (Emil's own direct ask, 2026-11-06).
+    assert (output_dir / "archival" / "sample1" / "genbank" / "sample1.fasta").read_text() == ">sample1\nACGT\n"
+    assert (output_dir / "archival" / "sample1" / "genbank" / "sample1.gff").is_file()
+    assert (output_dir / "archival" / "sample1" / "genbank" / "sample1.sqn").read_text() == "fake sqn"
+    assert (output_dir / "archival" / "sample1" / "genbank" / "sample1.gbf").is_file()
+    assert (output_dir / "archival" / "sample1" / "sra" / "sra_metadata.tsv").read_text() == "sample_name\treview_status\nsample1\tREADY\n"
+    assert (output_dir / "archival" / "sample1" / "biosample" / "biosample_metadata.tsv").read_text() == "sample_name\treview_status\nsample1\tREADY\n"
+    assert (output_dir / "archival" / "sample1" / "bioproject" / "bioproject_metadata.json").read_text() == '{"title": "test"}'
 
     result = json.loads((output_dir / "job1.data_aggregation_result.json").read_text())
     assert result["samples"][0]["genbank_submission_dir_path"] is not None
     assert result["samples"][0]["table2asn_sqn_path"] is not None
+    assert result["samples"][0]["sra_metadata_path"] is not None
+    assert result["samples"][0]["biosample_metadata_path"] is not None
+    assert result["samples"][0]["bioproject_metadata_path"] is not None
     assert result["archival"]["sra_metadata_path"] is not None
     assert result["archival"]["bioproject_metadata_path"] is not None
     assert result["archival"]["submission_checklist_path"] is not None

@@ -294,16 +294,19 @@ def test_render_aggregated_data_section_links_real_existing_files(tmp_path: Path
     assert "Annotated genome map" not in text
 
 def test_render_aggregated_data_section_links_real_archival_materials(tmp_path: Path) -> None:
+    # archival/<sample_id>/ -- per organism first, then record type
+    # (Emil's own direct ask, 2026-11-06).
     aggregated_dir = tmp_path / "aggregated_data"
     archival = aggregated_dir / "archival"
-    (archival / "sra").mkdir(parents = True)
-    (archival / "sra" / "sra_metadata.tsv").write_text("sample_name\tstatus\nsample1\tREADY\n")
-    (archival / "biosample").mkdir(parents = True)
-    (archival / "biosample" / "biosample_metadata.tsv").write_text("sample_name\tstatus\nsample1\tREADY\n")
-    (archival / "bioproject").mkdir(parents = True)
-    (archival / "bioproject" / "bioproject_metadata.json").write_text('{"title": "test"}')
+    sample_archival = archival / "sample1"
+    (sample_archival / "sra").mkdir(parents = True)
+    (sample_archival / "sra" / "sra_metadata.tsv").write_text("sample_name\tstatus\nsample1\tREADY\n")
+    (sample_archival / "biosample").mkdir(parents = True)
+    (sample_archival / "biosample" / "biosample_metadata.tsv").write_text("sample_name\tstatus\nsample1\tREADY\n")
+    (sample_archival / "bioproject").mkdir(parents = True)
+    (sample_archival / "bioproject" / "bioproject_metadata.json").write_text('{"title": "test"}')
     (archival / "submission_checklist.md").write_text("# checklist\n")
-    genbank_dir = archival / "genbank" / "sample1"
+    genbank_dir = sample_archival / "genbank"
     genbank_dir.mkdir(parents = True)
     (genbank_dir / "sample1.fasta").write_text(">sample1\nACGT\n")
     (genbank_dir / "sample1.gff").write_text("##gff-version 3\n")
@@ -315,8 +318,8 @@ def test_render_aggregated_data_section_links_real_archival_materials(tmp_path: 
         aggregated_data_dir = aggregated_dir,
     )
     text = "\n".join(render_aggregated_data_section(sample, tmp_path / "sample1.report.md"))
-    assert "SRA metadata table" in text
-    assert "BioSample metadata table" in text
+    assert "SRA metadata" in text
+    assert "BioSample metadata" in text
     assert "BioProject metadata record" in text
     assert "GenBank assembly FASTA" in text
     assert "GenBank annotation GFF" in text

@@ -130,6 +130,8 @@ def main() -> int:
             table2asn_sqn = table2asn_files["sqn"], table2asn_validation_file = table2asn_files["validation"],
             table2asn_stats = table2asn_files["stats"], table2asn_discrepancy = table2asn_files["discrepancy"],
             table2asn_genbank_flatfile = table2asn_files["genbank_flatfile"],
+            sra_metadata_tsv = args.sra_metadata_tsv, biosample_metadata_tsv = args.biosample_metadata_tsv,
+            bioproject_metadata_json = args.bioproject_metadata_json,
             logger = logger,
         )
         logger.info(
@@ -139,7 +141,10 @@ def main() -> int:
             f"phylogeny_newick={'yes' if result.phylogeny_newick_path else 'no'}, "
             f"phylogeny_image={'yes' if result.phylogeny_image_path else 'no'}, "
             f"genbank_submission_dir={'yes' if result.genbank_submission_dir_path else 'no'}, "
-            f"table2asn_sqn={'yes' if result.table2asn_sqn_path else 'no'}."
+            f"table2asn_sqn={'yes' if result.table2asn_sqn_path else 'no'}, "
+            f"sra_metadata={'yes' if result.sra_metadata_path else 'no'}, "
+            f"biosample_metadata={'yes' if result.biosample_metadata_path else 'no'}, "
+            f"bioproject_metadata={'yes' if result.bioproject_metadata_path else 'no'}."
         )
         results.append(result)
 
@@ -180,6 +185,9 @@ def main() -> int:
                     "table2asn_stats_path": str(r.table2asn_stats_path) if r.table2asn_stats_path else None,
                     "table2asn_discrepancy_path": str(r.table2asn_discrepancy_path) if r.table2asn_discrepancy_path else None,
                     "table2asn_genbank_flatfile_path": str(r.table2asn_genbank_flatfile_path) if r.table2asn_genbank_flatfile_path else None,
+                    "sra_metadata_path": str(r.sra_metadata_path) if r.sra_metadata_path else None,
+                    "biosample_metadata_path": str(r.biosample_metadata_path) if r.biosample_metadata_path else None,
+                    "bioproject_metadata_path": str(r.bioproject_metadata_path) if r.bioproject_metadata_path else None,
                 }
                 for r in results
             ],

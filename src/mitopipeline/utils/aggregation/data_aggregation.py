@@ -9,20 +9,27 @@ phylogenies/. Copies real files from their own real, already-produced
 locations; never regenerates, re-derives, or fabricates anything.
 
 Also consolidates the run's real NCBI archival materials (Emil's own
-direct follow-up ask) into an archival/ subdirectory, one real
-subfolder per metadata type -- archival/sra/, archival/biosample/,
-archival/bioproject/, and archival/genbank/ (each sample's own real
-GenBank submission folder, plus that sample's real table2asn
-submission-validation files copied in alongside it) -- so a human
-reviewer doing the actual manual NCBI upload finds each record type
-already organized the way NCBI itself separates them, never a flat
-pile of same-looking .tsv files. The run-level submission checklist/
-readiness report/checksums span all four types at once, so they stay
-at archival/'s own top level as a cross-cutting index into the
-type-specific subfolders.
+direct follow-up ask) into an archival/ subdirectory -- organized per
+organism first, then by which record type it belongs to (Emil's own
+direct ask, 2026-11-06, replacing an earlier database-type-first
+layout): archival/<sample_id>/genbank/, /sra/, /biosample/,
+/bioproject/, so a human reviewer doing the actual manual NCBI upload
+finds one self-contained folder per specimen rather than hunting the
+same sample's records across four separate type folders. SRA and
+BioSample are genuinely built as one combined table per run (not one
+file per sample), so each organism's copy is a real extraction of
+that sample's own row, not a derived value; BioProject is genuinely
+one record for the whole submission, not per organism, so every
+sample's copy is identical by design -- the canonical copy still
+lives at the run level (archival/bioproject/), alongside the other
+run-level, genuinely cross-cutting materials (the combined GenBank
+metadata table, the submission checklist/readiness report/checksums)
+that don't belong to any one organism.
 """
 
 # Imports
+import csv
+import json
 import shutil
 from dataclasses import dataclass
 from logging import Logger
@@ -46,6 +53,9 @@ class SampleAggregationResult:
         table2asn_stats_path (Path | None): Where the real table2asn .stats file was copied to, or None if unavailable.
         table2asn_discrepancy_path (Path | None): Where the real table2asn .dr discrepancy report was copied to, or None if unavailable.
         table2asn_genbank_flatfile_path (Path | None): Where the real table2asn .gbf GenBank flatfile was copied to, or None if unavailable.
+        sra_metadata_path (Path | None): Where this sample's own single-row SRA metadata extract was written, or None if unavailable.
+        biosample_metadata_path (Path | None): Where this sample's own single-row BioSample metadata extract was written, or None if unavailable.
+        bioproject_metadata_path (Path | None): Where this sample's own reference copy of the run's one real BioProject record was copied to, or None if unavailable -- BioProject is genuinely one record per whole submission, not per organism, so every sample's copy is identical by design.
     """
     sample_id: str
     assembly_path: Path | None = None
@@ -59,6 +69,9 @@ class SampleAggregationResult:
     table2asn_stats_path: Path | None = None
     table2asn_discrepancy_path: Path | None = None
     table2asn_genbank_flatfile_path: Path | None = None
+    sra_metadata_path: Path | None = None
+    biosample_metadata_path: Path | None = None
+    bioproject_metadata_path: Path | None = None
 
 @dataclass(frozen = True, slots = True)
 class ArchivalAggregationResult:
@@ -118,6 +131,37 @@ def _copy_into_dir_if_present(source: str | Path | None, destination_dir: Path, 
     source = Path(source)
     return _copy_if_present(source, destination_dir / source.name, logger)
 
+def _extract_tsv_row_if_present(source: str | Path | None, sample_id: str, destination: Path,
+                                 logger: Logger | None = None) -> Path | None:
+    """
+    Writes just one sample's own real row out of a combined, run-level
+    SRA/BioSample metadata table (matched on that table's own
+    "sample_name" column, which both writers set to the real sample_id)
+    -- SRA and BioSample are built as one job-level table covering
+    every sample, with no separate per-sample file to copy, so this is
+    a real extraction, not a derived/fabricated value. Returns None
+    when the source table, or this sample's own row in it, doesn't
+    exist.
+    """
+    if source is None:
+        return None
+    source = Path(source)
+    if not source.is_file() or source.stat().st_size == 0:
+        return None
+    with source.open(encoding = "utf-8", newline = "") as handle:
+        reader = csv.DictReader(handle, delimiter = "\t")
+        row = next((r for r in reader if r.get("sample_name") == sample_id), None)
+    if row is None:
+        return None
+    destination.parent.mkdir(parents = True, exist_ok = True)
+    with destination.open("w", encoding = "utf-8", newline = "") as handle:
+        writer = csv.DictWriter(handle, fieldnames = list(row.keys()), delimiter = "\t")
+        writer.writeheader()
+        writer.writerow(row)
+    if logger is not None:
+        logger.info(f"Extracted {sample_id}'s own row from {source} to {destination}.")
+    return destination
+
 def aggregate_sample_data(sample_id: str, output_root: str | Path,
                            assembly_fasta: str | Path | None = None,
                            annotation_image_png: str | Path | None = None,
@@ -130,20 +174,34 @@ def aggregate_sample_data(sample_id: str, output_root: str | Path,
                            table2asn_stats: str | Path | None = None,
                            table2asn_discrepancy: str | Path | None = None,
                            table2asn_genbank_flatfile: str | Path | None = None,
+                           sra_metadata_tsv: str | Path | None = None,
+                           biosample_metadata_tsv: str | Path | None = None,
+                           bioproject_metadata_json: str | Path | None = None,
                            logger: Logger | None = None) -> SampleAggregationResult:
     """
     Copies one sample's own real final outputs into the consolidated
     aggregated_data/ tree (assemblies/, annotations/ [+
-    annotations/gff/], phylogenies/, archival/genbank/<sample>/) under
-    output_root. The sample's real table2asn submission-validation
-    files are copied into that same archival/genbank/<sample>/
-    directory, alongside its GenBank FASTA/GFF/.tbl, so the real
-    submission-ready package (.fasta/.gff/.tbl/.sqn/.val/.stats/.dr/
-    .gbf) lives in one place rather than split across two stage
-    directories. Any input that's None, missing, or empty on disk is
-    skipped quietly -- a sample with no assembly (and therefore no
-    real annotation/phylogeny/GenBank folder either) is a normal
-    outcome, never a crash.
+    annotations/gff/], phylogenies/, archival/<sample>/) under
+    output_root. archival/<sample>/ is organized per organism first,
+    then by which NCBI record type it belongs to (Emil's own direct
+    ask, 2026-11-06, replacing the earlier database-type-first
+    layout): genbank/ (that sample's real GenBank submission folder,
+    plus its real table2asn submission-validation files copied in
+    alongside it, so the full submission-ready package --
+    .fasta/.gff/.tbl/.sqn/.val/.stats/.dr/.gbf -- lives in one place),
+    sra/ and biosample/ (this one sample's own real row, extracted
+    from the run's combined job-level table -- SRA/BioSample are built
+    as one table per run, not one file per sample, so there's no
+    separate per-sample source to copy; this is a genuine extraction
+    of that sample's own data, not a derived value), and bioproject/
+    (a reference copy of the run's one real BioProject record --
+    BioProject is genuinely one record per whole submission, not per
+    organism, so every sample's copy is identical by design; the
+    canonical copy still lives at archival/bioproject/ via
+    aggregate_archival_data() below). Any input that's None, missing,
+    or empty on disk is skipped quietly -- a sample with no assembly
+    (and therefore no real annotation/phylogeny/GenBank folder either)
+    is a normal outcome, never a crash.
 
     Args:
         sample_id (str): The sample id.
@@ -159,13 +217,17 @@ def aggregate_sample_data(sample_id: str, output_root: str | Path,
         table2asn_stats (str | Path | None): The sample's own real table2asn .stats file.
         table2asn_discrepancy (str | Path | None): The sample's own real table2asn .dr discrepancy report.
         table2asn_genbank_flatfile (str | Path | None): The sample's own real table2asn .gbf GenBank flatfile.
+        sra_metadata_tsv (str | Path | None): The run's own real combined SRA metadata table, to extract this one sample's row from.
+        biosample_metadata_tsv (str | Path | None): The run's own real combined BioSample metadata table, to extract this one sample's row from.
+        bioproject_metadata_json (str | Path | None): The run's own real BioProject metadata record, copied as-is (not per-sample data).
         logger (Logger | None): Logger to use. Defaults to None.
 
     Returns:
         SampleAggregationResult: What was actually copied for this sample.
     """
     output_root = Path(output_root)
-    genbank_dir = output_root / "archival" / "genbank" / sample_id
+    sample_archival_dir = output_root / "archival" / sample_id
+    genbank_dir = sample_archival_dir / "genbank"
 
     assembly_path = _copy_if_present(
         assembly_fasta, output_root / "assemblies" / f"{sample_id}.assembly.fasta", logger,
@@ -188,6 +250,15 @@ def aggregate_sample_data(sample_id: str, output_root: str | Path,
     table2asn_stats_path = _copy_into_dir_if_present(table2asn_stats, genbank_dir, logger)
     table2asn_discrepancy_path = _copy_into_dir_if_present(table2asn_discrepancy, genbank_dir, logger)
     table2asn_genbank_flatfile_path = _copy_into_dir_if_present(table2asn_genbank_flatfile, genbank_dir, logger)
+    sra_metadata_path = _extract_tsv_row_if_present(
+        sra_metadata_tsv, sample_id, sample_archival_dir / "sra" / "sra_metadata.tsv", logger,
+    )
+    biosample_metadata_path = _extract_tsv_row_if_present(
+        biosample_metadata_tsv, sample_id, sample_archival_dir / "biosample" / "biosample_metadata.tsv", logger,
+    )
+    bioproject_metadata_path = _copy_if_present(
+        bioproject_metadata_json, sample_archival_dir / "bioproject" / "bioproject_metadata.json", logger,
+    )
 
     return SampleAggregationResult(
         sample_id = sample_id, assembly_path = assembly_path,
@@ -197,6 +268,8 @@ def aggregate_sample_data(sample_id: str, output_root: str | Path,
         table2asn_sqn_path = table2asn_sqn_path, table2asn_validation_path = table2asn_validation_path,
         table2asn_stats_path = table2asn_stats_path, table2asn_discrepancy_path = table2asn_discrepancy_path,
         table2asn_genbank_flatfile_path = table2asn_genbank_flatfile_path,
+        sra_metadata_path = sra_metadata_path, biosample_metadata_path = biosample_metadata_path,
+        bioproject_metadata_path = bioproject_metadata_path,
     )
 
 def aggregate_archival_data(output_root: str | Path,
@@ -209,18 +282,14 @@ def aggregate_archival_data(output_root: str | Path,
                              checksums_tsv: str | Path | None = None,
                              logger: Logger | None = None) -> ArchivalAggregationResult:
     """
-    Copies the run's own real job-level NCBI archival materials into
-    aggregated_data/archival/ under output_root, one real subfolder
-    per metadata type -- archival/sra/, archival/biosample/,
-    archival/bioproject/, archival/genbank/ (the combined metadata
-    table here, alongside each sample's own GenBank submission folder
-    copied per-sample by aggregate_sample_data()) -- so a human
-    reviewer preparing the real manual NCBI upload finds each record
-    type already separated the way NCBI itself separates them, never
-    a flat pile of same-looking .tsv files. The run-level readiness
-    report/checklist/checksums span all four types at once, so they
-    stay at archival/'s own top level as a cross-cutting index. Any
-    input that's None, missing, or empty on disk is skipped quietly
+    Copies the run's own real job-level, genuinely cross-cutting NCBI
+    archival materials into aggregated_data/archival/ under
+    output_root -- the combined SRA/BioSample/GenBank metadata tables,
+    the canonical BioProject record, and the run-level readiness
+    report/checklist/checksums -- at archival/'s own top level,
+    alongside (not instead of) the per-organism archival/<sample_id>/
+    folders aggregate_sample_data() builds for each specimen's own
+    extracted records. Any input that's None, missing, or empty on disk is skipped quietly
     -- a run with archival disabled is a normal outcome.
 
     Args:
