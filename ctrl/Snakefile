@@ -53,6 +53,16 @@ if not JOB_ID: raise ValueError("'job_id' must be set in the runtime config file
 JOB_DIR = OUTPUT_ROOT / JOB_ID
 STAGES = config.get("stages", {})
 
+# The real ceiling on concurrent GetOrganelle-class jobs this run was
+# launched with -- the launcher (pipeline_launcher.py) resolves this
+# once, live, off the actual launch machine's CPU/RAM (never hardcoded
+# to one specific box), and writes it here so every GetOrganelle-class
+# rule can size its own live memory budget off the SAME number that
+# also set the `getorganelle_slots` resource pool. Falls back to 8
+# (the old hardcoded default) only for a runtime_config.yaml written
+# before this existed.
+CONCURRENT_SLOTS = (config.get("resources") or {}).get("getorganelle_slots", 8)
+
 # The whole-pipeline log every stage's logger also writes to, in
 # addition to its own per-step log file. Same path PipelineJob itself
 # uses (global_log_file_path) -- not a v0.1.0 convention, this is new

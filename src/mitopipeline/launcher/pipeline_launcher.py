@@ -21,6 +21,7 @@ import sys
 from mitopipeline.utils.manifest.manifest_parser import parse_sample_manifest
 from mitopipeline.models.pipeline_job.pipeline_job import PipelineJob
 from mitopipeline.models.sample.sample import Sample
+from mitopipeline.utils.system.resources import recommended_concurrent_slots
 
 # Matches a paired-end FASTQ filename and captures the sample ID (everything
 # before the read-pair token) and the mate number. Recognises Illumina-style
@@ -422,7 +423,8 @@ def run_snakemake(
         dry_run: bool = False,
         printshellcmds: bool = False,
         output_log_path: Path | None = None,
-        rerun_triggers: list[str] | None = None
+        rerun_triggers: list[str] | None = None,
+        concurrent_slots: int | None = None
 ) -> tuple[subprocess.CompletedProcess, str]:
     """
     Run Snakemake using the runtime configuration.
@@ -437,10 +439,13 @@ def run_snakemake(
         printshellcmds (bool, optional): Whether to print shell commands. Defaults to False.
         rerun_triggers (list[str] | None): Passed through to Snakemake's own --rerun-triggers. None leaves Snakemake's default (every trigger) in effect.
         output_log_path (Path | None): Where to durably save Snakemake's full captured stdout/stderr, for later inspection after a crash. When None, output is still captured and returned but not saved to its own file.
+        concurrent_slots (int | None): The real ceiling on concurrent GetOrganelle-class jobs (see utils.system.resources.recommended_concurrent_slots) -- sets the `getorganelle_slots` resource pool. None falls back to this machine's own live-detected recommendation, computed fresh right here rather than ever hardcoded to one specific box.
 
     Returns:
         tuple[subprocess.CompletedProcess, str]: The result of the Snakemake run, and its full captured stdout+stderr (Snakemake's own output is still streamed live to the console as it runs -- capturing it doesn't silence it).
     """
+    if concurrent_slots is None:
+        concurrent_slots = recommended_concurrent_slots()
     # Resolved against the running interpreter's own venv (sys.executable's
     # directory) rather than a bare "snakemake" -- subprocess.Popen does not
     # activate a venv, so a bare name only resolves if the venv's bin/ is
@@ -483,13 +488,18 @@ def run_snakemake(
         # Caps concurrent GetOrganelle-class jobs (primary assembly,
         # rescue reassembly -- see their own rules' matching
         # `resources: getorganelle_slots = 1`) regardless of how many
-        # idle threads `--cores` would otherwise allow. Confirmed live:
-        # resuming with a large backlog let a burst of these jobs
-        # launch within seconds of each other, and the kernel logged
-        # real memory pressure in that window while many reassembly
-        # attempts died before writing any log at all. 8 matches the
-        # concurrency level that ran without issue the rest of the day.
-        "getorganelle_slots=8"
+        # idle threads `--cores` would otherwise allow. Confirmed live,
+        # 2026-11-06: resuming with a large backlog let a burst of these
+        # jobs launch within seconds of each other, and the kernel
+        # logged real memory pressure in that window while many
+        # reassembly attempts died before writing any log at all. Was
+        # hardcoded to 8 (tuned for one specific machine's real core/RAM
+        # mix); now computed live from THIS machine's own real CPU count
+        # and total RAM (see recommended_concurrent_slots), so the same
+        # launcher sizes itself correctly on a different box too, rather
+        # than silently carrying over a number tuned for Dr. Stuart's
+        # machine specifically.
+        f"getorganelle_slots={concurrent_slots}"
     ]
     if use_conda: command.append("--use-conda")
     if dry_run: command.append("--dry-run")
@@ -623,7 +633,23 @@ def launch_pipeline(
         runtime_manifest, samples = prepare_runtime_manifest(config = config, job = job)
         job.set_samples([sample.sample_id for sample in samples])
         job.mark_created()
-        runtime_config = write_runtime_config(config = config,
+
+        # Resolving the real concurrency ceiling for GetOrganelle-class
+        # jobs ONCE here, so the exact same number ends up on both the
+        # `--resources getorganelle_slots=N` launch flag (run_snakemake)
+        # AND in the written runtime_config.yaml (read by each rule as
+        # `--concurrent-slots`, to size that job's own live memory
+        # budget) -- never two independently-derived numbers that could
+        # drift apart. An explicit `resources.getorganelle_slots` in the
+        # user's own config always wins over the live auto-detected
+        # recommendation, matching this config's existing convention of
+        # explicit values overriding computed defaults.
+        configured_slots = (config.get("resources") or {}).get("getorganelle_slots")
+        concurrent_slots = int(configured_slots) if configured_slots is not None else recommended_concurrent_slots()
+        runtime_config_values = dict(config)
+        runtime_config_values["resources"] = {**(config.get("resources") or {}), "getorganelle_slots": concurrent_slots}
+
+        runtime_config = write_runtime_config(config = runtime_config_values,
                                               job = job,
                                               runtime_manifest = runtime_manifest)
         result, snakemake_output = run_snakemake(
@@ -635,7 +661,8 @@ def launch_pipeline(
             dry_run = dry_run,
             printshellcmds = printshellcmds,
             rerun_triggers = rerun_triggers,
-            output_log_path = job.job_dir / "logs" / "00-job" / f"{job.job_id}.snakemake_output.log"
+            output_log_path = job.job_dir / "logs" / "00-job" / f"{job.job_id}.snakemake_output.log",
+            concurrent_slots = concurrent_slots
         )
         if result.returncode == 0:
             job.mark_completed()

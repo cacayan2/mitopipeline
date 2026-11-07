@@ -32,6 +32,7 @@ rule assembly:
         log_file = str(JOB_DIR / "logs" / "04d-assembly" / "{sample}.log"),
         global_log_file = str(GLOBAL_LOG_FILE),
         metrics_dir = str(JOB_DIR / "metrics" / "04d-assembly" / "{sample}"),
+        concurrent_slots = CONCURRENT_SLOTS,
         exec_script = str(SRC_DIR / "mitopipeline" / "exec" / "04d-assembly" / "run_getorganelle_assembly.py")
     threads:
         ASSEMBLY_CONFIG.get("threads", 4)
@@ -61,6 +62,7 @@ rule assembly:
             --log-file {params.log_file:q} \
             --global-log-file {params.global_log_file:q} \
             --threads {threads} \
+            --concurrent-slots {params.concurrent_slots} \
             --metrics-dir {params.metrics_dir:q} \
             || true
         touch {output.done:q}

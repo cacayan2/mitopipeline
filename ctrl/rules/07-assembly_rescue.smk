@@ -210,6 +210,7 @@ rule rescue_reassembly:
         log_file = str(JOB_DIR / "logs" / "07-assembly_rescue" / "{sample}.reassembly.attempt{attempt_num}.log"),
         global_log_file = str(GLOBAL_LOG_FILE),
         metrics_dir = str(JOB_DIR / "metrics" / "07-assembly_rescue" / "{sample}"),
+        concurrent_slots = CONCURRENT_SLOTS,
         exec_script = str(SRC_DIR / "mitopipeline" / "exec" / "07-assembly_rescue" / "run_rescue_reassembly.py")
     threads:
         RESCUE_CONFIG.get("threads", 4)
@@ -273,6 +274,7 @@ rule rescue_reassembly:
                 --output-dir {params.reassembly_dir:q} \
                 --working-dir {params.working_dir:q} \
                 --threads {threads} \
+                --concurrent-slots {params.concurrent_slots} \
                 --log-file {params.log_file:q} \
                 --global-log-file {params.global_log_file:q} \
                 --metrics-dir {params.metrics_dir:q} \

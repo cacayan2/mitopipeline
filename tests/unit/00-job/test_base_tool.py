@@ -7,6 +7,7 @@ Unit tests for the BaseTool class.
 # Imports
 import json
 import logging
+import resource
 from pathlib import Path
 import pytest
 from mitopipeline.models.base_tool.base_tool import BaseTool
@@ -17,8 +18,10 @@ class _EchoTool(BaseTool):
     A minimal concrete BaseTool that shells out to `echo`, used to
     exercise BaseTool.run() without depending on any real pipeline tool.
     """
-    def __init__(self, working_dir: Path, logger: logging.Logger, message: str = "hello") -> None:
-        super().__init__(tool_name = "echo", working_dir = working_dir, logger = logger)
+    def __init__(self, working_dir: Path, logger: logging.Logger, message: str = "hello",
+                 memory_limit_mb: int | None = None) -> None:
+        super().__init__(tool_name = "echo", working_dir = working_dir, logger = logger,
+                         memory_limit_mb = memory_limit_mb)
         self.message = message
         self.postprocessed = False
 
@@ -232,3 +235,29 @@ def test_run_persists_tool_version_in_the_metrics_json(tmp_path: Path) -> None:
     written = list(metrics_dir.glob("*.metrics.json"))
     data = json.loads(written[0].read_text())
     assert data["tool_version"] == "FakeTool version 9.9.9"
+
+def test_apply_memory_limit_sets_rlimit_as_to_the_configured_bytes(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """_apply_memory_limit() is run as subprocess.run's preexec_fn (see run()) -- verified directly, in isolation, rather than relying on a real OOM to actually happen inside a test."""
+    captured = {}
+    monkeypatch.setattr(resource, "setrlimit", lambda which, limits: captured.update(which = which, limits = limits))
+
+    tool = _EchoTool(working_dir = tmp_path, logger = logging.getLogger("test"), memory_limit_mb = 256)
+    tool._apply_memory_limit()
+
+    expected_bytes = 256 * 1024 * 1024
+    assert captured["which"] == resource.RLIMIT_AS
+    assert captured["limits"] == (expected_bytes, expected_bytes)
+
+def test_run_applies_no_memory_limit_by_default(tmp_path: Path) -> None:
+    """A tool that never passes memory_limit_mb (every existing caller, before this feature) must run exactly as before -- no preexec_fn, no limit."""
+    tool = _EchoTool(working_dir = tmp_path, logger = logging.getLogger("test"))
+    assert tool.memory_limit_mb is None
+    result = tool.run()
+    assert result.success is True
+
+def test_run_succeeds_under_a_generous_memory_limit(tmp_path: Path) -> None:
+    """A real end-to-end run with memory_limit_mb set -- confirms the preexec_fn wiring itself doesn't break a normal, well-within-budget command."""
+    tool = _EchoTool(working_dir = tmp_path, logger = logging.getLogger("test"), memory_limit_mb = 512)
+    result = tool.run()
+    assert result.success is True
+    assert result.stdout.strip() == "hello"

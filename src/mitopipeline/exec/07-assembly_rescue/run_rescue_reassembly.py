@@ -34,6 +34,7 @@ from mitopipeline.logging.logger_factory import make_logger
 from mitopipeline.models.sample.sample import Sample
 from mitopipeline.utils.seed.models import DEFAULT_SEED_MODE, LOCUS_FALLBACK_ORDER, SEED_MODES
 from mitopipeline.utils.seed.seed_selector import select_seed
+from mitopipeline.utils.system.resources import compute_job_memory_budget_mb, scale_pre_grouping
 
 def parse_args() -> argparse.Namespace:
     """
@@ -65,6 +66,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--output-dir", type = Path, required = True, help = "This attempt's OWN output directory -- must differ from the primary attempt's and every other rescue attempt's.")
     parser.add_argument("--working-dir", type = Path, required = True, help = "The working directory.")
     parser.add_argument("--threads", type = int, required = True, help = "The number of threads to use.")
+    parser.add_argument("--concurrent-slots", type = int, default = 1, help = "How many GetOrganelle-class jobs are allowed to run at once on this machine right now (the same number sizing the getorganelle_slots resource pool) -- used to compute this job's own live, fair-share memory ceiling.")
     parser.add_argument("--log-file", type = Path, required = True, help = "The path to the log file.")
     parser.add_argument("--global-log-file", type = Path, required = True, help = "The path to the global log file.")
     parser.add_argument("--metrics-dir", type = Path, default = None, help = "Where to persist this run's compute metrics as JSON. Omit to skip persistence.")
@@ -168,6 +170,18 @@ def main() -> int:
     if args.max_rounds is not None:
         tool_options["max_rounds"] = args.max_rounds
 
+    # Same live, machine-real memory budgeting as the primary assembly
+    # step (run_getorganelle_assembly.py) -- a rescue reassembly runs the
+    # identical memory-heavy GetOrganelle/SPAdes chain and is just as
+    # capable of ballooning past a safe size (confirmed live, 2026-11-06:
+    # etheostoma_chlorosomum's own rescue reassembly reached ~27GB RSS).
+    memory_budget_mb = compute_job_memory_budget_mb(args.concurrent_slots)
+    pre_grouping = scale_pre_grouping(memory_budget_mb)
+    if pre_grouping is not None and "pre_grouping" not in tool_options:
+        tool_options["pre_grouping"] = pre_grouping
+    if memory_budget_mb is not None:
+        logger.info(f"{context} Live memory budget for this job: {memory_budget_mb}MB ({args.concurrent_slots} concurrent slot(s)); -P set to {tool_options.get('pre_grouping')}.")
+
     runner = GetOrganelleRunner(
         working_dir = args.working_dir,
         output_dir = args.output_dir,
@@ -177,6 +191,7 @@ def main() -> int:
         threads = args.threads,
         logger = logger,
         metrics_dir = args.metrics_dir,
+        memory_limit_mb = memory_budget_mb,
     )
 
     logger.info(f"{context} Initiating rescue reassembly (profile '{args.profile_name}': "

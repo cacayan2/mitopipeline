@@ -34,7 +34,8 @@ class BaseTool(ABC):
                  tool_name: str,
                  working_dir: Path,
                  logger: Logger,
-                 metrics_dir: Path | None = None) -> None:
+                 metrics_dir: Path | None = None,
+                 memory_limit_mb: int | None = None) -> None:
         """
         Instantiation method for the BaseTool class.
 
@@ -43,6 +44,7 @@ class BaseTool(ABC):
             working_dir (Path): The working directory for the tool.
             logger (Logger): The logger to use for the step of the Pipeline.
             metrics_dir (Path | None): Where to persist this run's CommandResult as JSON (organized, report-ready per-step compute metrics). run() already measures CPU/memory/runtime for every tool call via GNU time. None (the default) skips persistence entirely -- existing callers that don't pass it keep working exactly as before.
+            memory_limit_mb (int | None): A hard ceiling on this command's own virtual address space, in MB, enforced via RLIMIT_AS (see run()). None (the default) applies no limit -- every existing tool wrapper that doesn't pass this keeps working exactly as before. Exists so one runaway process (e.g. GetOrganelle recruiting off-target reads) hits its OWN clean allocation failure instead of triggering the kernel's global OOM killer, which can claim an unrelated process on a shared machine.
 
         Returns:
             None
@@ -51,6 +53,7 @@ class BaseTool(ABC):
         self.working_dir = working_dir
         self.logger = logger
         self.metrics_dir = Path(metrics_dir) if metrics_dir is not None else None
+        self.memory_limit_mb = memory_limit_mb
 
     def version_command(self) -> list[str] | None:
         """
@@ -179,10 +182,22 @@ class BaseTool(ABC):
         self.logger.info(f"{context} Running command.")
         self.logger.debug(f"{context} Command: {shlex.join(command)}")
         self.logger.debug(f"{context} Working directory: {self.working_dir}.")
+        if self.memory_limit_mb is not None:
+            self.logger.debug(f"{context} Enforcing a {self.memory_limit_mb}MB memory ceiling (RLIMIT_AS) on this command.")
 
         try:
-            # Running the command. 
-            completed = subprocess.run(timed_command, cwd = self.working_dir, capture_output = True, text = True)
+            # Running the command. preexec_fn runs in the forked child,
+            # after fork() but before exec() -- setting RLIMIT_AS there
+            # caps only this one subprocess's own address space, so a
+            # runaway job (e.g. GetOrganelle recruiting off-target
+            # reads) hits its own clean allocation failure instead of
+            # triggering the kernel's global OOM killer, which could
+            # otherwise claim an unrelated process on a shared machine
+            # (confirmed as a real risk, 2026-11-06 -- the kernel killed
+            # a 32GB GetOrganelle process with no per-job ceiling in
+            # place at all).
+            completed = subprocess.run(timed_command, cwd = self.working_dir, capture_output = True, text = True,
+                                       preexec_fn = self._apply_memory_limit if self.memory_limit_mb is not None else None)
             runtime_seconds = time.perf_counter() - start_time
             ended_at = datetime.now()
 
@@ -251,6 +266,24 @@ class BaseTool(ABC):
         self.logger.info(f"{context} Successfully postprocessed and validated outputs.")
 
         return command_result
+
+    def _apply_memory_limit(self) -> None:
+        """
+        Sets RLIMIT_AS on the calling process to self.memory_limit_mb --
+        intended to run ONLY as subprocess.run's preexec_fn, i.e. inside
+        the freshly-forked child, right before it execs the real
+        command. POSIX-standard (resource.RLIMIT_AS), so this works
+        unprivileged on any real Linux kernel this pipeline actually
+        runs on, including WSL2.
+
+        Args:
+            None
+
+        Returns:
+            None
+        """
+        limit_bytes = self.memory_limit_mb * 1024 * 1024
+        resource.setrlimit(resource.RLIMIT_AS, (limit_bytes, limit_bytes))
 
     def postprocess_outputs(self) -> None:
         """

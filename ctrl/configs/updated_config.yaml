@@ -13,11 +13,21 @@ job_configuration:
   job_id:
   validate_input_files:
 
+# How many GetOrganelle-class jobs (primary assembly, rescue
+# reassembly) are allowed to run at once, and how much memory each one
+# gets. Leave getorganelle_slots unset (the default) to let the
+# launcher detect it live from THIS machine's own real CPU count and
+# total RAM every time it runs -- never hardcoded to one specific
+# box. Set it explicitly only to override that detection (e.g. to
+# deliberately leave headroom for other work on a shared machine).
+resources:
+  getorganelle_slots:
+
 # You can choose which stages to turn on/off
 # (this is mostly for debugging purposes - most
 # of the stages are dependent on each other
 # so I don't recommend really doing too much here).
-stages: 
+stages:
   qc_raw: true
   trimming: true
   qc_trimmed: true

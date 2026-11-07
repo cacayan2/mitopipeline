@@ -16,6 +16,7 @@ from pathlib import Path
 import subprocess
 import sys
 import pytest
+from mitopipeline.launcher import pipeline_launcher
 from mitopipeline.launcher.pipeline_launcher import (
     _configured_job_id, _job_configuration, _rerender_run_report_with_final_status,
     discover_fastq_pairs, load_config, parse_args, prepare_runtime_manifest, run_snakemake,
@@ -96,7 +97,7 @@ def test_run_snakemake_resolves_the_binary_against_sys_executable(tmp_path: Path
 
     run_snakemake(
         runtime_config = tmp_path / "runtime_config.yaml", cores = 2, use_conda = True,
-        logger = logging.getLogger("test"),
+        logger = logging.getLogger("test"), concurrent_slots = 8,
     )
 
     command = captured_commands[0]
@@ -111,7 +112,10 @@ def test_run_snakemake_resolves_the_binary_against_sys_executable(tmp_path: Path
     # logged real memory pressure while many reassembly attempts died
     # before writing any log at all. This caps their concurrency
     # regardless of idle --cores, matching the rules' own
-    # `resources: getorganelle_slots = 1`.
+    # `resources: getorganelle_slots = 1`. concurrent_slots is passed
+    # explicitly here for a deterministic assertion -- the real default
+    # (omitted) is now live-detected from whatever machine runs it, see
+    # test_run_snakemake_defaults_concurrent_slots_to_a_live_detection below.
     assert "getorganelle_slots=8" in command
     # Regression: the default 5s --latency-wait was too tight once
     # --use-conda's real per-job activation overhead was ever actually
@@ -122,6 +126,19 @@ def test_run_snakemake_resolves_the_binary_against_sys_executable(tmp_path: Path
     # without this flag -- an unattended launcher must resume on its
     # own, not require a manual --cleanup-metadata/--rerun-incomplete step.
     assert "--rerun-incomplete" in command
+
+def test_run_snakemake_defaults_concurrent_slots_to_a_live_detection(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Omitting concurrent_slots must never fall back to a number
+    hardcoded for one specific machine -- it has to come from a real,
+    live detection of whatever machine is actually running this."""
+    captured_commands: list[list[str]] = []
+    monkeypatch.setattr(subprocess, "Popen", lambda command, **kwargs: (captured_commands.append(command), _FakeProcess())[1])
+    monkeypatch.setattr(pipeline_launcher, "recommended_concurrent_slots", lambda: 42)
+
+    run_snakemake(runtime_config = tmp_path / "runtime_config.yaml", cores = 2, use_conda = True,
+                  logger = logging.getLogger("test"))
+
+    assert "getorganelle_slots=42" in captured_commands[0]
 
 def test_rerun_triggers_flag_is_parsed_and_defaults_to_none(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(sys, "argv", ["pipeline_launcher.py", "--config", "config.yaml"])

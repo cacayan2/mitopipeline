@@ -19,6 +19,7 @@ from pathlib import Path
 from mitopipeline.api.getorganelle import GetOrganelleRunner, discover_assembly_artifacts, downgrade_unverified_circular
 from mitopipeline.logging.logger_factory import make_logger
 from mitopipeline.models.sample.sample import Sample
+from mitopipeline.utils.system.resources import compute_job_memory_budget_mb, scale_pre_grouping
 
 def parse_args() -> argparse.Namespace:
     """
@@ -37,6 +38,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--log-file", type = Path, required = True, help = "The path to the log file.")
     parser.add_argument("--global-log-file", type = Path, required = True, help = "The path to the global log file.")
     parser.add_argument("--threads", type = int, required = True, help = "The number of threads to use.")
+    parser.add_argument("--concurrent-slots", type = int, default = 1, help = "How many GetOrganelle-class jobs are allowed to run at once on this machine right now (the same number sizing the getorganelle_slots resource pool) -- used to compute this job's own live, fair-share memory ceiling.")
     parser.add_argument("--metrics-dir", type = Path, default = None, help = "Where to persist this run's compute metrics (CPU/memory/runtime) as JSON. Omit to skip persistence.")
 
     return parser.parse_args()
@@ -68,6 +70,19 @@ def main() -> int:
     tool_options = {"seed_file": config["seed_file"]} if config.get("seeded") else {}
     output_dir = Path(config["assembly_output_dir"])
 
+    # A live memory budget, computed fresh right now off this machine's
+    # real currently-available RAM (see utils.system.resources) -- not a
+    # number precomputed once at launch time, and never hardcoded to one
+    # specific machine. None means RAM simply isn't detectable here
+    # (non-Linux); in that case no limit is enforced and -P is left to
+    # GetOrganelle's own default, same as before this feature existed.
+    memory_budget_mb = compute_job_memory_budget_mb(args.concurrent_slots)
+    pre_grouping = scale_pre_grouping(memory_budget_mb)
+    if pre_grouping is not None:
+        tool_options["pre_grouping"] = pre_grouping
+    if memory_budget_mb is not None:
+        logger.info(f"{context} Live memory budget for this job: {memory_budget_mb}MB ({args.concurrent_slots} concurrent slot(s)); -P set to {pre_grouping}.")
+
     # A re-invocation (Snakemake's --rerun-incomplete re-running a job
     # it can no longer trust, a manual retry, etc.) can land here after
     # GetOrganelle already finished this sample successfully. By then
@@ -93,6 +108,7 @@ def main() -> int:
         threads = args.threads,
         logger = logger,
         metrics_dir = args.metrics_dir,
+        memory_limit_mb = memory_budget_mb,
     )
 
     logger.info(f"{context} Initiating GetOrganelle assembly ({'seeded' if config.get('seeded') else 'unseeded'}, organelle_type={config['organelle_type']}).")

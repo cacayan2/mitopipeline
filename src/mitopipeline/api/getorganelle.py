@@ -55,7 +55,8 @@ class GetOrganelleRunner(BaseTool):
                  threads: int = 4,
                  logger: Logger | None = None,
                  tool_name: str = "getorganelle",
-                 metrics_dir: Path | None = None) -> None:
+                 metrics_dir: Path | None = None,
+                 memory_limit_mb: int | None = None) -> None:
         """
         Instantiation method for the creation of the
         GetOrganelleRunner class. Calls the BaseTool instantiation methods
@@ -71,12 +72,14 @@ class GetOrganelleRunner(BaseTool):
             logger (Logger): The logger to use for this of the pipeline.
             tool_name (str): The name of the tool (by default will be getorganelle).
             metrics_dir (Path | None): Where to persist this run's compute metrics (CPU, memory, runtime) as JSON; None skips persistence. See BaseTool.
+            memory_limit_mb (int | None): A hard ceiling on this run's own memory use, in MB (see BaseTool). None applies no limit -- a caller that can't compute a real live budget (utils.system.resources) should pass None, never a guessed number.
 
         Returns:
             None
         """
         # Using the parent class constructor and setting the output file names.
-        super().__init__(tool_name = tool_name, working_dir = working_dir, logger = logger, metrics_dir = metrics_dir)
+        super().__init__(tool_name = tool_name, working_dir = working_dir, logger = logger, metrics_dir = metrics_dir,
+                         memory_limit_mb = memory_limit_mb)
         self.output_dir = Path(output_dir)
         self.sample = sample
         self.organelle_type = organelle_type
