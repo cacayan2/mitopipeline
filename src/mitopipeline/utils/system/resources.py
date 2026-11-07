@@ -273,6 +273,42 @@ _OOM_MONITOR_OS_RESERVE_MB = 3072
 # idle out of excess caution.
 _OOM_MONITOR_SAFETY_GAP_MB = 3072
 
+def read_cgroup_working_set_bytes(cgroup_path: Path) -> int | None:
+    """
+    This cgroup's real "working set" -- memory.current minus its own
+    real inactive_file (the LRU-cold, first-to-be-reclaimed file
+    cache) -- the same correction container runtimes/cAdvisor/
+    Kubernetes apply to report a container's own real memory pressure,
+    and conceptually the same one read_available_ram_mb already
+    applies at the whole-machine level via /proc/meminfo's own
+    MemAvailable. Raw memory.current includes reclaimable file cache
+    (FASTQ/BLAST-database reads, in this pipeline's case) that the
+    kernel evicts for free under real pressure, long before any OOM
+    risk exists -- confirmed live, 2026-11-07: a fresh run's cgroup
+    showed ~95GB memory.current while real anon+kernel usage was only
+    ~5GB, nearly all of the rest reclaimable file cache. Treating raw
+    memory.current as real pressure made the proactive monitor kill
+    small, healthy GetOrganelle jobs that were never actually at risk.
+
+    Args:
+        cgroup_path (Path): The real cgroup directory to read (see current_cgroup_path).
+
+    Returns:
+        int | None: The real working-set size, in bytes, or None if memory.current or memory.stat can't be read.
+    """
+    try:
+        current_bytes = int((cgroup_path / "memory.current").read_text().strip())
+        inactive_file_bytes = 0
+        with (cgroup_path / "memory.stat").open("r", encoding = "utf-8") as handle:
+            for line in handle:
+                key, _, value = line.strip().partition(" ")
+                if key == "inactive_file":
+                    inactive_file_bytes = int(value)
+                    break
+    except (OSError, ValueError):
+        return None
+    return max(0, current_bytes - inactive_file_bytes)
+
 def cgroup_memory_max_mb() -> int | None:
     """
     The real memory.max to set on the pipeline's own containing

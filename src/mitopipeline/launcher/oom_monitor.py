@@ -28,6 +28,7 @@ import time
 from pathlib import Path
 from mitopipeline.utils.system.resources import (
     oom_state_path,
+    read_cgroup_working_set_bytes,
     recommended_concurrent_slots,
     record_oom_kill,
 )
@@ -48,14 +49,6 @@ _POLL_SECONDS = 5.0
 # works because it's read from the REAL memory-hogging process itself
 # (get_organelle_from_reads.py), not an ancestor wrapper script.
 _SAMPLE_ID_PATTERN = re.compile(r"/(?:04d-assembly|07-assembly_rescue)/([^/]+)/")
-
-
-def _read_cgroup_memory_current(cgroup_path: Path) -> int | None:
-    """Real current memory usage of this cgroup, in bytes, or None if unreadable."""
-    try:
-        return int((cgroup_path / "memory.current").read_text().strip())
-    except (OSError, ValueError):
-        return None
 
 
 def _real_getorganelle_processes() -> list[tuple[int, int, str]]:
@@ -104,17 +97,21 @@ def _read_rss_mb(pid: int) -> int | None:
 
 def run_monitor(cgroup_path: Path, threshold_mb: int, job_root: Path, logger: logging.Logger) -> None:
     """
-    Polls forever (see _POLL_SECONDS): once this cgroup's real current
-    usage crosses threshold_mb, kills the single real
-    get_organelle_from_reads.py process using the most memory right
-    now, records its real peak RSS, and continues. Never raises --
-    any single bad read is logged and skipped, not fatal to the whole
-    monitor (this process is expected to run for the entire, possibly
-    many-hour, life of the pipeline).
+    Polls forever (see _POLL_SECONDS): once this cgroup's real working
+    set (see read_cgroup_working_set_bytes -- memory.current with its
+    own reclaimable file cache subtracted out, never raw
+    memory.current, which a fresh run's FASTQ/BLAST-database reads can
+    inflate by tens of GB with zero real OOM risk) crosses
+    threshold_mb, kills the single real get_organelle_from_reads.py
+    process using the most memory right now, records its real peak
+    RSS, and continues. Never raises -- any single bad read is logged
+    and skipped, not fatal to the whole monitor (this process is
+    expected to run for the entire, possibly many-hour, life of the
+    pipeline).
 
     Args:
         cgroup_path (Path): This job's real cgroup directory (see launcher's own systemd-run --user --scope invocation).
-        threshold_mb (int): The real aggregate usage, in MB, above which this monitor proactively intervenes.
+        threshold_mb (int): The real working-set usage, in MB, above which this monitor proactively intervenes.
         job_root (Path): This job's own output root (see utils.system.resources.job_root_from_global_log).
         logger (logging.Logger): Where to log every real check-in and every real kill.
 
@@ -127,12 +124,12 @@ def run_monitor(cgroup_path: Path, threshold_mb: int, job_root: Path, logger: lo
 
     while True:
         try:
-            current_bytes = _read_cgroup_memory_current(cgroup_path)
-            if current_bytes is None:
-                logger.warning("OOM monitor: could not read real cgroup memory.current this cycle; skipping.")
+            working_set_bytes = read_cgroup_working_set_bytes(cgroup_path)
+            if working_set_bytes is None:
+                logger.warning("OOM monitor: could not read this cgroup's real working set this cycle; skipping.")
                 time.sleep(_POLL_SECONDS)
                 continue
-            current_mb = current_bytes // (1024 * 1024)
+            current_mb = working_set_bytes // (1024 * 1024)
 
             if current_mb >= threshold_mb:
                 processes = _real_getorganelle_processes()
