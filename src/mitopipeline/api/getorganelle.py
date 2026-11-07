@@ -13,6 +13,7 @@ import json
 import os
 import shutil
 import sys
+import time
 from dataclasses import asdict, dataclass
 from mitopipeline.models.base_tool.base_tool import BaseTool
 from mitopipeline.models.sample.sample import Sample
@@ -21,23 +22,19 @@ from mitopipeline.utils.system.resources import (
     GETORGANELLE_ADMISSION_FLOOR_MB,
     job_root_from_global_log,
     oom_state_path,
+    read_oom_escalation_record,
     read_reserved_mb,
     wait_for_dispatch_admission,
 )
 from mitopipeline.api.fastqc import FastQCRunner
 
-# How many times BaseTool.run() requeues this exact same GetOrganelle
-# invocation, in place, after a real SIGKILL -- see max_oom_retries'
-# own docstring. Closes a real gap: several docstrings used to
-# reference a utils.system.oom_requeue module by name as the thing
-# that would do this, but that module was never actually built -- a
-# sample killed for a real memory reason deserves
-# a genuine second fair try once real headroom opens up, not an
-# immediate "missing" result with no retry at all. 2 (so up to 3 total
-# real attempts per real dispatch) -- bounded, not unbounded, since a
-# sample that's still too large after every in-place retry here is a
-# question for record_oom_kill's own cross-dispatch escalation instead.
-GETORGANELLE_MAX_OOM_RETRIES = 2
+# How long run_oom_monitor's own real kill-and-record sequence (one
+# synchronous step inside its own process, triggered by its own 5s
+# poll cycle) gets to actually land in oom_escalation_state.json
+# before _oom_retry_decision gives up waiting for it. Real margin
+# above that 5s cycle, not a guess -- generous enough that a real
+# write under genuine system load still has room to land.
+_OOM_ESCALATION_RECORD_WAIT_SECONDS = 15.0
 
 # The organelle types GetOrganelle itself supports via -F.
 VALID_ORGANELLE_TYPES = {
@@ -115,12 +112,15 @@ class GetOrganelleRunner(BaseTool):
         # job's growth is genuine, real exhaustion of that shared pool --
         # and the kernel's own OOM killer is scoped to that cgroup alone,
         # never able to touch anything outside the pipeline's own
-        # processes. A real OOM kill is then caught and intelligently
-        # requeued in place first (BaseTool.run()'s own max_oom_retries,
-        # GETORGANELLE_MAX_OOM_RETRIES below) and escalated across
-        # future dispatches once that's exhausted (record_oom_kill, see
-        # utils.system.resources), rather than guessed at or prevented
-        # in advance.
+        # processes. A real OOM kill is then caught by launcher.oom_monitor,
+        # which escalates this sample's own real reservation (see
+        # record_oom_kill, utils.system.resources) and intelligently
+        # requeued in place -- retried for real, with that same
+        # escalated room, over and over, until it's proven to genuinely
+        # exceed this machine's real capacity (killed again even while
+        # running with the whole machine reserved to itself) -- rather
+        # than guessed at or prevented in advance, and never given up
+        # on after an arbitrary fixed number of tries.
         #
         # dispatch_admission_wait stays on -- it still avoids wasting the
         # shared pool on simultaneous cold starts, which is a real,
@@ -143,10 +143,52 @@ class GetOrganelleRunner(BaseTool):
             job_root = job_root_from_global_log(global_log_file)
             return read_reserved_mb(sample.sample_id, oom_state_path(job_root), GETORGANELLE_ADMISSION_FLOOR_MB)
 
+        # Called by BaseTool.run() right after a real SIGKILL, before it
+        # decides whether to requeue in place -- see oom_retry_decision's
+        # own docstring on BaseTool for the full real design. The real
+        # escalated reservation that triggers a retry (or not) is
+        # written by launcher.oom_monitor's own record_oom_kill call,
+        # which happens in a separate process (the monitor), not this
+        # one -- so this polls for that real write to actually land
+        # (the monitor's own kill-and-record is one synchronous step,
+        # triggered by its own 5s poll cycle; this is a real wait for a
+        # real write, not a guessed delay) before reading the result.
+        # No real record within that window means no real basis to
+        # escalate against -- e.g. a genuine kernel-level kill that
+        # bypassed our own proactive monitor entirely -- so this fails
+        # closed (stop retrying) rather than guessing at a number.
+        def _oom_retry_decision() -> bool:
+            if global_log_file is None:
+                return False
+            job_root = job_root_from_global_log(global_log_file)
+            state_path = oom_state_path(job_root)
+            deadline = time.monotonic() + _OOM_ESCALATION_RECORD_WAIT_SECONDS
+            record = None
+            while time.monotonic() < deadline:
+                record = read_oom_escalation_record(sample.sample_id, state_path)
+                if record is not None:
+                    break
+                time.sleep(1.0)
+            if record is None:
+                self.logger.warning(
+                    f"{{{sample.sample_id}}} Killed by signal 9, but no real OOM-monitor escalation "
+                    f"record appeared within {_OOM_ESCALATION_RECORD_WAIT_SECONDS:.0f}s -- no real basis "
+                    f"to escalate against, not retrying."
+                )
+                return False
+            if record.get("exceeds_machine_capacity"):
+                self.logger.warning(
+                    f"{{{sample.sample_id}}} Killed while already running with the whole machine "
+                    f"reserved (reserved_slots={record.get('reserved_slots')}) -- a proven, genuine "
+                    f"resource limit, not retrying further."
+                )
+                return False
+            return True
+
         super().__init__(tool_name = tool_name, working_dir = working_dir, logger = logger, metrics_dir = metrics_dir,
                          dispatch_admission_wait = lambda: wait_for_dispatch_admission(
                              logger = self.logger, floor_mb = _admission_floor_mb()),
-                         max_oom_retries = GETORGANELLE_MAX_OOM_RETRIES)
+                         oom_retry_decision = _oom_retry_decision)
         self.output_dir = Path(output_dir)
         self.sample = sample
         self.organelle_type = organelle_type

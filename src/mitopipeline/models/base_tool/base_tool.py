@@ -48,7 +48,7 @@ class BaseTool(ABC):
                  memory_limit_mb: int | None = None,
                  dynamic_memory_limit_mb: Callable[[], int | None] | None = None,
                  dispatch_admission_wait: Callable[[], None] | None = None,
-                 max_oom_retries: int = 0) -> None:
+                 oom_retry_decision: Callable[[], bool] | None = None) -> None:
         """
         Instantiation method for the BaseTool class.
 
@@ -59,8 +59,8 @@ class BaseTool(ABC):
             metrics_dir (Path | None): Where to persist this run's CommandResult as JSON (organized, report-ready per-step compute metrics). run() already measures CPU/memory/runtime for every tool call via GNU time. None (the default) skips persistence entirely -- existing callers that don't pass it keep working exactly as before.
             memory_limit_mb (int | None): A hard, INITIAL ceiling on this command's own virtual address space, in MB, enforced via RLIMIT_AS at process start (see run()). None (the default) applies no limit -- every existing tool wrapper that doesn't pass this keeps working exactly as before. Exists so one runaway process (e.g. GetOrganelle recruiting off-target reads) hits its OWN clean allocation failure instead of triggering the kernel's global OOM killer, which can claim an unrelated process on a shared machine. Never stops a command based on a PREDICTED pattern -- only once it's genuinely out of its real budget (Emil's explicit call, 2026-11-06, after an earlier version also tried to predict and pre-empt runaway growth from its own round-over-round pattern alone; removed).
             dynamic_memory_limit_mb (Callable[[], int | None] | None): A callback run() calls periodically (every _DYNAMIC_MEMORY_RECHECK_SECONDS) WHILE the command is still running, to re-apply a FRESH ceiling to the already-running process via resource.prlimit -- not a one-time value fixed at launch. Lets a command's own real headroom grow as sibling jobs finish and free up RAM (rather than being stuck forever at whatever a static initial division happened to allow), while still genuinely capping it against real, current system RAM -- Emil's own explicit point, 2026-11-06: a statically-divided ceiling can cut off a job that would have reached a real, natural conclusion if given the room that was genuinely free at the time. None (the default) skips this entirely -- only GetOrganelleRunner sets it.
-            dispatch_admission_wait (Callable[[], None] | None): A blocking call made at the very start of run(), before this command is even built, let alone started -- lets a caller defer STARTING a new job entirely until real system state says there's genuinely enough headroom, rather than only adjusting an already-running job's own ceiling. No count-based cap on how many jobs may run at once; purely a live check of real current conditions (Emil's own explicit call, 2026-11-07, after a flat concurrency ceiling sized for worst-case safety measurably starved real throughput). None (the default) skips this entirely -- only GetOrganelleRunner sets it. Also reused by max_oom_retries below, to wait for real headroom again before each in-place retry.
-            max_oom_retries (int): How many times run() retries the EXACT SAME command, in place, after it's killed by signal 9 (the real, confirmed signature of our own oom_monitor or the kernel's own OOM killer -- never retried on any other signal, e.g. a deliberate SIGTERM during a real pipeline stop). 0 (the default) disables this entirely -- every existing tool wrapper that doesn't pass this keeps working exactly as before. Real gap this closes, 2026-11-07: `utils.system.oom_requeue` was referenced by name in several docstrings as the mechanism that requeues a killed job once real headroom opens up, but no such module was ever actually built -- a killed attempt was simply recorded as a real "missing" result and the rescue chain moved on to its next attempt, never giving the killed one itself a second, fair try. Each retry calls dispatch_admission_wait() again first (when set) so a retry only actually starts once real system state says it's safe, not immediately. Bounded, not unbounded: record_oom_kill's own cross-dispatch escalation (see utils.system.resources) is the real backstop for a sample that's still too large even after every in-place retry here is exhausted.
+            dispatch_admission_wait (Callable[[], None] | None): A blocking call made at the very start of run(), before this command is even built, let alone started -- lets a caller defer STARTING a new job entirely until real system state says there's genuinely enough headroom, rather than only adjusting an already-running job's own ceiling. No count-based cap on how many jobs may run at once; purely a live check of real current conditions (Emil's own explicit call, 2026-11-07, after a flat concurrency ceiling sized for worst-case safety measurably starved real throughput). None (the default) skips this entirely -- only GetOrganelleRunner sets it. Also called again before each real in-place OOM retry below, so a retry only actually starts once real system state -- against whatever floor oom_retry_decision just escalated -- says it's safe.
+            oom_retry_decision (Callable[[], bool] | None): Called by run() immediately after the wrapped command is killed by signal 9 (the real, confirmed signature of our own oom_monitor or the kernel's own OOM killer -- never called for any other signal, e.g. a deliberate SIGTERM during a real pipeline stop, since that signal reaches this exec script's own process directly and kills it before this check could ever run). Returns True to requeue the exact same command in place (run() then calls dispatch_admission_wait() again before actually retrying), or False to stop and fall through to the normal, already-documented failure path. None (the default) disables retrying entirely -- every existing tool wrapper that doesn't pass this keeps working exactly as before. Deliberately no retry-count cap here: Emil's own explicit design, 2026-11-07 -- a killed job should keep escalating and retrying for real until it's proven to exceed genuine machine capacity (i.e. it was still killed even once running completely alone), not given up on after an arbitrary fixed number of tries. Real gap this closes: `utils.system.oom_requeue` was referenced by name in several docstrings as the mechanism that would do this, but no such module was ever actually built -- a killed attempt used to be simply recorded as a real "missing" result with no retry at all. GetOrganelleRunner is the real, only caller that sets this, wiring it to the escalation state record_oom_kill already writes.
 
         Returns:
             None
@@ -72,7 +72,7 @@ class BaseTool(ABC):
         self.dispatch_admission_wait = dispatch_admission_wait
         self.metrics_dir = Path(metrics_dir) if metrics_dir is not None else None
         self.memory_limit_mb = memory_limit_mb
-        self.max_oom_retries = max_oom_retries
+        self.oom_retry_decision = oom_retry_decision
 
     def version_command(self) -> list[str] | None:
         """
@@ -185,14 +185,11 @@ class BaseTool(ABC):
         self.logger.info(f"{context} Successfully built command.")
         self.logger.debug(f"{context} Command: {shlex.join(command)}")
 
-        # Real retry budget for an in-place requeue after a genuine
-        # SIGKILL (see max_oom_retries' own docstring) -- a plain "if"
-        # around the whole execution block below would only ever
-        # attempt once more; a loop is needed so a sample that keeps
-        # getting killed can genuinely use every retry it was given,
-        # not just one.
-        oom_retries_left = self.max_oom_retries
-
+        # A plain "if" around the whole execution block below would
+        # only ever attempt once more -- a loop is needed so a sample
+        # that keeps genuinely getting killed can keep requeuing in
+        # place for as long as oom_retry_decision() itself keeps
+        # saying yes (see its own docstring -- no fixed count here).
         while True:
             # Creating a tempfile for GNU time statistics.
             with tempfile.NamedTemporaryFile(mode = "w", suffix = ".json", delete = False) as handle:
@@ -321,17 +318,14 @@ class BaseTool(ABC):
             # reaches this exec script's own process directly, which
             # would already be dead before ever reaching this check, so
             # a real operator-initiated stop can never trigger a retry
-            # here). Requeue in place: wait for real headroom again
-            # (same dispatch_admission_wait used before the very first
-            # attempt), then loop back and run the exact same command
-            # again -- a genuine second (or third) fair try, not just a
-            # "missing" result recorded on the first interruption.
-            if completed.returncode == -9 and oom_retries_left > 0:
-                oom_retries_left -= 1
+            # here). oom_retry_decision() owns the real escalation
+            # logic (see its own docstring) -- no fixed count here;
+            # requeue in place for as long as it keeps saying yes, and
+            # only stop once it reports a real, proven resource limit.
+            if completed.returncode == -9 and self.oom_retry_decision is not None and self.oom_retry_decision():
                 self.logger.warning(
                     f"{context} Command was killed by signal 9 (likely a real OOM kill) after "
-                    f"{runtime_seconds:.1f}s -- waiting for real headroom and requeuing in place "
-                    f"({self.max_oom_retries - oom_retries_left}/{self.max_oom_retries} retries used)."
+                    f"{runtime_seconds:.1f}s -- requeuing in place with real escalated headroom."
                 )
                 if self.dispatch_admission_wait is not None:
                     self.dispatch_admission_wait()

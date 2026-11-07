@@ -22,10 +22,10 @@ class _EchoTool(BaseTool):
     """
     def __init__(self, working_dir: Path, logger: logging.Logger, message: str = "hello",
                  memory_limit_mb: int | None = None, dynamic_memory_limit_mb = None,
-                 dispatch_admission_wait = None, max_oom_retries: int = 0) -> None:
+                 dispatch_admission_wait = None, oom_retry_decision = None) -> None:
         super().__init__(tool_name = "echo", working_dir = working_dir, logger = logger,
                          memory_limit_mb = memory_limit_mb, dynamic_memory_limit_mb = dynamic_memory_limit_mb,
-                         dispatch_admission_wait = dispatch_admission_wait, max_oom_retries = max_oom_retries)
+                         dispatch_admission_wait = dispatch_admission_wait, oom_retry_decision = oom_retry_decision)
         self.message = message
         self.postprocessed = False
 
@@ -397,9 +397,9 @@ class _SelfKillingTool(_EchoTool):
     not a simulated return code.
     """
     def __init__(self, working_dir: Path, logger: logging.Logger, counter_path: Path,
-                 kills_before_success: int, max_oom_retries: int = 0, dispatch_admission_wait = None) -> None:
+                 kills_before_success: int, oom_retry_decision = None, dispatch_admission_wait = None) -> None:
         super().__init__(working_dir = working_dir, logger = logger,
-                         max_oom_retries = max_oom_retries, dispatch_admission_wait = dispatch_admission_wait)
+                         oom_retry_decision = oom_retry_decision, dispatch_admission_wait = dispatch_admission_wait)
         self.counter_path = counter_path
         self.kills_before_success = kills_before_success
 
@@ -420,13 +420,14 @@ class _SelfKillingTool(_EchoTool):
 
 def test_run_requeues_in_place_after_a_real_sigkill_and_succeeds(tmp_path: Path) -> None:
     """The real gap this closes: a killed job used to be recorded as a
-    permanent "missing" result with no retry at all. With a real
-    budget of 2 retries and a command that genuinely kills itself only
-    once, the second real attempt must succeed -- 3 genuine subprocess
-    invocations total, not a mock."""
+    permanent "missing" result with no retry at all. With a decision
+    callback that always says "keep going" and a command that
+    genuinely kills itself only once, the second real attempt must
+    succeed -- 2 genuine subprocess invocations total, not a mock."""
     counter_path = tmp_path / "counter.txt"
     tool = _SelfKillingTool(working_dir = tmp_path, logger = logging.getLogger("test"),
-                            counter_path = counter_path, kills_before_success = 1, max_oom_retries = 2)
+                            counter_path = counter_path, kills_before_success = 1,
+                            oom_retry_decision = lambda: True)
     result = tool.run()
     assert result.success is True
     assert result.stdout.strip() == "recovered"
@@ -438,7 +439,8 @@ def test_run_calls_dispatch_admission_wait_again_before_each_retry(tmp_path: Pat
     counter_path = tmp_path / "counter.txt"
     wait_calls = []
     tool = _SelfKillingTool(working_dir = tmp_path, logger = logging.getLogger("test"),
-                            counter_path = counter_path, kills_before_success = 1, max_oom_retries = 2,
+                            counter_path = counter_path, kills_before_success = 1,
+                            oom_retry_decision = lambda: True,
                             dispatch_admission_wait = lambda: wait_calls.append(1))
     result = tool.run()
     assert result.success is True
@@ -446,37 +448,59 @@ def test_run_calls_dispatch_admission_wait_again_before_each_retry(tmp_path: Pat
     # that actually succeeds.
     assert len(wait_calls) == 2
 
-def test_run_gives_up_after_exhausting_real_oom_retries(tmp_path: Path) -> None:
-    """A sample that keeps genuinely getting killed past its real
-    retry budget must still end in the documented, honest failure
-    path -- never retried forever."""
+def test_run_keeps_requeuing_as_long_as_the_decision_keeps_saying_yes(tmp_path: Path) -> None:
+    """No fixed retry count: a decision callback that keeps saying
+    "keep going" must let a sample killed many real times in a row
+    still eventually succeed, not give up after an arbitrary number."""
     counter_path = tmp_path / "counter.txt"
     tool = _SelfKillingTool(working_dir = tmp_path, logger = logging.getLogger("test"),
-                            counter_path = counter_path, kills_before_success = 10, max_oom_retries = 2)
+                            counter_path = counter_path, kills_before_success = 5,
+                            oom_retry_decision = lambda: True)
+    result = tool.run()
+    assert result.success is True
+    assert result.stdout.strip() == "recovered"
+    assert counter_path.read_text().strip() == "6"  # 5 real kills + 1 real success
+
+def test_run_stops_the_moment_the_decision_says_no(tmp_path: Path) -> None:
+    """The real, documented terminal condition (Emil's own design,
+    2026-11-07): stop retrying only once the decision callback itself
+    reports a proven, genuine resource limit -- never a count BaseTool
+    itself tracks or enforces."""
+    counter_path = tmp_path / "counter.txt"
+    decisions = []
+    def _decide():
+        decisions.append(1)
+        return len(decisions) < 2  # says yes once, then no
+    tool = _SelfKillingTool(working_dir = tmp_path, logger = logging.getLogger("test"),
+                            counter_path = counter_path, kills_before_success = 10,
+                            oom_retry_decision = _decide)
     result = tool.run()
     assert result.success is False
     assert result.return_code == -9
-    assert counter_path.read_text().strip() == "3"  # 1 real attempt + 2 real retries, then gives up
+    assert counter_path.read_text().strip() == "2"  # 1 real attempt + 1 real retry, then the decision said stop
+    assert len(decisions) == 2
 
-def test_run_never_retries_a_non_sigkill_failure(tmp_path: Path) -> None:
-    """max_oom_retries must only ever trigger on a real signal-9 --
-    a normal nonzero exit (e.g. a genuine tool failure, not a kill)
-    must behave exactly as before, with zero retries attempted."""
-    counter_path = tmp_path / "counter.txt"
-    tool = _EchoTool(working_dir = tmp_path, logger = logging.getLogger("test"), max_oom_retries = 2)
+def test_run_never_calls_the_decision_for_a_non_sigkill_failure(tmp_path: Path) -> None:
+    """oom_retry_decision must only ever be consulted on a real
+    signal-9 -- a normal nonzero exit (e.g. a genuine tool failure,
+    not a kill) must behave exactly as before, never even asking."""
+    decision_calls = []
+    tool = _EchoTool(working_dir = tmp_path, logger = logging.getLogger("test"),
+                     oom_retry_decision = lambda: decision_calls.append(1) or True)
     tool.build_command = lambda: ["bash", "-c", "exit 1"]
     result = tool.run()
     assert result.success is False
     assert result.return_code == 1
+    assert decision_calls == []
 
-def test_run_with_zero_max_oom_retries_behaves_exactly_as_before(tmp_path: Path) -> None:
-    """Every existing caller that never sets max_oom_retries (every
+def test_run_without_oom_retry_decision_behaves_exactly_as_before(tmp_path: Path) -> None:
+    """Every existing caller that never sets oom_retry_decision (every
     tool wrapper except GetOrganelleRunner) must see no change -- a
     real kill still just produces the same documented failure result,
     first try, no retry attempted."""
     counter_path = tmp_path / "counter.txt"
     tool = _SelfKillingTool(working_dir = tmp_path, logger = logging.getLogger("test"),
-                            counter_path = counter_path, kills_before_success = 1, max_oom_retries = 0)
+                            counter_path = counter_path, kills_before_success = 1)
     result = tool.run()
     assert result.success is False
     assert result.return_code == -9

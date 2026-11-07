@@ -395,6 +395,33 @@ def oom_state_path(job_root: Path) -> Path:
     """
     return job_root / f"mrl_{job_root.name}" / "oom_escalation_state.json"
 
+def read_oom_escalation_record(sample_id: str, state_path: Path) -> dict | None:
+    """
+    This sample's own full, real OOM-escalation record (reserved_slots,
+    reserved_mb, kills, last_observed_peak_mb, ran_alone,
+    exceeds_machine_capacity), as written by record_oom_kill after a
+    real kill -- unlike read_reserved_mb (which only ever returns the
+    mb figure, silently defaulting when unseen), this returns the
+    whole record so a caller can check ran_alone/exceeds_machine_capacity
+    directly. Used by GetOrganelleRunner's own in-place OOM-retry
+    decision (see api.getorganelle) to tell "still escalating, keep
+    retrying" apart from "already proven to exceed real machine
+    capacity, stop."
+
+    Args:
+        sample_id (str): The sample id.
+        state_path (Path): See oom_state_path.
+
+    Returns:
+        dict | None: The real record, or None if this sample has never been killed, or the state file can't be read.
+    """
+    try:
+        with state_path.open("r", encoding = "utf-8") as handle:
+            state = json.load(handle)
+    except (OSError, json.JSONDecodeError):
+        return None
+    return state.get(sample_id)
+
 def read_reserved_mb(sample_id: str, state_path: Path, default_mb: int) -> int:
     """
     This sample's own real reserved memory share for its NEXT dispatch,
@@ -437,13 +464,12 @@ def record_oom_kill(sample_id: str, peak_mb: float, state_path: Path, total_slot
     is capped at running completely alone, as the final escalation
     step. If a sample that already ran alone gets killed again, that
     is real, definitive proof this sample's need exceeds the whole
-    machine's real capacity -- recorded as exceeds_machine_capacity.
-    This is the cross-dispatch backstop: BaseTool.run()'s own
-    max_oom_retries already gives a killed job a bounded number of
-    real in-place retries first (same dispatch); this escalation only
-    matters once that budget is exhausted and a later, separate
-    dispatch (the next rescue attempt) needs its own real reservation
-    sized off what was actually observed.
+    machine's real capacity -- recorded as exceeds_machine_capacity,
+    which is exactly what BaseTool.run()'s own oom_retry_decision
+    checks (see api.getorganelle) to finally stop requeuing this
+    sample in place, same dispatch, no fixed retry count. The same
+    real record also sizes a later, separate dispatch's own initial
+    floor (e.g. the sample's next rescue attempt) via read_reserved_mb.
 
     Args:
         sample_id (str): The sample id.

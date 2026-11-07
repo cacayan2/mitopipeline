@@ -214,7 +214,7 @@ def _write_status(output_dir: Path, sample_id: str, status: str, success: bool, 
         status (str): The classification from discover_assembly_artifacts() ("circular", "fragmented", or "missing").
         success (bool): Whether the GetOrganelle command itself completed successfully.
         candidate_count (int | None): How many native path_sequence FASTA candidates GetOrganelle left behind -- more than one means postprocess_outputs() had to pick deterministically among several equally-valid outputs (e.g. several ".complete." repeat-pattern variants through a repeat region), worth surfacing in the report rather than silently resolved.
-        killed_by_signal (int | None): The real signal number that terminated the command, if it was killed by one (e.g. 9 for SIGKILL). None for a normal exit, including a graceful failure. A real signal-9 here is already retried in place, bounded, by BaseTool.run()'s own max_oom_retries before this status is ever written -- this field is what survives to tell a real OOM kill apart from any other failure once every retry is exhausted.
+        killed_by_signal (int | None): The real signal number that terminated the command, if it was killed by one (e.g. 9 for SIGKILL). None for a normal exit, including a graceful failure. A real signal-9 here is already requeued in place, escalating for real each time, by BaseTool.run()'s own oom_retry_decision before this status is ever written -- this field only ever survives to be read once that's proven a genuine, exceeds-machine-capacity resource limit, not an arbitrary retry count.
 
     Returns:
         None
