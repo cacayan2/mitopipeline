@@ -16,6 +16,7 @@ from dataclasses import asdict, dataclass
 from mitopipeline.models.base_tool.base_tool import BaseTool
 from mitopipeline.models.sample.sample import Sample
 from mitopipeline.utils.seed.models import SeedSelectionResult
+from mitopipeline.utils.system.resources import compute_live_fair_share_mb
 from mitopipeline.api.fastqc import FastQCRunner
 
 # The organelle types GetOrganelle itself supports via -F.
@@ -72,20 +73,21 @@ class GetOrganelleRunner(BaseTool):
             logger (Logger): The logger to use for this of the pipeline.
             tool_name (str): The name of the tool (by default will be getorganelle).
             metrics_dir (Path | None): Where to persist this run's compute metrics (CPU, memory, runtime) as JSON; None skips persistence. See BaseTool.
-            memory_limit_mb (int | None): A hard ceiling on this run's own memory use, in MB (see BaseTool). None applies no limit -- a caller that can't compute a real live budget (utils.system.resources) should pass None, never a guessed number.
+            memory_limit_mb (int | None): A hard, INITIAL ceiling on this run's own memory use, in MB (see BaseTool). None applies no limit -- a caller that can't compute a real live budget (utils.system.resources) should pass None, never a guessed number.
 
         Returns:
             None
         """
-        # growth_monitor_log is GetOrganelle's own native log, which it
-        # always writes to exactly this path inside its -o directory
-        # (confirmed directly, 2026-11-06) -- always on for this runner
-        # specifically (never for any other BaseTool subclass), since
-        # only GetOrganelle produces the real per-round "AI ... AW ..."
-        # output the monitor watches for. No caller plumbing needed:
-        # this is fully determined by output_dir alone.
+        # dynamic_memory_limit_mb is always on for this runner specifically
+        # (never for any other BaseTool subclass) -- compute_live_fair_share_mb
+        # recomputes, fresh on every real check while this run is still
+        # in progress, how much RAM is genuinely free right now divided
+        # across however many GetOrganelle-class jobs are ACTUALLY
+        # running at that exact moment, so this job's own real ceiling
+        # can grow as siblings finish, instead of being stuck forever at
+        # whatever memory_limit_mb's one-time initial division allowed.
         super().__init__(tool_name = tool_name, working_dir = working_dir, logger = logger, metrics_dir = metrics_dir,
-                         memory_limit_mb = memory_limit_mb, growth_monitor_log = Path(output_dir) / "get_org.log.txt")
+                         memory_limit_mb = memory_limit_mb, dynamic_memory_limit_mb = compute_live_fair_share_mb)
         self.output_dir = Path(output_dir)
         self.sample = sample
         self.organelle_type = organelle_type

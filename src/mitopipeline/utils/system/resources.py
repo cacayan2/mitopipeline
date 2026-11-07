@@ -20,6 +20,7 @@ divided fairly across the jobs currently allowed to run.
 # Imports
 from __future__ import annotations
 import os
+from pathlib import Path
 
 # GetOrganelle's own documented calibration anchor (--help output,
 # confirmed against the installed get_organelle_from_reads.py):
@@ -69,6 +70,69 @@ def read_available_ram_mb() -> int | None:
     doesn't masquerade as unavailable. None if undetectable.
     """
     return read_meminfo_mb("MemAvailable")
+
+def count_active_getorganelle_processes() -> int:
+    """
+    Real current count of running get_organelle_from_reads.py processes
+    on this machine, via a direct /proc scan -- the REAL number of
+    GetOrganelle-class jobs active right now, not the configured
+    maximum slot count. Early in a run, or whenever fewer than the max
+    are actually running, a job's live fair share (see
+    compute_live_fair_share_mb) should reflect that real headroom
+    rather than a number sized for a fully-loaded machine that isn't
+    the current reality.
+
+    Args:
+        None
+
+    Returns:
+        int: The real count, 0 if undetectable (non-Linux, no /proc) or none are running.
+    """
+    count = 0
+    proc_dir = Path("/proc")
+    if not proc_dir.is_dir():
+        return 0
+    for entry in proc_dir.iterdir():
+        if not entry.name.isdigit():
+            continue
+        try:
+            cmdline = (entry / "cmdline").read_bytes()
+        except OSError:
+            continue
+        if b"get_organelle_from_reads" in cmdline:
+            count += 1
+    return count
+
+def compute_live_fair_share_mb(reserved_fraction: float = 0.15, min_divisor: int = 1) -> int | None:
+    """
+    This moment's real fair-share memory budget for ONE GetOrganelle
+    -class job -- real currently-available RAM, divided across however
+    many such jobs are ACTUALLY running right now (count_active_
+    getorganelle_processes), not a fixed configured slot count.
+    Recomputed fresh on every call, so a job watching this live (see
+    BaseTool's dynamic_memory_limit_mb) sees its own fair share grow as
+    sibling jobs finish and free up real RAM, and shrink if new ones
+    start -- the live equivalent of "if this ran alone, it would get
+    the whole machine," generalized to however many are genuinely
+    sharing the pool at this exact instant, rather than a number fixed
+    once at launch and never revisited (Emil's own explicit point,
+    2026-11-06: a statically-divided ceiling can cut off a job that
+    would have reached a real, natural conclusion if given the room
+    that was genuinely, actually free at the time).
+
+    Args:
+        reserved_fraction (float): The fraction of currently-available RAM to leave unclaimed, as a safety margin for the OS and any other process on this machine. Defaults to 0.15 (15%), matching compute_job_memory_budget_mb.
+        min_divisor (int): Never divide by fewer than this many jobs, even if the real count reads as 0 (e.g. a race right as this job itself started, before it shows up in its own /proc scan) -- defaults to 1, meaning "assume at least yourself."
+
+    Returns:
+        int | None: This moment's real fair-share budget in MB, or None if available RAM is undetectable.
+    """
+    available_mb = read_available_ram_mb()
+    if available_mb is None:
+        return None
+    active = max(min_divisor, count_active_getorganelle_processes())
+    usable_mb = available_mb * (1.0 - reserved_fraction)
+    return max(1, int(usable_mb / active))
 
 def recommended_concurrent_slots(min_mb_per_job: int = 8192, reserved_fraction: float = 0.15,
                                  max_slots: int | None = None) -> int:

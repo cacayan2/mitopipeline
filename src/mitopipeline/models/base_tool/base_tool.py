@@ -11,10 +11,8 @@ from abc import ABC, abstractmethod
 from datetime import datetime
 from logging import Logger
 from pathlib import Path
-import os
-import re
+from typing import Callable
 import shlex
-import signal
 import  subprocess
 import threading
 import time
@@ -24,19 +22,13 @@ import json
 from mitopipeline.models.command_result.command_result import CommandResult
 from mitopipeline.logging.logger_factory import TOOL_OUTPUT_EVENT
 
-# GetOrganelle's own real extension-round log line: "Round N: X/X AI <int>
-# AW <int>" (confirmed directly against a real completed run's
-# get_org.log.txt, 2026-11-06). AW is the real signal tracked -- the
-# documented explosive-off-target-recruitment signature this session has
-# repeatedly observed (percina_sciera, cyprinus_carpio) is an AW jump of
-# multiple ORDERS OF MAGNITUDE between consecutive rounds, not the mild
-# 2-3x acceleration a real, eventually-successful run can still show
-# (confirmed live: a real completed sample's own round 6 jumped ~2.8x
-# over round 5 and still finished normally). 20x sits well above that
-# real survivable case and well below the catastrophic one, so it
-# shouldn't false-trigger on ordinary accelerating growth.
-_ROUND_GROWTH_PATTERN = re.compile(r"Round (\d+): \d+/\d+ AI (\d+) AW (\d+)")
-_GROWTH_RATIO_THRESHOLD = 20.0
+# How often the live memory-ceiling adjuster re-checks and re-applies a
+# fresh fair-share budget to an already-running command (see
+# dynamic_memory_limit_mb below). Frequent enough to let a job's real
+# ceiling grow promptly once a sibling finishes and frees up RAM;
+# infrequent enough that the check itself (a /proc scan) is never
+# meaningful overhead against a job that can run for hours.
+_DYNAMIC_MEMORY_RECHECK_SECONDS = 20
 
 class BaseTool(ABC):
     """
@@ -54,7 +46,7 @@ class BaseTool(ABC):
                  logger: Logger,
                  metrics_dir: Path | None = None,
                  memory_limit_mb: int | None = None,
-                 growth_monitor_log: Path | None = None) -> None:
+                 dynamic_memory_limit_mb: Callable[[], int | None] | None = None) -> None:
         """
         Instantiation method for the BaseTool class.
 
@@ -63,8 +55,8 @@ class BaseTool(ABC):
             working_dir (Path): The working directory for the tool.
             logger (Logger): The logger to use for the step of the Pipeline.
             metrics_dir (Path | None): Where to persist this run's CommandResult as JSON (organized, report-ready per-step compute metrics). run() already measures CPU/memory/runtime for every tool call via GNU time. None (the default) skips persistence entirely -- existing callers that don't pass it keep working exactly as before.
-            memory_limit_mb (int | None): A hard ceiling on this command's own virtual address space, in MB, enforced via RLIMIT_AS (see run()). None (the default) applies no limit -- every existing tool wrapper that doesn't pass this keeps working exactly as before. Exists so one runaway process (e.g. GetOrganelle recruiting off-target reads) hits its OWN clean allocation failure instead of triggering the kernel's global OOM killer, which can claim an unrelated process on a shared machine.
-            growth_monitor_log (Path | None): GetOrganelle's own native log file (get_org.log.txt) to watch live for its real per-round "AI ... AW ..." extension output. When set, run() tails this file in a background thread while the command is running and sends SIGTERM to the whole process group the moment a round's AW grows past _GROWTH_RATIO_THRESHOLD over the previous round -- a real, confirmed signature of off-target recruitment running away (see the module-level comment). Stops it EARLY, with memory use still modest, rather than letting it balloon toward an uncontrolled OOM the hard memory_limit_mb ceiling would otherwise have to absorb later. None (the default, every non-GetOrganelle caller) skips this entirely.
+            memory_limit_mb (int | None): A hard, INITIAL ceiling on this command's own virtual address space, in MB, enforced via RLIMIT_AS at process start (see run()). None (the default) applies no limit -- every existing tool wrapper that doesn't pass this keeps working exactly as before. Exists so one runaway process (e.g. GetOrganelle recruiting off-target reads) hits its OWN clean allocation failure instead of triggering the kernel's global OOM killer, which can claim an unrelated process on a shared machine. Never stops a command based on a PREDICTED pattern -- only once it's genuinely out of its real budget (Emil's explicit call, 2026-11-06, after an earlier version also tried to predict and pre-empt runaway growth from its own round-over-round pattern alone; removed).
+            dynamic_memory_limit_mb (Callable[[], int | None] | None): A callback run() calls periodically (every _DYNAMIC_MEMORY_RECHECK_SECONDS) WHILE the command is still running, to re-apply a FRESH ceiling to the already-running process via resource.prlimit -- not a one-time value fixed at launch. Lets a command's own real headroom grow as sibling jobs finish and free up RAM (rather than being stuck forever at whatever a static initial division happened to allow), while still genuinely capping it against real, current system RAM -- Emil's own explicit point, 2026-11-06: a statically-divided ceiling can cut off a job that would have reached a real, natural conclusion if given the room that was genuinely free at the time. None (the default) skips this entirely -- only GetOrganelleRunner sets it.
 
         Returns:
             None
@@ -72,9 +64,9 @@ class BaseTool(ABC):
         self.tool_name = tool_name
         self.working_dir = working_dir
         self.logger = logger
+        self.dynamic_memory_limit_mb = dynamic_memory_limit_mb
         self.metrics_dir = Path(metrics_dir) if metrics_dir is not None else None
         self.memory_limit_mb = memory_limit_mb
-        self.growth_monitor_log = Path(growth_monitor_log) if growth_monitor_log is not None else None
 
     def version_command(self) -> list[str] | None:
         """
@@ -207,41 +199,47 @@ class BaseTool(ABC):
             self.logger.debug(f"{context} Enforcing a {self.memory_limit_mb}MB memory ceiling (RLIMIT_AS) on this command.")
 
         try:
-            if self.growth_monitor_log is not None:
+            # Running the command. preexec_fn runs in the forked child,
+            # after fork() but before exec() -- setting RLIMIT_AS there
+            # caps only this one subprocess's own address space, so a
+            # runaway job (e.g. GetOrganelle recruiting off-target
+            # reads) hits its own clean allocation failure instead of
+            # triggering the kernel's global OOM killer, which could
+            # otherwise claim an unrelated process on a shared machine
+            # (confirmed as a real risk, 2026-11-06 -- the kernel killed
+            # a 32GB GetOrganelle process with no per-job ceiling in
+            # place at all).
+            #
+            # Deliberately never terminates a command early based on its
+            # own growth pattern alone (an earlier version of this did,
+            # on a live-tailed round-growth heuristic) -- Emil's explicit
+            # call, 2026-11-06: a predicted-but-unconfirmed "this might
+            # get worse" is not reason enough to cut off a run that could
+            # still reach a real, usable assembly. memory_limit_mb above
+            # is the only thing allowed to stop a command early, and only
+            # once it's genuinely, actually out of its real budget -- see
+            # getorganelle.py's own post-hoc growth-pattern logging for
+            # the (observe-only, never-acts) replacement.
+            if self.dynamic_memory_limit_mb is not None:
                 # A separate path from the plain subprocess.run() below,
-                # used only when a caller (GetOrganelleRunner) actually
-                # wants live round-growth monitoring -- every other tool
-                # wrapper never sets growth_monitor_log, so this branch
-                # never runs for them and their behavior is unchanged.
-                # start_new_session=True puts this command in its OWN
-                # process group (GNU time plus whatever it execs), so a
-                # detected runaway round can be stopped by signalling the
-                # whole group -- signalling just the top PID would only
-                # ever reach /usr/bin/time itself, not the real command
-                # it wraps, since GNU time doesn't forward signals to
-                # its child on its own.
+                # used only when a caller (GetOrganelleRunner) wants its
+                # ceiling re-adjusted LIVE while the command keeps
+                # running, rather than fixed once at launch. Every other
+                # tool wrapper never sets dynamic_memory_limit_mb, so
+                # this branch never runs for them.
                 process = subprocess.Popen(timed_command, cwd = self.working_dir, stdout = subprocess.PIPE,
-                                           stderr = subprocess.PIPE, text = True, start_new_session = True,
+                                           stderr = subprocess.PIPE, text = True,
                                            preexec_fn = self._apply_memory_limit if self.memory_limit_mb is not None else None)
                 stop_event = threading.Event()
-                monitor = threading.Thread(target = self._monitor_round_growth, args = (process, stop_event), daemon = True)
-                monitor.start()
+                adjuster = threading.Thread(target = self._adjust_memory_limit_periodically,
+                                            args = (process, stop_event), daemon = True)
+                adjuster.start()
                 stdout, stderr = process.communicate()
                 stop_event.set()
-                monitor.join(timeout = 2)
+                adjuster.join(timeout = 2)
                 completed = subprocess.CompletedProcess(args = timed_command, returncode = process.returncode,
                                                         stdout = stdout, stderr = stderr)
             else:
-                # Running the command. preexec_fn runs in the forked child,
-                # after fork() but before exec() -- setting RLIMIT_AS there
-                # caps only this one subprocess's own address space, so a
-                # runaway job (e.g. GetOrganelle recruiting off-target
-                # reads) hits its own clean allocation failure instead of
-                # triggering the kernel's global OOM killer, which could
-                # otherwise claim an unrelated process on a shared machine
-                # (confirmed as a real risk, 2026-11-06 -- the kernel killed
-                # a 32GB GetOrganelle process with no per-job ceiling in
-                # place at all).
                 completed = subprocess.run(timed_command, cwd = self.working_dir, capture_output = True, text = True,
                                            preexec_fn = self._apply_memory_limit if self.memory_limit_mb is not None else None)
             runtime_seconds = time.perf_counter() - start_time
@@ -313,56 +311,78 @@ class BaseTool(ABC):
 
         return command_result
 
-    def _monitor_round_growth(self, process: subprocess.Popen, stop_event: threading.Event) -> None:
+    def _find_real_child_pid(self, parent_pid: int) -> int | None:
         """
-        Tails self.growth_monitor_log (GetOrganelle's own get_org.log.txt)
-        every 5s while the command runs, watching for a real, confirmed
-        off-target-recruitment signature: a round's AW jumping past
-        _GROWTH_RATIO_THRESHOLD over the previous round. On a real hit,
-        signals the whole process group (not just the Popen PID -- see
-        run()'s own comment on why) so the command exits NOW, with
-        memory use still modest, rather than being left to balloon
-        further toward an uncontrolled OOM. Intended to run only as a
-        background thread spawned by run(); never raises out to the
-        caller (any read/parse failure here must never take down the
-        real tool invocation it's just watching).
+        The real, direct child PID of parent_pid -- used because the
+        actual executed command is `timed_command` (/usr/bin/time --
+        the-real-command), so process.pid from Popen is GNU time's own
+        PID, never the real command's. Reads /proc's own direct-children
+        listing (Linux-specific, matching every real deployment target
+        this pipeline actually runs on). Never raises -- a parse/read
+        failure here just means "not found yet," not a real error.
 
         Args:
-            process (subprocess.Popen): The running command's own process handle.
+            parent_pid (int): The immediate Popen PID (GNU time's own).
+
+        Returns:
+            int | None: The real wrapped command's PID, or None if it can't be found (e.g. too early, or already exited).
+        """
+        try:
+            children_text = Path(f"/proc/{parent_pid}/task/{parent_pid}/children").read_text().strip()
+            if children_text:
+                return int(children_text.split()[0])
+        except (OSError, ValueError):
+            pass
+        return None
+
+    def _adjust_memory_limit_periodically(self, process: subprocess.Popen, stop_event: threading.Event) -> None:
+        """
+        While the command is still running, calls self.dynamic_memory_
+        limit_mb() every _DYNAMIC_MEMORY_RECHECK_SECONDS and re-applies
+        the fresh result to the REAL running child via resource.prlimit
+        -- not a signal, not a kill, just a live ceiling adjustment on
+        an already-running process. Lets the command's own real memory
+        headroom grow as sibling jobs finish and free up RAM, instead
+        of being stuck forever at whatever a one-time initial division
+        happened to allow. Intended to run only as a background thread
+        spawned by run(); never raises out to the caller (any read/
+        adjust failure here must never take down the real tool
+        invocation it's just watching).
+
+        Args:
+            process (subprocess.Popen): The running command's own process handle (GNU time's PID, not the real command -- see _find_real_child_pid).
             stop_event (threading.Event): Set by run() once the command has exited, to stop this thread promptly.
 
         Returns:
             None
         """
         context = self._log_context()
-        seen_rounds: set[int] = set()
-        last_aw: int | None = None
+        if not hasattr(resource, "prlimit"):
+            # prlimit is a real Linux-only syscall (prlimit64) -- not
+            # available on macOS/BSD. Every deployment target this
+            # pipeline actually runs on IS real Linux (fishlabworkstn
+            # and WSL2 both), so this is a graceful skip for local
+            # development only, never a silent failure on a target
+            # that was actually supposed to work.
+            self.logger.debug(f"{context} Live memory-limit adjustment skipped: resource.prlimit unavailable on this platform.")
+            return
+        real_pid: int | None = None
         while not stop_event.is_set() and process.poll() is None:
-            try:
-                text = self.growth_monitor_log.read_text(encoding = "utf-8", errors = "replace") if self.growth_monitor_log.is_file() else ""
-            except OSError:
-                text = ""
-            for match in _ROUND_GROWTH_PATTERN.finditer(text):
-                round_num = int(match.group(1))
-                if round_num in seen_rounds:
-                    continue
-                seen_rounds.add(round_num)
-                aw = int(match.group(3))
-                if last_aw is not None and last_aw > 0:
-                    ratio = aw / last_aw
-                    if ratio >= _GROWTH_RATIO_THRESHOLD:
-                        self.logger.warning(
-                            f"{context} Round {round_num}'s AW grew {ratio:.1f}x over the previous round "
-                            f"({last_aw} -> {aw}) -- past the real explosive-recruitment threshold. "
-                            f"Terminating now, before it can balloon further."
-                        )
-                        try:
-                            os.killpg(os.getpgid(process.pid), signal.SIGTERM)
-                        except (ProcessLookupError, PermissionError):
-                            pass
-                        return
-                last_aw = aw
-            time.sleep(5)
+            if real_pid is None:
+                real_pid = self._find_real_child_pid(process.pid)
+            if real_pid is not None:
+                new_limit_mb = self.dynamic_memory_limit_mb()
+                if new_limit_mb is not None:
+                    try:
+                        new_bytes = new_limit_mb * 1024 * 1024
+                        resource.prlimit(real_pid, resource.RLIMIT_AS, (new_bytes, new_bytes))
+                        self.logger.debug(f"{context} Live-adjusted memory ceiling to {new_limit_mb}MB.")
+                    except (ProcessLookupError, OSError):
+                        # Already exited, or a transient permission/race
+                        # issue -- never let an adjustment failure take
+                        # down the real command it's just trying to help.
+                        pass
+            stop_event.wait(_DYNAMIC_MEMORY_RECHECK_SECONDS)
 
     def _apply_memory_limit(self) -> None:
         """

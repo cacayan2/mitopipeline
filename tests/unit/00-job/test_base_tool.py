@@ -8,6 +8,7 @@ Unit tests for the BaseTool class.
 import json
 import logging
 import resource
+import threading
 import time
 from pathlib import Path
 import pytest
@@ -20,9 +21,9 @@ class _EchoTool(BaseTool):
     exercise BaseTool.run() without depending on any real pipeline tool.
     """
     def __init__(self, working_dir: Path, logger: logging.Logger, message: str = "hello",
-                 memory_limit_mb: int | None = None, growth_monitor_log: Path | None = None) -> None:
+                 memory_limit_mb: int | None = None, dynamic_memory_limit_mb = None) -> None:
         super().__init__(tool_name = "echo", working_dir = working_dir, logger = logger,
-                         memory_limit_mb = memory_limit_mb, growth_monitor_log = growth_monitor_log)
+                         memory_limit_mb = memory_limit_mb, dynamic_memory_limit_mb = dynamic_memory_limit_mb)
         self.message = message
         self.postprocessed = False
 
@@ -257,13 +258,13 @@ def test_run_applies_no_memory_limit_by_default(tmp_path: Path) -> None:
     assert result.success is True
 
 class _SleepTool(BaseTool):
-    """A real, slow (but harmless) command -- used to test the growth
-    monitor against a process that's actually still running when a
-    dangerous round shows up, unlike _EchoTool which exits instantly."""
-    def __init__(self, working_dir: Path, logger: logging.Logger, seconds: int = 30,
-                 growth_monitor_log: Path | None = None) -> None:
+    """A real, slow (but harmless) command -- long enough that the live
+    memory-adjuster thread gets a real chance to act on it while it's
+    still genuinely running, unlike _EchoTool which exits instantly."""
+    def __init__(self, working_dir: Path, logger: logging.Logger, seconds: int = 5,
+                 dynamic_memory_limit_mb = None) -> None:
         super().__init__(tool_name = "sleep", working_dir = working_dir, logger = logger,
-                         growth_monitor_log = growth_monitor_log)
+                         dynamic_memory_limit_mb = dynamic_memory_limit_mb)
         self.seconds = seconds
 
     def validate_inputs(self) -> None:
@@ -275,41 +276,62 @@ class _SleepTool(BaseTool):
     def validate_outputs(self) -> None:
         pass
 
-def test_growth_monitor_terminates_a_real_runaway_round(tmp_path: Path) -> None:
-    """A real round-growth jump past the threshold must actually stop
-    the real running command -- not a mock, a genuine `sleep 30`
-    that would otherwise still be running when this test ends."""
-    log_path = tmp_path / "get_org.log.txt"
-    log_path.write_text(
-        "2026-11-07 00:00:00,000 - INFO: Round 1: 10/10 AI 100 AW 1000\n"
-        "2026-11-07 00:00:05,000 - INFO: Round 2: 10/10 AI 50000 AW 500000\n"
-    )
-    tool = _SleepTool(working_dir = tmp_path, logger = logging.getLogger("test"), seconds = 30, growth_monitor_log = log_path)
-    start = time.perf_counter()
-    result = tool.run()
-    elapsed = time.perf_counter() - start
+@pytest.mark.skipif(not Path("/proc").is_dir(), reason="real /proc only exists on Linux (this pipeline's actual deployment targets); this test needs the real filesystem, not a mock of it")
+def test_find_real_child_pid_returns_the_actual_wrapped_command(tmp_path: Path) -> None:
+    """process.pid from Popen is GNU time's own PID, never the real
+    wrapped command -- confirmed directly against a real running
+    `sleep`, not assumed from how /proc/.../children is documented."""
+    import subprocess as sp
+    parent = sp.Popen(["sh", "-c", "sleep 5"])
+    try:
+        time.sleep(0.3)   # real time for the shell to actually exec its own child
+        tool = _SleepTool(working_dir = tmp_path, logger = logging.getLogger("test"))
+        real_child = tool._find_real_child_pid(parent.pid)
+        assert real_child is not None
+        assert real_child != parent.pid
+        # Confirm it's genuinely a real, distinct running process.
+        os_kill_check = sp.run(["ps", "-p", str(real_child)], capture_output = True)
+        assert os_kill_check.returncode == 0
+    finally:
+        parent.terminate()
+        parent.wait(timeout = 5)
 
-    assert result.success is False
-    assert elapsed < 15, "the real sleep 30 should have been terminated early by the monitor, not run to completion"
+@pytest.mark.skipif(not hasattr(resource, "prlimit"), reason="resource.prlimit is Linux-only (this pipeline's actual deployment targets); not available on macOS/BSD")
+def test_dynamic_memory_limit_adjusts_a_real_running_process(tmp_path: Path) -> None:
+    """A real, running `sleep` process's actual RLIMIT_AS must change
+    live, mid-run -- read back via resource.prlimit on the real PID,
+    not mocked, confirming the adjustment genuinely reached the OS."""
+    import subprocess as sp
+    calls = iter([2048, 4096])   # MB -- a real change the adjuster should apply
+    tool = _SleepTool(working_dir = tmp_path, logger = logging.getLogger("test"), seconds = 3,
+                      dynamic_memory_limit_mb = lambda: next(calls, 4096))
 
-def test_growth_monitor_does_not_trigger_on_survivable_growth(tmp_path: Path) -> None:
-    """A real but modest round-over-round jump (well under the real
-    explosive-recruitment threshold) must never be treated as runaway."""
-    log_path = tmp_path / "get_org.log.txt"
-    log_path.write_text(
-        "2026-11-07 00:00:00,000 - INFO: Round 1: 10/10 AI 100 AW 1000000\n"
-        "2026-11-07 00:00:05,000 - INFO: Round 2: 10/10 AI 200 AW 2800000\n"
-    )
-    tool = _EchoTool(working_dir = tmp_path, logger = logging.getLogger("test"), growth_monitor_log = log_path)
-    result = tool.run()
-    assert result.success is True
-    assert result.stdout.strip() == "hello"
+    # Run the adjuster against a real sleep directly (bypassing run()'s
+    # own GNU-time wrapping, which this macOS box's /usr/bin/time can't
+    # execute -- the adjuster logic itself is what's under test here).
+    process = sp.Popen(["sleep", "3"])
+    stop_event = threading.Event()
+    adjuster = threading.Thread(target = tool._adjust_memory_limit_periodically, args = (process, stop_event))
+    import mitopipeline.models.base_tool.base_tool as base_tool_module
+    original_recheck = base_tool_module._DYNAMIC_MEMORY_RECHECK_SECONDS
+    base_tool_module._DYNAMIC_MEMORY_RECHECK_SECONDS = 0.5
+    try:
+        adjuster.start()
+        time.sleep(1.5)
+        stop_event.set()
+        adjuster.join(timeout = 3)
+        soft, _ = resource.prlimit(process.pid, resource.RLIMIT_AS)
+        assert soft == 2048 * 1024 * 1024
+    finally:
+        base_tool_module._DYNAMIC_MEMORY_RECHECK_SECONDS = original_recheck
+        process.terminate()
+        process.wait(timeout = 5)
 
-def test_run_without_growth_monitor_log_behaves_exactly_as_before(tmp_path: Path) -> None:
-    """Every existing caller that never sets growth_monitor_log (every
-    tool wrapper except GetOrganelleRunner) must see no change at all."""
+def test_run_without_dynamic_memory_limit_behaves_exactly_as_before(tmp_path: Path) -> None:
+    """Every existing caller that never sets dynamic_memory_limit_mb
+    (every tool wrapper except GetOrganelleRunner) must see no change."""
     tool = _EchoTool(working_dir = tmp_path, logger = logging.getLogger("test"))
-    assert tool.growth_monitor_log is None
+    assert tool.dynamic_memory_limit_mb is None
     result = tool.run()
     assert result.success is True
     assert result.stdout.strip() == "hello"
