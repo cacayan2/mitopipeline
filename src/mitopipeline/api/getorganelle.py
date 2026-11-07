@@ -16,7 +16,7 @@ from dataclasses import asdict, dataclass
 from mitopipeline.models.base_tool.base_tool import BaseTool
 from mitopipeline.models.sample.sample import Sample
 from mitopipeline.utils.seed.models import SeedSelectionResult
-from mitopipeline.utils.system.resources import compute_live_fair_share_mb
+from mitopipeline.utils.system.resources import compute_live_fair_share_mb, wait_for_dispatch_admission
 from mitopipeline.api.fastqc import FastQCRunner
 
 # The organelle types GetOrganelle itself supports via -F.
@@ -86,8 +86,16 @@ class GetOrganelleRunner(BaseTool):
         # running at that exact moment, so this job's own real ceiling
         # can grow as siblings finish, instead of being stuck forever at
         # whatever memory_limit_mb's one-time initial division allowed.
+        # dispatch_admission_wait is also always on for this runner --
+        # blocks STARTING this job at all until real current headroom
+        # says it's safe, rather than only adjusting an already-running
+        # job's ceiling (dynamic_memory_limit_mb, above). logger is
+        # captured by reference here, not called yet -- by the time
+        # run() actually invokes this closure, __init__ has already
+        # finished and self.logger is set.
         super().__init__(tool_name = tool_name, working_dir = working_dir, logger = logger, metrics_dir = metrics_dir,
-                         memory_limit_mb = memory_limit_mb, dynamic_memory_limit_mb = compute_live_fair_share_mb)
+                         memory_limit_mb = memory_limit_mb, dynamic_memory_limit_mb = compute_live_fair_share_mb,
+                         dispatch_admission_wait = lambda: wait_for_dispatch_admission(logger = self.logger))
         self.output_dir = Path(output_dir)
         self.sample = sample
         self.organelle_type = organelle_type

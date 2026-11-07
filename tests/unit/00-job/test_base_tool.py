@@ -21,9 +21,11 @@ class _EchoTool(BaseTool):
     exercise BaseTool.run() without depending on any real pipeline tool.
     """
     def __init__(self, working_dir: Path, logger: logging.Logger, message: str = "hello",
-                 memory_limit_mb: int | None = None, dynamic_memory_limit_mb = None) -> None:
+                 memory_limit_mb: int | None = None, dynamic_memory_limit_mb = None,
+                 dispatch_admission_wait = None) -> None:
         super().__init__(tool_name = "echo", working_dir = working_dir, logger = logger,
-                         memory_limit_mb = memory_limit_mb, dynamic_memory_limit_mb = dynamic_memory_limit_mb)
+                         memory_limit_mb = memory_limit_mb, dynamic_memory_limit_mb = dynamic_memory_limit_mb,
+                         dispatch_admission_wait = dispatch_admission_wait)
         self.message = message
         self.postprocessed = False
 
@@ -339,6 +341,44 @@ def test_run_without_dynamic_memory_limit_behaves_exactly_as_before(tmp_path: Pa
     result = tool.run()
     assert result.success is True
     assert result.stdout.strip() == "hello"
+
+def test_run_without_dispatch_admission_wait_behaves_exactly_as_before(tmp_path: Path) -> None:
+    """Every existing caller that never sets dispatch_admission_wait
+    (every tool wrapper except GetOrganelleRunner) must see no change."""
+    tool = _EchoTool(working_dir = tmp_path, logger = logging.getLogger("test"))
+    assert tool.dispatch_admission_wait is None
+    result = tool.run()
+    assert result.success is True
+    assert result.stdout.strip() == "hello"
+
+def test_run_calls_dispatch_admission_wait_before_validating_inputs(tmp_path: Path) -> None:
+    """Confirms the wait happens at the very start of run(), before this
+    command's own inputs are even validated -- a job waiting on real
+    system headroom should never hold open anything of its own first."""
+    call_order = []
+    tool = _EchoTool(working_dir = tmp_path, logger = logging.getLogger("test"),
+                     dispatch_admission_wait = lambda: call_order.append("waited"))
+    original_validate = tool.validate_inputs
+    def _tracking_validate_inputs():
+        call_order.append("validated")
+        return original_validate()
+    tool.validate_inputs = _tracking_validate_inputs
+    result = tool.run()
+    assert result.success is True
+    assert call_order == ["waited", "validated"]
+
+def test_run_propagates_a_real_blocking_dispatch_admission_wait(tmp_path: Path) -> None:
+    """A dispatch_admission_wait that genuinely blocks must genuinely
+    delay run() -- not a mock, a real measured delay."""
+    def _real_wait():
+        time.sleep(0.3)
+    tool = _EchoTool(working_dir = tmp_path, logger = logging.getLogger("test"),
+                     dispatch_admission_wait = _real_wait)
+    start = time.perf_counter()
+    result = tool.run()
+    elapsed = time.perf_counter() - start
+    assert result.success is True
+    assert elapsed >= 0.3
 
 def test_run_succeeds_under_a_generous_memory_limit(tmp_path: Path) -> None:
     """A real end-to-end run with memory_limit_mb set -- confirms the preexec_fn wiring itself doesn't break a normal, well-within-budget command."""

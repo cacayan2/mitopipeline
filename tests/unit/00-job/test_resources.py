@@ -20,6 +20,13 @@ _MEMINFO_TEXT = (
     "MemAvailable:   10485760 kB\n"
 )
 
+class _FakeLogger:
+    """A minimal stand-in -- these tests only ever call .info()."""
+    def __init__(self) -> None:
+        self.info_messages: list[str] = []
+    def info(self, message: str) -> None:
+        self.info_messages.append(message)
+
 def test_read_meminfo_mb_parses_a_real_meminfo_line(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     meminfo = tmp_path / "meminfo"
     meminfo.write_text(_MEMINFO_TEXT)
@@ -146,3 +153,48 @@ def test_scale_pre_grouping_returns_none_when_budget_is_none() -> None:
 
 def test_scale_pre_grouping_never_goes_below_a_sane_floor() -> None:
     assert resources.scale_pre_grouping(1) == 10_000
+
+def test_dispatch_admission_ready_true_when_real_headroom_covers_the_floor(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(resources, "read_available_ram_mb", lambda: 10000)
+    # 10000 * 0.85 = 8500 >= floor_mb=8192
+    assert resources.dispatch_admission_ready(floor_mb = 8192) is True
+
+def test_dispatch_admission_ready_false_when_real_headroom_is_tight(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(resources, "read_available_ram_mb", lambda: 5000)
+    # 5000 * 0.85 = 4250 < floor_mb=8192
+    assert resources.dispatch_admission_ready(floor_mb = 8192) is False
+
+def test_dispatch_admission_ready_returns_none_when_ram_undetectable(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(resources, "read_available_ram_mb", lambda: None)
+    assert resources.dispatch_admission_ready() is None
+
+def test_wait_for_dispatch_admission_returns_immediately_when_already_ready(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(resources, "read_available_ram_mb", lambda: 10000)
+    calls = []
+    resources.wait_for_dispatch_admission(logger = _FakeLogger(), floor_mb = 8192,
+                                          sleep_fn = lambda seconds: calls.append(seconds))
+    assert calls == []
+
+def test_wait_for_dispatch_admission_polls_until_real_room_opens_up(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Simulates real headroom that's tight at first, then opens up --
+    confirms this actually blocks and re-checks, rather than trusting
+    a one-time snapshot."""
+    readings = iter([5000, 5000, 10000])
+    monkeypatch.setattr(resources, "read_available_ram_mb", lambda: next(readings))
+    sleeps = []
+    resources.wait_for_dispatch_admission(logger = _FakeLogger(), floor_mb = 8192,
+                                          sleep_fn = lambda seconds: sleeps.append(seconds))
+    assert len(sleeps) == 2
+
+def test_wait_for_dispatch_admission_fails_open_when_ram_undetectable(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(resources, "read_available_ram_mb", lambda: None)
+    calls = []
+    resources.wait_for_dispatch_admission(logger = _FakeLogger(), sleep_fn = lambda seconds: calls.append(seconds))
+    assert calls == []
+
+def test_wait_for_dispatch_admission_logs_only_once_while_waiting(monkeypatch: pytest.MonkeyPatch) -> None:
+    readings = iter([5000, 5000, 10000])
+    monkeypatch.setattr(resources, "read_available_ram_mb", lambda: next(readings))
+    logger = _FakeLogger()
+    resources.wait_for_dispatch_admission(logger = logger, floor_mb = 8192, sleep_fn = lambda seconds: None)
+    assert len(logger.info_messages) == 1

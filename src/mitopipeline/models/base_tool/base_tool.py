@@ -46,7 +46,8 @@ class BaseTool(ABC):
                  logger: Logger,
                  metrics_dir: Path | None = None,
                  memory_limit_mb: int | None = None,
-                 dynamic_memory_limit_mb: Callable[[], int | None] | None = None) -> None:
+                 dynamic_memory_limit_mb: Callable[[], int | None] | None = None,
+                 dispatch_admission_wait: Callable[[], None] | None = None) -> None:
         """
         Instantiation method for the BaseTool class.
 
@@ -57,6 +58,7 @@ class BaseTool(ABC):
             metrics_dir (Path | None): Where to persist this run's CommandResult as JSON (organized, report-ready per-step compute metrics). run() already measures CPU/memory/runtime for every tool call via GNU time. None (the default) skips persistence entirely -- existing callers that don't pass it keep working exactly as before.
             memory_limit_mb (int | None): A hard, INITIAL ceiling on this command's own virtual address space, in MB, enforced via RLIMIT_AS at process start (see run()). None (the default) applies no limit -- every existing tool wrapper that doesn't pass this keeps working exactly as before. Exists so one runaway process (e.g. GetOrganelle recruiting off-target reads) hits its OWN clean allocation failure instead of triggering the kernel's global OOM killer, which can claim an unrelated process on a shared machine. Never stops a command based on a PREDICTED pattern -- only once it's genuinely out of its real budget (Emil's explicit call, 2026-11-06, after an earlier version also tried to predict and pre-empt runaway growth from its own round-over-round pattern alone; removed).
             dynamic_memory_limit_mb (Callable[[], int | None] | None): A callback run() calls periodically (every _DYNAMIC_MEMORY_RECHECK_SECONDS) WHILE the command is still running, to re-apply a FRESH ceiling to the already-running process via resource.prlimit -- not a one-time value fixed at launch. Lets a command's own real headroom grow as sibling jobs finish and free up RAM (rather than being stuck forever at whatever a static initial division happened to allow), while still genuinely capping it against real, current system RAM -- Emil's own explicit point, 2026-11-06: a statically-divided ceiling can cut off a job that would have reached a real, natural conclusion if given the room that was genuinely free at the time. None (the default) skips this entirely -- only GetOrganelleRunner sets it.
+            dispatch_admission_wait (Callable[[], None] | None): A blocking call made at the very start of run(), before this command is even built, let alone started -- lets a caller defer STARTING a new job entirely until real system state says there's genuinely enough headroom, rather than only adjusting an already-running job's own ceiling. No count-based cap on how many jobs may run at once; purely a live check of real current conditions (Emil's own explicit call, 2026-11-07, after a flat concurrency ceiling sized for worst-case safety measurably starved real throughput). None (the default) skips this entirely -- only GetOrganelleRunner sets it.
 
         Returns:
             None
@@ -65,6 +67,7 @@ class BaseTool(ABC):
         self.working_dir = working_dir
         self.logger = logger
         self.dynamic_memory_limit_mb = dynamic_memory_limit_mb
+        self.dispatch_admission_wait = dispatch_admission_wait
         self.metrics_dir = Path(metrics_dir) if metrics_dir is not None else None
         self.memory_limit_mb = memory_limit_mb
 
@@ -161,7 +164,14 @@ class BaseTool(ABC):
         # Obtaining the context (sample) for the logger.
         context = self._log_context()
 
-        # Logging and executing validation portion. 
+        # Deferring the START of this command entirely until real system
+        # state says there's genuinely enough headroom -- before even
+        # validating inputs, so a job waiting on this never holds any of
+        # its own resources (seed files, temp dirs) open while it waits.
+        if self.dispatch_admission_wait is not None:
+            self.dispatch_admission_wait()
+
+        # Logging and executing validation portion.
         self.logger.info(f"{context} Validating inputs.")
         self.validate_inputs()
         self.logger.info(f"{context} Suecessfully validated inputs.")

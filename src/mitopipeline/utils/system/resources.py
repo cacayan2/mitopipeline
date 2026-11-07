@@ -20,7 +20,10 @@ divided fairly across the jobs currently allowed to run.
 # Imports
 from __future__ import annotations
 import os
+import time
+from logging import Logger
 from pathlib import Path
+from typing import Callable
 
 # GetOrganelle's own documented calibration anchor (--help output,
 # confirmed against the installed get_organelle_from_reads.py):
@@ -30,6 +33,26 @@ from pathlib import Path
 # hardcoding one machine's number or leaving it unset everywhere.
 _GETORGANELLE_PRE_GROUPING_ANCHOR_MB = 8192
 _GETORGANELLE_PRE_GROUPING_ANCHOR_VALUE = 300_000
+
+# The minimum real headroom a new GetOrganelle-class job must see
+# before it's allowed to start -- real measured p75 peak memory across
+# 145 completed primary-assembly runs, 2026-11-06 (same anchor as
+# _GETORGANELLE_PRE_GROUPING_ANCHOR_MB). NOT a reservation held on
+# behalf of any specific already-running job: /proc/meminfo's own
+# MemAvailable already, honestly, reflects every process's REAL
+# current use, including a young job that genuinely hasn't allocated
+# much yet -- there is nothing to correct for there. A real round of
+# extension-stage growth plays out over minutes (confirmed live,
+# 2026-11-06 -- completed runs ranged from several minutes to over an
+# hour), while this check re-polls every few seconds (see
+# wait_for_dispatch_admission's poll_seconds), so a job that starts
+# growing shows up in the very next real reading with ample lead time
+# to stop admitting further new jobs -- no guess about any specific
+# job's future growth needed (Emil's own point, 2026-11-07: an earlier
+# version of this reserved a flat placeholder for every young job
+# regardless of whether it ever actually grew, taxing throughput for
+# protection the live polling already provides for free).
+GETORGANELLE_ADMISSION_FLOOR_MB = 8192
 
 def read_meminfo_mb(key: str) -> int | None:
     """
@@ -229,3 +252,67 @@ def scale_pre_grouping(budget_mb: int | None) -> int | None:
         return None
     scaled = _GETORGANELLE_PRE_GROUPING_ANCHOR_VALUE * budget_mb / _GETORGANELLE_PRE_GROUPING_ANCHOR_MB
     return max(10_000, int(scaled))
+
+def dispatch_admission_ready(floor_mb: int = GETORGANELLE_ADMISSION_FLOOR_MB, reserved_fraction: float = 0.15) -> bool | None:
+    """
+    Whether a new GetOrganelle-class job may safely start RIGHT NOW --
+    purely a live read of real current headroom, never a guess about
+    any specific already-running job's future growth. See
+    GETORGANELLE_ADMISSION_FLOOR_MB for why no such guess is needed.
+
+    Args:
+        floor_mb (int): The minimum real headroom (after reserved_fraction) a new job must see before starting. Defaults to GETORGANELLE_ADMISSION_FLOOR_MB.
+        reserved_fraction (float): The same OS/safety margin every other budget function in this module reserves. Defaults to 0.15.
+
+    Returns:
+        bool | None: True if there's real room, False if not, None if available RAM is undetectable -- callers must treat None as "unknown," never substitute a guess (see wait_for_dispatch_admission, which fails open on None).
+    """
+    available_mb = read_available_ram_mb()
+    if available_mb is None:
+        return None
+    usable_mb = available_mb * (1.0 - reserved_fraction)
+    return usable_mb >= floor_mb
+
+def wait_for_dispatch_admission(logger: Logger, floor_mb: int = GETORGANELLE_ADMISSION_FLOOR_MB,
+                                reserved_fraction: float = 0.15, poll_seconds: float = 5.0,
+                                sleep_fn: Callable[[float], None] = time.sleep) -> None:
+    """
+    Blocks (re-polling real system state every poll_seconds) until
+    dispatch_admission_ready confirms it's genuinely safe for a new
+    GetOrganelle-class job to start, or returns immediately if
+    available RAM is undetectable (fails open, same as every other
+    function in this module -- never blocks forever on an environment
+    where the real check simply can't run, e.g. local macOS
+    development).
+
+    No hard cap on how many jobs may run concurrently -- throughput is
+    bounded only by real, currently-measured headroom, never by an
+    arbitrary slot count chosen in advance (Emil's explicit call,
+    2026-11-07, after a flat getorganelle_slots ceiling sized for
+    worst-case safety measurably starved real throughput on an earlier
+    run that same night). poll_seconds is deliberately short (5s, not
+    this module's usual 20s dynamic-ceiling cadence) so a newly-tight
+    real condition is noticed promptly -- cheap to check this often
+    against how slowly real GetOrganelle memory growth actually plays
+    out (minutes, not seconds), so the short interval costs nothing in
+    practice while keeping the real reaction window tight.
+
+    Args:
+        logger (Logger): Where to log once, the first time a call actually has to wait (never spammed every poll).
+        floor_mb (int): See dispatch_admission_ready.
+        reserved_fraction (float): See dispatch_admission_ready.
+        poll_seconds (float): How often to re-check while waiting.
+        sleep_fn (Callable[[float], None]): The sleep implementation to call between polls -- overridable for tests. Defaults to time.sleep.
+
+    Returns:
+        None
+    """
+    logged_wait = False
+    while True:
+        ready = dispatch_admission_ready(floor_mb, reserved_fraction)
+        if ready is None or ready:
+            return
+        if not logged_wait:
+            logger.info(f"Dispatch admission: waiting for real headroom before starting (need ~{floor_mb}MB free).")
+            logged_wait = True
+        sleep_fn(poll_seconds)
