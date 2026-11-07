@@ -16,7 +16,12 @@ never disagree about what this sample's assembly run was configured to do.
 import argparse
 import json
 from pathlib import Path
-from mitopipeline.api.getorganelle import GetOrganelleRunner, discover_assembly_artifacts, downgrade_unverified_circular
+from mitopipeline.api.getorganelle import (
+    GetOrganelleRunner,
+    discover_assembly_artifacts,
+    downgrade_unverified_circular,
+    quarantine_existing_output_dir,
+)
 from mitopipeline.logging.logger_factory import make_logger
 from mitopipeline.models.sample.sample import Sample
 from mitopipeline.utils.system.resources import compute_job_memory_budget_mb, scale_pre_grouping
@@ -98,6 +103,8 @@ def main() -> int:
     if prior_status is not None:
         logger.info(f"{context} GetOrganelle assembly already completed for this sample (classified as '{prior_status}'); skipping re-run.")
         return 0
+
+    quarantine_existing_output_dir(output_dir, logger)
 
     runner = GetOrganelleRunner(
         working_dir = Path(args.working_dir),

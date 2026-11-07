@@ -29,7 +29,12 @@ import argparse
 import json
 from logging import Logger
 from pathlib import Path
-from mitopipeline.api.getorganelle import GetOrganelleRunner, discover_assembly_artifacts, downgrade_unverified_circular
+from mitopipeline.api.getorganelle import (
+    GetOrganelleRunner,
+    discover_assembly_artifacts,
+    downgrade_unverified_circular,
+    quarantine_existing_output_dir,
+)
 from mitopipeline.logging.logger_factory import make_logger
 from mitopipeline.models.sample.sample import Sample
 from mitopipeline.utils.seed.models import DEFAULT_SEED_MODE, LOCUS_FALLBACK_ORDER, SEED_MODES
@@ -153,6 +158,14 @@ def main() -> int:
         global_log_file_path = args.global_log_file,
     )
     context = f"{{{args.sample_id}}}"
+
+    # Must run before ANYTHING else in this invocation writes into
+    # output_dir (e.g. _resolve_reseed's own rescue_seed_selection.json,
+    # just below) -- a stale directory here only ever means a PRIOR,
+    # now-dead invocation's leftovers; this invocation's own real work
+    # hasn't started yet, so there's nothing of this attempt's own to
+    # lose by quarantining first.
+    quarantine_existing_output_dir(args.output_dir, logger)
 
     sample = Sample(sample_id = args.sample_id, r1 = args.r1, r2 = args.r2)
     tool_options = {}

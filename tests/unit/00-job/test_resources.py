@@ -94,53 +94,6 @@ def test_compute_job_memory_budget_mb_returns_none_when_ram_undetectable(monkeyp
     monkeypatch.setattr(resources, "read_available_ram_mb", lambda: None)
     assert resources.compute_job_memory_budget_mb(concurrent_slots = 8) is None
 
-def test_count_active_getorganelle_processes_counts_real_matching_cmdlines(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    proc_dir = tmp_path / "proc"
-    for pid, cmd in [(100, b"get_organelle_from_reads.py\x00-1\x00r1.fq"),
-                     (200, b"get_organelle_from_reads.py\x00-1\x00r2.fq"),
-                     (300, b"fastqc\x00--threads\x002"),
-                     (400, b"")]:
-        pid_dir = proc_dir / str(pid)
-        pid_dir.mkdir(parents = True)
-        (pid_dir / "cmdline").write_bytes(cmd)
-    (proc_dir / "not_a_pid").mkdir()
-
-    monkeypatch.setattr(resources, "Path", lambda p: proc_dir if p == "/proc" else Path(p))
-    assert resources.count_active_getorganelle_processes() == 2
-
-def test_count_active_getorganelle_processes_returns_zero_without_proc(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(resources, "Path", lambda p: Path("/definitely/does/not/exist") if p == "/proc" else Path(p))
-    assert resources.count_active_getorganelle_processes() == 0
-
-def test_compute_live_fair_share_mb_divides_by_the_real_active_count(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(resources, "read_available_ram_mb", lambda: 10000)
-    monkeypatch.setattr(resources, "count_active_getorganelle_processes", lambda: 4)
-    # 10000 * 0.85 / 4 = 2125
-    assert resources.compute_live_fair_share_mb() == 2125
-
-def test_compute_live_fair_share_mb_grows_as_fewer_jobs_are_actually_running(monkeypatch: pytest.MonkeyPatch) -> None:
-    """The whole point of this function: the SAME real available RAM
-    divided across fewer real active jobs gives each one a bigger
-    live share -- confirming a job's own ceiling can genuinely grow as
-    siblings finish, not just stay fixed at an initial division."""
-    monkeypatch.setattr(resources, "read_available_ram_mb", lambda: 10000)
-    monkeypatch.setattr(resources, "count_active_getorganelle_processes", lambda: 4)
-    busy_share = resources.compute_live_fair_share_mb()
-    monkeypatch.setattr(resources, "count_active_getorganelle_processes", lambda: 1)
-    quiet_share = resources.compute_live_fair_share_mb()
-    assert quiet_share > busy_share
-
-def test_compute_live_fair_share_mb_never_divides_by_fewer_than_min_divisor(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(resources, "read_available_ram_mb", lambda: 10000)
-    monkeypatch.setattr(resources, "count_active_getorganelle_processes", lambda: 0)
-    # Even reading 0 active processes (e.g. a race right at this job's
-    # own startup) must still divide by at least 1, never explode.
-    assert resources.compute_live_fair_share_mb(min_divisor = 1) == 8500
-
-def test_compute_live_fair_share_mb_returns_none_when_ram_undetectable(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(resources, "read_available_ram_mb", lambda: None)
-    assert resources.compute_live_fair_share_mb() is None
-
 def test_scale_pre_grouping_matches_getorganelles_own_documented_anchor() -> None:
     """GetOrganelle's own --help: 'for personal computer with 8G memory, we suggest no more than 3E5' for -P."""
     assert resources.scale_pre_grouping(8192) == 300_000

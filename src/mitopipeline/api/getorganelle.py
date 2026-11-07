@@ -6,6 +6,7 @@ GetOrganelle wrapper for command building and execution.
 
 # Imports
 from __future__ import annotations
+from datetime import datetime
 from logging import Logger
 from pathlib import Path
 import json
@@ -583,6 +584,48 @@ class AssemblyArtifacts:
     fasta_path: Path | None
     gfa_path: Path | None
     candidate_count: int
+
+def quarantine_existing_output_dir(output_dir: Path, logger: Logger) -> None:
+    """
+    Moves a stale output_dir aside before a fresh dispatch, if (and
+    only if) one already exists -- real GetOrganelle refuses to run
+    at all against an "-o" directory that already exists, regardless
+    of what's inside it (its own real message: "Please use a new
+    output directory, or use '--continue'/'--overwrite'"). A prior
+    FAILED attempt's own cleanup_failed_output() deliberately keeps
+    get_org.log.txt and every small *.json record for diagnostics, but
+    never removes output_dir itself -- fine for a one-shot terminal
+    failure, but a real, confirmed blocker for a sample this pipeline
+    now deliberately retries in place with an escalated reservation
+    (see launcher.oom_monitor) -- without this, the retry would fail
+    immediately regardless of how much memory it was given.
+
+    Provenance is protected, not discarded: the stale directory is
+    renamed to a timestamped sibling (<name>.killed_<timestamp>/),
+    never deleted -- the prior attempt's own log and status record
+    stay fully readable for real forensic review, just out of the way
+    of the fresh attempt about to use the real path.
+
+    Called at the very start of a fresh dispatch, before this attempt
+    even validates its own inputs -- a caller that's about to run
+    GetOrganelleRunner against output_dir should call this first,
+    always (a no-op when output_dir doesn't exist yet, the normal case
+    for a sample's first-ever attempt).
+
+    Args:
+        output_dir (Path): The path this fresh attempt is about to run GetOrganelle against.
+        logger (Logger): The logger to use.
+
+    Returns:
+        None
+    """
+    if not output_dir.exists():
+        return
+    timestamp = datetime.now().strftime("%Y%m%dT%H%M%S%f")
+    quarantine_path = output_dir.parent / f"{output_dir.name}.killed_{timestamp}"
+    logger.warning(f"Stale output directory {output_dir} already exists from a prior non-terminal attempt -- "
+                   f"moving it aside to {quarantine_path} (provenance preserved) before this fresh dispatch.")
+    output_dir.rename(quarantine_path)
 
 def discover_assembly_artifacts(output_dir: Path, logger: Logger) -> AssemblyArtifacts:
     """

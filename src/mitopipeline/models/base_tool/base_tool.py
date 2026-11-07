@@ -238,7 +238,7 @@ class BaseTool(ABC):
                 # tool wrapper never sets dynamic_memory_limit_mb, so
                 # this branch never runs for them.
                 process = subprocess.Popen(timed_command, cwd = self.working_dir, stdout = subprocess.PIPE,
-                                           stderr = subprocess.PIPE, text = True,
+                                           stderr = subprocess.PIPE, text = True, start_new_session = True,
                                            preexec_fn = self._apply_memory_limit if self.memory_limit_mb is not None else None)
                 stop_event = threading.Event()
                 adjuster = threading.Thread(target = self._adjust_memory_limit_periodically,
@@ -250,7 +250,26 @@ class BaseTool(ABC):
                 completed = subprocess.CompletedProcess(args = timed_command, returncode = process.returncode,
                                                         stdout = stdout, stderr = stderr)
             else:
+                # start_new_session=True puts the wrapped command (GNU
+                # time + the real tool, plus every real descendant it
+                # forks -- SPAdes, bowtie2, etc.) into its own process
+                # group, separate from this exec script's own. This is
+                # what lets an external killer (e.g. launcher.oom_monitor)
+                # safely take out the ENTIRE real command subtree via a
+                # single process-group kill without ever touching this
+                # calling process itself -- the same proven pattern
+                # already used for every real pipeline-stop tonight,
+                # just scoped to one job instead of the whole pipeline.
+                # Without this, a killed child's own orphaned
+                # grandchildren (e.g. a bowtie2 or spades-core process
+                # that doesn't die with its immediate parent) could keep
+                # writing into this sample's own output directory even
+                # after cleanup_failed_output() has already run --
+                # confirmed as a real, recurring risk earlier this same
+                # night (an orphaned bowtie2 process survived an
+                # earlier pipeline-stop's own group kill).
                 completed = subprocess.run(timed_command, cwd = self.working_dir, capture_output = True, text = True,
+                                           start_new_session = True,
                                            preexec_fn = self._apply_memory_limit if self.memory_limit_mb is not None else None)
             runtime_seconds = time.perf_counter() - start_time
             ended_at = datetime.now()

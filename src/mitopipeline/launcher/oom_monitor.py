@@ -140,11 +140,31 @@ def run_monitor(cgroup_path: Path, threshold_mb: int, job_root: Path, logger: lo
                     logger.warning(f"OOM monitor: real usage {current_mb}MB over threshold, but no real get_organelle_from_reads process found -- likely transient (SPAdes/bowtie2 child spike); skipping this cycle.")
                 else:
                     pid, rss_mb, sample_id = max(processes, key = lambda item: item[1])
-                    logger.warning(f"OOM monitor: real usage {current_mb}MB >= threshold {threshold_mb}MB. Killing pid {pid} (sample={sample_id}, real RSS={rss_mb}MB) -- the real worst offender right now.")
+                    # Killing the whole process GROUP, not just this one
+                    # pid: BaseTool.run() isolates the wrapped command
+                    # (and every real descendant it forks -- SPAdes,
+                    # bowtie2) into its own group via start_new_session=
+                    # True, separate from the exec script's own group.
+                    # A single-pid kill would leave any such descendant
+                    # as a live orphan, free to keep writing into this
+                    # sample's own output directory even after the exec
+                    # script's own cleanup_failed_output() has already
+                    # run -- confirmed as a real, recurring risk earlier
+                    # tonight. The exec script's own process is in a
+                    # DIFFERENT group and is never touched by this, so
+                    # it survives to write a real killed_by_signal status
+                    # and run its own cleanup, exactly as intended.
                     try:
-                        os.kill(pid, signal.SIGKILL)
+                        pgid = os.getpgid(pid)
                     except ProcessLookupError:
                         logger.info(f"OOM monitor: pid {pid} already exited before the kill landed.")
+                        pgid = None
+                    if pgid is not None:
+                        logger.warning(f"OOM monitor: real usage {current_mb}MB >= threshold {threshold_mb}MB. Killing process group {pgid} (sample={sample_id}, real RSS={rss_mb}MB) -- the real worst offender right now.")
+                        try:
+                            os.killpg(pgid, signal.SIGKILL)
+                        except ProcessLookupError:
+                            logger.info(f"OOM monitor: process group {pgid} already exited before the kill landed.")
                     if sample_id is not None:
                         new_record = record_oom_kill(sample_id, float(rss_mb), state_path, total_slots)
                         logger.warning(f"OOM monitor: recorded real kill for {sample_id}: {new_record}.")
