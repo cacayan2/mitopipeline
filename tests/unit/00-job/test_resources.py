@@ -198,3 +198,70 @@ def test_wait_for_dispatch_admission_logs_only_once_while_waiting(monkeypatch: p
     logger = _FakeLogger()
     resources.wait_for_dispatch_admission(logger = logger, floor_mb = 8192, sleep_fn = lambda seconds: None)
     assert len(logger.info_messages) == 1
+
+def test_job_root_from_global_log_strips_the_logs_00_job_suffix() -> None:
+    global_log = Path("/home/fishl/mitogenome_project/outputs/final_output_v020/logs/00-job/final_output_v020.global.log")
+    assert resources.job_root_from_global_log(global_log) == Path("/home/fishl/mitogenome_project/outputs/final_output_v020")
+
+def test_oom_state_path_lives_inside_the_jobs_own_mlr_folder() -> None:
+    job_root = Path("/home/fishl/mitogenome_project/outputs/final_output_v020")
+    assert resources.oom_state_path(job_root) == job_root / "mrl_final_output_v020" / "oom_escalation_state.json"
+
+def test_read_reserved_mb_returns_default_for_an_unseen_sample(tmp_path: Path) -> None:
+    state_path = tmp_path / "oom_escalation_state.json"
+    assert resources.read_reserved_mb("never_killed_sample", state_path, default_mb = 8192) == 8192
+
+def test_read_reserved_mb_returns_default_when_state_file_missing(tmp_path: Path) -> None:
+    state_path = tmp_path / "does_not_exist" / "oom_escalation_state.json"
+    assert resources.read_reserved_mb("any_sample", state_path, default_mb = 8192) == 8192
+
+def test_record_oom_kill_reserves_exactly_the_needed_slots_plus_one(tmp_path: Path) -> None:
+    """A real peak of 20000MB with an 8192MB slot needs ceil(20000/8192)=3
+    slots to cover it -- plus one slot of headroom = 4, never a blind
+    doubling of whatever it had before."""
+    state_path = tmp_path / "oom_escalation_state.json"
+    record = resources.record_oom_kill("big_sample", peak_mb = 20000.0, state_path = state_path, total_slots = 10, slot_mb = 8192)
+    assert record["reserved_slots"] == 4
+    assert record["reserved_mb"] == 4 * 8192
+    assert record["ran_alone"] is False
+    assert record["exceeds_machine_capacity"] is False
+    assert record["kills"] == 1
+
+def test_record_oom_kill_persists_and_is_read_back_by_read_reserved_mb(tmp_path: Path) -> None:
+    # peak 9000MB needs ceil(9000/8192)=2 slots just to cover it, plus
+    # 1 slot of headroom = 3 total.
+    state_path = tmp_path / "oom_escalation_state.json"
+    resources.record_oom_kill("persisted_sample", peak_mb = 9000.0, state_path = state_path, total_slots = 10, slot_mb = 8192)
+    assert resources.read_reserved_mb("persisted_sample", state_path, default_mb = 8192) == 3 * 8192
+
+def test_record_oom_kill_caps_at_running_alone_when_requirement_exceeds_total_slots(tmp_path: Path) -> None:
+    """A real peak so large that needed+1 slots would exceed the whole
+    machine's real total_slots is capped at total_slots exactly (running
+    alone), not an impossible number of slots -- and marks ran_alone so
+    the next kill (if any) is recognized as a proven, final ceiling."""
+    state_path = tmp_path / "oom_escalation_state.json"
+    record = resources.record_oom_kill("huge_sample", peak_mb = 90000.0, state_path = state_path, total_slots = 10, slot_mb = 8192)
+    assert record["reserved_slots"] == 10
+    assert record["ran_alone"] is True
+    assert record["exceeds_machine_capacity"] is False
+
+def test_record_oom_kill_marks_exceeds_capacity_when_killed_again_after_running_alone(tmp_path: Path) -> None:
+    """The real, definitive terminal case: already escalated to the
+    whole machine and STILL killed -- proven to exceed real capacity,
+    not escalated further (Emil's explicit call, 2026-11-07)."""
+    state_path = tmp_path / "oom_escalation_state.json"
+    resources.record_oom_kill("doomed_sample", peak_mb = 90000.0, state_path = state_path, total_slots = 10, slot_mb = 8192)
+    record = resources.record_oom_kill("doomed_sample", peak_mb = 85000.0, state_path = state_path, total_slots = 10, slot_mb = 8192)
+    assert record["exceeds_machine_capacity"] is True
+    assert record["kills"] == 2
+
+def test_record_oom_kill_never_shrinks_a_samples_own_prior_reservation(tmp_path: Path) -> None:
+    """A second, smaller observed peak (e.g. a different real
+    bottleneck this time) must never reduce an already-escalated
+    reservation below what real evidence already proved it needs --
+    reservations only ever grow."""
+    state_path = tmp_path / "oom_escalation_state.json"
+    resources.record_oom_kill("sample", peak_mb = 30000.0, state_path = state_path, total_slots = 10, slot_mb = 8192)
+    first_reserved = resources.read_reserved_mb("sample", state_path, default_mb = 8192)
+    record = resources.record_oom_kill("sample", peak_mb = 9000.0, state_path = state_path, total_slots = 10, slot_mb = 8192)
+    assert record["reserved_mb"] >= first_reserved

@@ -16,7 +16,13 @@ from dataclasses import asdict, dataclass
 from mitopipeline.models.base_tool.base_tool import BaseTool
 from mitopipeline.models.sample.sample import Sample
 from mitopipeline.utils.seed.models import SeedSelectionResult
-from mitopipeline.utils.system.resources import compute_live_fair_share_mb, wait_for_dispatch_admission
+from mitopipeline.utils.system.resources import (
+    GETORGANELLE_ADMISSION_FLOOR_MB,
+    job_root_from_global_log,
+    oom_state_path,
+    read_reserved_mb,
+    wait_for_dispatch_admission,
+)
 from mitopipeline.api.fastqc import FastQCRunner
 
 # The organelle types GetOrganelle itself supports via -F.
@@ -57,7 +63,7 @@ class GetOrganelleRunner(BaseTool):
                  logger: Logger | None = None,
                  tool_name: str = "getorganelle",
                  metrics_dir: Path | None = None,
-                 memory_limit_mb: int | None = None) -> None:
+                 global_log_file: Path | None = None) -> None:
         """
         Instantiation method for the creation of the
         GetOrganelleRunner class. Calls the BaseTool instantiation methods
@@ -73,29 +79,56 @@ class GetOrganelleRunner(BaseTool):
             logger (Logger): The logger to use for this of the pipeline.
             tool_name (str): The name of the tool (by default will be getorganelle).
             metrics_dir (Path | None): Where to persist this run's compute metrics (CPU, memory, runtime) as JSON; None skips persistence. See BaseTool.
-            memory_limit_mb (int | None): A hard, INITIAL ceiling on this run's own memory use, in MB (see BaseTool). None applies no limit -- a caller that can't compute a real live budget (utils.system.resources) should pass None, never a guessed number.
+            global_log_file (Path | None): This job's global log file, as already passed to every exec script -- used only to locate this job's own real OOM-kill reservation state (see utils.system.resources.read_reserved_mb). None (e.g. a caller outside the real pipeline, like a test) means every dispatch just uses the normal, un-escalated floor.
 
         Returns:
             None
         """
-        # dynamic_memory_limit_mb is always on for this runner specifically
-        # (never for any other BaseTool subclass) -- compute_live_fair_share_mb
-        # recomputes, fresh on every real check while this run is still
-        # in progress, how much RAM is genuinely free right now divided
-        # across however many GetOrganelle-class jobs are ACTUALLY
-        # running at that exact moment, so this job's own real ceiling
-        # can grow as siblings finish, instead of being stuck forever at
-        # whatever memory_limit_mb's one-time initial division allowed.
-        # dispatch_admission_wait is also always on for this runner --
-        # blocks STARTING this job at all until real current headroom
-        # says it's safe, rather than only adjusting an already-running
-        # job's ceiling (dynamic_memory_limit_mb, above). logger is
-        # captured by reference here, not called yet -- by the time
-        # run() actually invokes this closure, __init__ has already
-        # finished and self.logger is set.
+        # No per-job memory ceiling of any kind (neither a one-time
+        # memory_limit_mb nor a live-adjusting dynamic_memory_limit_mb) --
+        # removed entirely, 2026-11-07, on Emil's explicit call. Real data
+        # from the fresh run showed the live fair-share ceiling this
+        # replaced was cutting off a real plurality of samples (roughly
+        # half of completed primaries) specifically during pre-grouping,
+        # well below what GetOrganelle actually needed, with zero
+        # reliable way found tonight to predict in advance which ones
+        # would need more (four separate real, validated attempts --
+        # early round-growth, fastp signals, NUMT screening, and read
+        # count -- each failed against real historical/live data). The
+        # real backstop now lives one level up: the whole pipeline is
+        # launched inside a single memory-capped systemd --user --scope
+        # cgroup (see launcher), so the only thing left to cap any one
+        # job's growth is genuine, real exhaustion of that shared pool --
+        # and the kernel's own OOM killer is scoped to that cgroup alone,
+        # never able to touch anything outside the pipeline's own
+        # processes. A real OOM kill is then caught and intelligently
+        # escalated-and-requeued (see utils.system.oom_requeue), rather
+        # than guessed at or prevented in advance.
+        #
+        # dispatch_admission_wait stays on -- it still avoids wasting the
+        # shared pool on simultaneous cold starts, which is a real,
+        # orthogonal efficiency concern, not a prediction about any one
+        # job's eventual need. logger is captured by reference here, not
+        # called yet -- by the time run() actually invokes this closure,
+        # __init__ has already finished and self.logger is set.
+        #
+        # The admission floor itself is this sample's own real,
+        # escalated reservation when one is on record (see
+        # read_reserved_mb/record_oom_kill) -- GETORGANELLE_ADMISSION_
+        # FLOOR_MB (the normal, un-escalated share) for every sample
+        # that's never been killed, which is almost all of them.
+        # global_log_file is None for a caller outside the real
+        # pipeline (e.g. a test) -- that case just always uses the
+        # normal floor, no escalation possible without a real job root.
+        def _admission_floor_mb() -> int:
+            if global_log_file is None:
+                return GETORGANELLE_ADMISSION_FLOOR_MB
+            job_root = job_root_from_global_log(global_log_file)
+            return read_reserved_mb(sample.sample_id, oom_state_path(job_root), GETORGANELLE_ADMISSION_FLOOR_MB)
+
         super().__init__(tool_name = tool_name, working_dir = working_dir, logger = logger, metrics_dir = metrics_dir,
-                         memory_limit_mb = memory_limit_mb, dynamic_memory_limit_mb = compute_live_fair_share_mb,
-                         dispatch_admission_wait = lambda: wait_for_dispatch_admission(logger = self.logger))
+                         dispatch_admission_wait = lambda: wait_for_dispatch_admission(
+                             logger = self.logger, floor_mb = _admission_floor_mb()))
         self.output_dir = Path(output_dir)
         self.sample = sample
         self.organelle_type = organelle_type

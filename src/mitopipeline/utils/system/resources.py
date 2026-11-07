@@ -19,11 +19,13 @@ divided fairly across the jobs currently allowed to run.
 
 # Imports
 from __future__ import annotations
+import json
 import os
 import time
 from logging import Logger
 from pathlib import Path
 from typing import Callable
+
 
 # GetOrganelle's own documented calibration anchor (--help output,
 # confirmed against the installed get_organelle_from_reads.py):
@@ -316,3 +318,178 @@ def wait_for_dispatch_admission(logger: Logger, floor_mb: int = GETORGANELLE_ADM
             logger.info(f"Dispatch admission: waiting for real headroom before starting (need ~{floor_mb}MB free).")
             logged_wait = True
         sleep_fn(poll_seconds)
+
+# How much real RAM is deliberately left OUTSIDE the pipeline's own
+# cgroup, for the OS/kernel itself -- small, since the proactive
+# monitor (not this margin) is the real, primary defense; this just
+# keeps the box itself responsive even in the worst case.
+_OOM_MONITOR_OS_RESERVE_MB = 3072
+
+# The real gap kept between the monitor's own proactive kill
+# threshold and the cgroup's hard memory.max -- wide enough that a
+# real check every few seconds (see launcher.oom_monitor) always has
+# a genuine chance to land a controlled, recorded kill BEFORE the
+# kernel's own uncontrolled, unrecorded cgroup OOM kill would trigger
+# instead. Emil's own explicit call, 2026-11-07: the ceiling should be
+# as high as real safety allows, not conservatively low -- this is
+# sized only to win the race against the kernel, not to leave RAM
+# idle out of excess caution.
+_OOM_MONITOR_SAFETY_GAP_MB = 3072
+
+def cgroup_memory_max_mb() -> int | None:
+    """
+    The real memory.max to set on the pipeline's own containing
+    cgroup -- this machine's real total RAM, minus only a small
+    reserve for the OS itself (_OOM_MONITOR_OS_RESERVE_MB). None if
+    real total RAM is undetectable.
+
+    Returns:
+        int | None: The real cgroup ceiling, in MB.
+    """
+    total_mb = read_total_ram_mb()
+    if total_mb is None:
+        return None
+    return max(1024, total_mb - _OOM_MONITOR_OS_RESERVE_MB)
+
+def oom_monitor_threshold_mb() -> int | None:
+    """
+    The real aggregate usage, in MB, above which launcher.oom_monitor
+    proactively intervenes -- set below cgroup_memory_max_mb() by
+    _OOM_MONITOR_SAFETY_GAP_MB, so a real, controlled, recorded kill
+    always has room to land before the kernel's own cgroup-level OOM
+    killer would otherwise trigger uncontrolled and unrecorded. None
+    if real total RAM is undetectable.
+
+    Returns:
+        int | None: The real proactive threshold, in MB.
+    """
+    ceiling_mb = cgroup_memory_max_mb()
+    if ceiling_mb is None:
+        return None
+    return max(1024, ceiling_mb - _OOM_MONITOR_SAFETY_GAP_MB)
+
+def job_root_from_global_log(global_log_file: Path) -> Path:
+    """
+    Derives this job's own output root from its global log file path
+    (always .../outputs/<job_id>/logs/00-job/<job_id>.global.log,
+    already passed to every exec script as --global-log-file -- no new
+    CLI plumbing needed). Used to find this job's own mlr_<job_id>
+    scratch folder, one of the four places this pipeline may ever
+    write a file on a shared machine.
+
+    Args:
+        global_log_file (Path): The job's global log file path, as received via --global-log-file.
+
+    Returns:
+        Path: This job's own output root directory.
+    """
+    return Path(global_log_file).parent.parent.parent
+
+def oom_state_path(job_root: Path) -> Path:
+    """
+    Where this job's real OOM-kill/reservation state is persisted --
+    inside the job's own mlr_<job_id> scratch folder (sanctioned write
+    location), read by every GetOrganelleRunner dispatch and written
+    by the proactive OOM monitor alone.
+
+    Args:
+        job_root (Path): This job's own output root (see job_root_from_global_log).
+
+    Returns:
+        Path: The state file's path.
+    """
+    return job_root / f"mrl_{job_root.name}" / "oom_escalation_state.json"
+
+def read_reserved_mb(sample_id: str, state_path: Path, default_mb: int) -> int:
+    """
+    This sample's own real reserved memory share for its NEXT dispatch,
+    based on what it has actually needed before -- default_mb (the
+    normal, un-escalated floor) if this sample has never been killed,
+    or its own real escalated reservation (see record_oom_kill) if it
+    has. Never guesses; a sample that's never been seen gets exactly
+    the same share as everyone else.
+
+    Args:
+        sample_id (str): The sample id.
+        state_path (Path): See oom_state_path.
+        default_mb (int): The normal, un-escalated reservation -- GETORGANELLE_ADMISSION_FLOOR_MB in production.
+
+    Returns:
+        int: The real reservation to request for this sample's next dispatch, in MB.
+    """
+    try:
+        with state_path.open("r", encoding = "utf-8") as handle:
+            state = json.load(handle)
+    except (OSError, json.JSONDecodeError):
+        return default_mb
+    record = state.get(sample_id)
+    if record is None or "reserved_mb" not in record:
+        return default_mb
+    return max(default_mb, int(record["reserved_mb"]))
+
+def record_oom_kill(sample_id: str, peak_mb: float, state_path: Path, total_slots: int,
+                    slot_mb: int = GETORGANELLE_ADMISSION_FLOOR_MB) -> dict:
+    """
+    Records a real observed OOM kill for sample_id -- called ONLY by
+    the proactive OOM monitor, immediately after it kills a process,
+    using that process's own real last-measured RSS (not a guess).
+
+    Escalation is in whole slots, never a blind multiplier (Emil's own
+    explicit call, 2026-11-07): the next reservation is exactly enough
+    real slots to have covered the peak just observed, plus ONE extra
+    slot of headroom -- nothing more. Once that requirement would
+    already need the entire machine (>= total_slots), the next retry
+    is capped at running completely alone, as the final escalation
+    step. If a sample that already ran alone gets killed again, that
+    is real, definitive proof this sample's need exceeds the whole
+    machine's real capacity -- recorded as exceeds_machine_capacity so
+    the requeue watcher stops retrying it rather than looping forever
+    (see utils.system.oom_requeue, which checks this field before ever
+    clearing this sample's done marker again).
+
+    Args:
+        sample_id (str): The sample id.
+        peak_mb (float): This sample's own real peak RSS (MB) at the moment it was killed.
+        state_path (Path): See oom_state_path.
+        total_slots (int): The real total slot count this machine supports right now (see recommended_concurrent_slots) -- defines what "running alone" means.
+        slot_mb (int): One slot's worth of memory, in MB. Defaults to GETORGANELLE_ADMISSION_FLOOR_MB.
+
+    Returns:
+        dict: The new state record now on file for this sample.
+    """
+    state_path.parent.mkdir(parents = True, exist_ok = True)
+    try:
+        with state_path.open("r", encoding = "utf-8") as handle:
+            state = json.load(handle)
+    except (OSError, json.JSONDecodeError):
+        state = {}
+    existing = state.get(sample_id, {})
+
+    if existing.get("ran_alone"):
+        # Already escalated all the way to the whole machine and STILL
+        # killed -- a real, proven ceiling, not escalated further.
+        record = {**existing, "kills": existing.get("kills", 0) + 1,
+                 "last_observed_peak_mb": peak_mb, "exceeds_machine_capacity": True}
+    else:
+        slots_needed = max(1, -(-int(peak_mb) // slot_mb))  # ceil division, real units
+        newly_required_slots = min(total_slots, slots_needed + 1)
+        # Reservations only ever grow -- a smaller observed peak on a
+        # later kill (a different real bottleneck that round) must
+        # never undo real evidence an earlier kill already established.
+        reserved_slots = max(newly_required_slots, existing.get("reserved_slots", 0))
+        ran_alone = reserved_slots >= total_slots
+        record = {
+            "reserved_slots": reserved_slots,
+            "reserved_mb": reserved_slots * slot_mb,
+            "kills": existing.get("kills", 0) + 1,
+            "last_observed_peak_mb": peak_mb,
+            "ran_alone": ran_alone,
+            "exceeds_machine_capacity": False,
+        }
+
+    state[sample_id] = record
+    tmp_path = state_path.with_suffix(".json.tmp")
+    with tmp_path.open("w", encoding = "utf-8") as handle:
+        json.dump(state, handle, indent = 4)
+    tmp_path.replace(state_path)
+    return record

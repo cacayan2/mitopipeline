@@ -108,7 +108,7 @@ def main() -> int:
         threads = args.threads,
         logger = logger,
         metrics_dir = args.metrics_dir,
-        memory_limit_mb = memory_budget_mb,
+        global_log_file = args.global_log_file,
     )
 
     logger.info(f"{context} Initiating GetOrganelle assembly ({'seeded' if config.get('seeded') else 'unseeded'}, organelle_type={config['organelle_type']}).")
@@ -132,9 +132,21 @@ def main() -> int:
         return 1
 
     if not result.success:
-        logger.error(f"{context} GetOrganelle assembly exited with return code {result.return_code} after {result.runtime_seconds:.1f}s.")
+        # A negative return_code is Python's subprocess module's own
+        # signal convention (-9 for SIGKILL) -- real, standard behavior,
+        # not inferred. The kernel's OOM killer always uses SIGKILL, so
+        # this is how a genuine OOM kill is distinguished here from a
+        # graceful failure (a clean MemoryError, or "no candidate found")
+        # -- the latter two exit with a normal positive/zero code, since
+        # Python itself raised and handled them.
+        killed_by_signal = -result.return_code if result.return_code < 0 else None
+        if killed_by_signal is not None:
+            logger.warning(f"{context} GetOrganelle assembly was killed by signal {killed_by_signal} after {result.runtime_seconds:.1f}s -- likely a real OOM kill, not a graceful failure.")
+        else:
+            logger.error(f"{context} GetOrganelle assembly exited with return code {result.return_code} after {result.runtime_seconds:.1f}s.")
         status = discover_assembly_artifacts(output_dir, logger)
-        _write_status(output_dir, args.sample_id, downgrade_unverified_circular(status), success = False, candidate_count = status.candidate_count)
+        _write_status(output_dir, args.sample_id, downgrade_unverified_circular(status), success = False,
+                      candidate_count = status.candidate_count, killed_by_signal = killed_by_signal)
         runner.cleanup_failed_output()
         return result.return_code or 1
 
@@ -182,7 +194,8 @@ def _prior_success(output_dir: Path, sample_id: str) -> str | None:
         return None
     return record.get("status")
 
-def _write_status(output_dir: Path, sample_id: str, status: str, success: bool, candidate_count: int | None = None) -> None:
+def _write_status(output_dir: Path, sample_id: str, status: str, success: bool, candidate_count: int | None = None,
+                  killed_by_signal: int | None = None) -> None:
     """
     Records this sample's assembly classification alongside its
     standardized output, for the rescue trigger and any later
@@ -194,6 +207,7 @@ def _write_status(output_dir: Path, sample_id: str, status: str, success: bool, 
         status (str): The classification from discover_assembly_artifacts() ("circular", "fragmented", or "missing").
         success (bool): Whether the GetOrganelle command itself completed successfully.
         candidate_count (int | None): How many native path_sequence FASTA candidates GetOrganelle left behind -- more than one means postprocess_outputs() had to pick deterministically among several equally-valid outputs (e.g. several ".complete." repeat-pattern variants through a repeat region), worth surfacing in the report rather than silently resolved.
+        killed_by_signal (int | None): The real signal number that terminated the command, if it was killed by one (e.g. 9 for SIGKILL). None for a normal exit, including a graceful failure. See utils.system.oom_requeue, which reads this field specifically to tell a real OOM kill apart from any other failure.
 
     Returns:
         None
@@ -201,7 +215,8 @@ def _write_status(output_dir: Path, sample_id: str, status: str, success: bool, 
     output_dir.mkdir(parents = True, exist_ok = True)
     status_path = output_dir / f"{sample_id}.assembly_status.json"
     with status_path.open("w", encoding = "utf-8") as handle:
-        json.dump({"sample_id": sample_id, "status": status, "success": success, "candidate_count": candidate_count}, handle, indent = 4)
+        json.dump({"sample_id": sample_id, "status": status, "success": success, "candidate_count": candidate_count,
+                   "killed_by_signal": killed_by_signal}, handle, indent = 4)
 
 if __name__ == "__main__":
     raise SystemExit(main())

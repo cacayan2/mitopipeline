@@ -191,7 +191,7 @@ def main() -> int:
         threads = args.threads,
         logger = logger,
         metrics_dir = args.metrics_dir,
-        memory_limit_mb = memory_budget_mb,
+        global_log_file = args.global_log_file,
     )
 
     logger.info(f"{context} Initiating rescue reassembly (profile '{args.profile_name}': "
@@ -233,12 +233,20 @@ def main() -> int:
         return 1
 
     if not result.success:
-        logger.error(f"{context} Rescue reassembly exited with return code {result.return_code} after {result.runtime_seconds:.1f}s.")
+        # See run_getorganelle_assembly.py's identical comment: a negative
+        # return_code is Python's own real signal convention, how a
+        # genuine OOM kill (always SIGKILL) is told apart here from a
+        # graceful failure.
+        killed_by_signal = -result.return_code if result.return_code < 0 else None
+        if killed_by_signal is not None:
+            logger.warning(f"{context} Rescue reassembly was killed by signal {killed_by_signal} after {result.runtime_seconds:.1f}s -- likely a real OOM kill, not a graceful failure.")
+        else:
+            logger.error(f"{context} Rescue reassembly exited with return code {result.return_code} after {result.runtime_seconds:.1f}s.")
         status = discover_assembly_artifacts(args.output_dir, logger)
         _write_status(args.output_dir, args.sample_id, downgrade_unverified_circular(status), success = False,
                      profile_name = args.profile_name, seed_file = seed_file_used,
                      kmer = args.kmer, target_coverage = args.target_coverage, max_rounds = args.max_rounds,
-                     candidate_count = status.candidate_count)
+                     candidate_count = status.candidate_count, killed_by_signal = killed_by_signal)
         runner.cleanup_failed_output()
         _cleanup_rescued_reads(args.r1, args.r2, logger, context)
         return result.return_code or 1
@@ -288,7 +296,7 @@ def _cleanup_rescued_reads(r1: Path, r2: Path, logger: Logger, context: str) -> 
 def _write_status(output_dir: Path, sample_id: str, status: str, success: bool, profile_name: str,
                   seed_file: str | None = None, kmer: str | None = None,
                   target_coverage: float | None = None, max_rounds: int | None = None,
-                  candidate_count: int | None = None) -> None:
+                  candidate_count: int | None = None, killed_by_signal: int | None = None) -> None:
     """
     Records this rescue attempt's classification, same shape as the
     primary attempt's (plus which profile produced it, whether/which
@@ -315,6 +323,7 @@ def _write_status(output_dir: Path, sample_id: str, status: str, success: bool, 
         target_coverage (float | None): This attempt's own --reduce-reads-for-coverage value, as actually passed to GetOrganelle.
         max_rounds (int | None): This attempt's own -R value, as actually passed to GetOrganelle.
         candidate_count (int | None): How many native path_sequence FASTA candidates GetOrganelle left behind -- more than one means postprocess_outputs() had to pick deterministically among several equally-valid outputs.
+        killed_by_signal (int | None): The real signal number that terminated the command, if any (e.g. 9 for SIGKILL) -- see run_getorganelle_assembly.py's identical field and utils.system.oom_requeue.
 
     Returns:
         None
@@ -325,7 +334,7 @@ def _write_status(output_dir: Path, sample_id: str, status: str, success: bool, 
         json.dump({"sample_id": sample_id, "status": status, "success": success,
                   "profile_name": profile_name, "seed_file": seed_file,
                   "kmer": kmer, "target_coverage": target_coverage, "max_rounds": max_rounds,
-                  "candidate_count": candidate_count}, handle, indent = 4)
+                  "candidate_count": candidate_count, "killed_by_signal": killed_by_signal}, handle, indent = 4)
 
 if __name__ == "__main__":
     raise SystemExit(main())
