@@ -306,10 +306,12 @@ def test_dynamic_memory_limit_adjusts_a_real_running_process(tmp_path: Path) -> 
     tool = _SleepTool(working_dir = tmp_path, logger = logging.getLogger("test"), seconds = 3,
                       dynamic_memory_limit_mb = lambda: next(calls, 4096))
 
-    # Run the adjuster against a real sleep directly (bypassing run()'s
-    # own GNU-time wrapping, which this macOS box's /usr/bin/time can't
-    # execute -- the adjuster logic itself is what's under test here).
-    process = sp.Popen(["sleep", "3"])
+    # A shell wrapper, not a bare `sleep` -- _adjust_memory_limit_periodically
+    # looks for a CHILD of the given PID (matching real production usage,
+    # where that PID is always /usr/bin/time's own, with the real command
+    # as its child). A bare `sleep` has no children at all, which would
+    # make _find_real_child_pid correctly, honestly return None forever.
+    process = sp.Popen(["sh", "-c", "sleep 3"])
     stop_event = threading.Event()
     adjuster = threading.Thread(target = tool._adjust_memory_limit_periodically, args = (process, stop_event))
     import mitopipeline.models.base_tool.base_tool as base_tool_module
@@ -320,7 +322,9 @@ def test_dynamic_memory_limit_adjusts_a_real_running_process(tmp_path: Path) -> 
         time.sleep(1.5)
         stop_event.set()
         adjuster.join(timeout = 3)
-        soft, _ = resource.prlimit(process.pid, resource.RLIMIT_AS)
+        real_child = tool._find_real_child_pid(process.pid)
+        assert real_child is not None
+        soft, _ = resource.prlimit(real_child, resource.RLIMIT_AS)
         assert soft == 2048 * 1024 * 1024
     finally:
         base_tool_module._DYNAMIC_MEMORY_RECHECK_SECONDS = original_recheck
