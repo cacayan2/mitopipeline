@@ -505,3 +505,35 @@ def test_run_without_oom_retry_decision_behaves_exactly_as_before(tmp_path: Path
     assert result.success is False
     assert result.return_code == -9
     assert counter_path.read_text().strip() == "1"  # exactly one real attempt, no retry
+
+def test_run_records_real_per_attempt_history_for_every_killed_attempt(tmp_path: Path) -> None:
+    """The real gap this closes: without this, only the FINAL attempt's
+    timing/compute ever reached the persisted metrics -- every earlier,
+    genuinely killed attempt's own real duration would just vanish.
+    With 3 real kills before success, the final result must carry a
+    real record of all 3, each with a real nonzero runtime and -9,
+    plus a total_runtime_seconds that genuinely sums every attempt."""
+    counter_path = tmp_path / "counter.txt"
+    tool = _SelfKillingTool(working_dir = tmp_path, logger = logging.getLogger("test"),
+                            counter_path = counter_path, kills_before_success = 3,
+                            oom_retry_decision = lambda: True)
+    result = tool.run()
+    assert result.success is True
+    assert len(result.retry_attempts) == 3
+    for i, attempt in enumerate(result.retry_attempts, start = 1):
+        assert attempt["attempt"] == i
+        assert attempt["return_code"] == -9
+        assert attempt["runtime_seconds"] > 0
+    assert result.total_runtime_seconds > result.runtime_seconds
+    expected_total = result.runtime_seconds + sum(a["runtime_seconds"] for a in result.retry_attempts)
+    assert result.total_runtime_seconds == expected_total
+
+def test_run_with_no_retries_has_an_empty_history_and_matching_totals(tmp_path: Path) -> None:
+    """Every ordinary, non-retried command (the overwhelming majority)
+    must see zero change: an empty retry_attempts list and
+    total_runtime_seconds exactly equal to runtime_seconds."""
+    tool = _EchoTool(working_dir = tmp_path, logger = logging.getLogger("test"))
+    result = tool.run()
+    assert result.success is True
+    assert result.retry_attempts == []
+    assert result.total_runtime_seconds == result.runtime_seconds

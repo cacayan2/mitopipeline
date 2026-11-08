@@ -185,6 +185,19 @@ class BaseTool(ABC):
         self.logger.info(f"{context} Successfully built command.")
         self.logger.debug(f"{context} Command: {shlex.join(command)}")
 
+        # Real per-attempt history -- every attempt BEFORE the final
+        # one gets a real summary appended here (see CommandResult's
+        # own retry_attempts docstring), so a sample that needed real
+        # retries doesn't silently lose the record of what its earlier,
+        # killed attempts actually cost in real time (and whatever
+        # compute data GNU time managed to capture for them). Without
+        # this, only the FINAL attempt's numbers would ever reach the
+        # persisted metrics file -- the real time spent on every
+        # earlier kill (confirmed live, 2026-11-07: 1311s-2565s each)
+        # would simply vanish from this sample's own record, even
+        # though it's real compute that genuinely happened.
+        retry_attempts: list[dict] = []
+
         # A plain "if" around the whole execution block below would
         # only ever attempt once more -- a loop is needed so a sample
         # that keeps genuinely getting killed can keep requeuing in
@@ -323,6 +336,23 @@ class BaseTool(ABC):
             # requeue in place for as long as it keeps saying yes, and
             # only stop once it reports a real, proven resource limit.
             if completed.returncode == -9 and self.oom_retry_decision is not None and self.oom_retry_decision():
+                # Recording this attempt's own real summary BEFORE
+                # looping -- real timing always available (measured by
+                # this process itself, never dependent on GNU time);
+                # peak_memory_mb/cpu are honestly None here, same as
+                # the top-level CommandResult would show for a killed
+                # attempt, since GNU time never got to write its own
+                # file (see this function's own comment above on that).
+                retry_attempts.append({
+                    "attempt": len(retry_attempts) + 1,
+                    "return_code": completed.returncode,
+                    "runtime_seconds": runtime_seconds,
+                    "started_at": started_at.isoformat(),
+                    "ended_at": ended_at.isoformat(),
+                    "peak_memory_mb": peak_memory_mb,
+                    "user_cpu_seconds": user_cpu_seconds,
+                    "system_cpu_seconds": system_cpu_seconds,
+                })
                 self.logger.warning(
                     f"{context} Command was killed by signal 9 (likely a real OOM kill) after "
                     f"{runtime_seconds:.1f}s -- requeuing in place with real escalated headroom."
@@ -346,7 +376,8 @@ class BaseTool(ABC):
                                        peak_memory_mb = peak_memory_mb,
                                        user_cpu_seconds = user_cpu_seconds,
                                        system_cpu_seconds = system_cpu_seconds,
-                                       tool_version = self._detect_tool_version())
+                                       tool_version = self._detect_tool_version(),
+                                       retry_attempts = retry_attempts)
 
         # Persisting compute metrics BEFORE the success/failure branch
         # below, so a failed run's metrics are captured too, not just a

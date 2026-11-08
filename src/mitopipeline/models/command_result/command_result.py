@@ -26,6 +26,7 @@ class CommandResult:
         user_cpu_seconds (float): The user CPU time of the command in seconds.
         system_cpu_seconds (float): The system CPU time of the command in seconds.
         tool_version (str | None): The real external tool's own version string (from its own --version-equivalent output), or None when BaseTool.version_command() wasn't overridden for this tool or the real check failed.
+        retry_attempts (list[dict]): Real per-attempt summaries for every attempt BEFORE this final one (empty for every command that never retried) -- see BaseTool.run()'s own oom_retry_decision. Each entry: {"attempt", "return_code", "runtime_seconds", "started_at", "ended_at", "peak_memory_mb", "user_cpu_seconds", "system_cpu_seconds"}. peak_memory_mb/cpu fields are None for a genuinely killed attempt -- GNU time never gets to write its own metrics file when the wrapped command dies by signal (see run()'s own comment on this), so there is real data to report for runtime/timing but honestly none for memory/CPU on that specific attempt. The real peak RSS at the moment of a kill is recorded separately, by launcher.oom_monitor itself (see utils.system.resources.record_oom_kill) -- not duplicated here, to avoid two sources of truth for the same real number.
     """
     def __init__(self, command: str,
                  return_code: int,
@@ -39,12 +40,13 @@ class CommandResult:
                  peak_memory_mb: float,
                  user_cpu_seconds: float,
                  system_cpu_seconds: float,
-                 tool_version: str | None = None
+                 tool_version: str | None = None,
+                 retry_attempts: list[dict] | None = None
                  ):
         """
         Initializes a CommandResult object.
 
-        Args: 
+        Args:
             command (str): The command that was executed.
             return_code (int): The return code from the command.
             stdout (str): The standard output from the command.
@@ -56,6 +58,7 @@ class CommandResult:
             ended_at (datetime): The time at which the command was completed.
             user_cpu_seconds (float): The user CPU time of the command in seconds.
             system_cpu_seconds (float): The system CPU time of the command in seconds.
+            retry_attempts (list[dict] | None): See the class docstring. None (the default) becomes an empty list -- every existing caller that never retries keeps working exactly as before.
         Returns:
             None
         """
@@ -75,6 +78,7 @@ class CommandResult:
         self.user_cpu_seconds = user_cpu_seconds
         self.system_cpu_seconds = system_cpu_seconds
         self.tool_version = tool_version
+        self.retry_attempts = retry_attempts if retry_attempts is not None else []
 
     @property
     def cpu_time_seconds(self) -> float | None:
@@ -92,6 +96,22 @@ class CommandResult:
         if self.user_cpu_seconds is None or self.system_cpu_seconds is None:
             return None
         return self.user_cpu_seconds + self.system_cpu_seconds
+
+    @property
+    def total_runtime_seconds(self) -> float:
+        """
+        The real total wall-clock time this dispatch actually cost,
+        including every earlier, killed-and-requeued attempt's own
+        real duration -- runtime_seconds alone only ever reflects the
+        FINAL attempt, which would silently understate the true cost
+        of a sample that needed real retries (see retry_attempts' own
+        docstring). Equal to runtime_seconds when retry_attempts is
+        empty, i.e. for every command that never retried.
+
+        Returns:
+            float: The real cumulative wall-clock time across every attempt.
+        """
+        return self.runtime_seconds + sum(a["runtime_seconds"] for a in self.retry_attempts)
 
     def to_dict(self) -> dict:
         """
@@ -114,6 +134,7 @@ class CommandResult:
             "return_code": self.return_code,
             "success": self.success,
             "runtime_seconds": self.runtime_seconds,
+            "total_runtime_seconds": self.total_runtime_seconds,
             "started_at": self.started_at.isoformat(),
             "ended_at": self.ended_at.isoformat(),
             "peak_memory_mb": self.peak_memory_mb,
@@ -121,6 +142,7 @@ class CommandResult:
             "system_cpu_seconds": self.system_cpu_seconds,
             "cpu_time_seconds": self.cpu_time_seconds,
             "tool_version": self.tool_version,
+            "retry_attempts": self.retry_attempts,
             "stdout": self.stdout,
             "stderr": self.stderr,
         }
