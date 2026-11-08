@@ -20,10 +20,15 @@ from mitopipeline.models.sample.sample import Sample
 from mitopipeline.utils.seed.models import SeedSelectionResult
 from mitopipeline.utils.system.resources import (
     GETORGANELLE_ADMISSION_FLOOR_MB,
+    cgroup_memory_max_mb,
+    current_cgroup_path,
     job_root_from_global_log,
     oom_state_path,
+    read_cgroup_oom_kill_count,
     read_oom_escalation_record,
     read_reserved_mb,
+    record_oom_kill,
+    recommended_concurrent_slots,
     wait_for_dispatch_admission,
 )
 from mitopipeline.api.fastqc import FastQCRunner
@@ -143,6 +148,17 @@ class GetOrganelleRunner(BaseTool):
             job_root = job_root_from_global_log(global_log_file)
             return read_reserved_mb(sample.sample_id, oom_state_path(job_root), GETORGANELLE_ADMISSION_FLOOR_MB)
 
+        # Real cgroup oom_kill count as of BEFORE this dispatch's very
+        # first attempt even starts -- captured once, eagerly, here
+        # (not inside the closure below, which would re-read it fresh
+        # on every call and never be able to tell "already elevated
+        # before we started" apart from "just increased because of
+        # us"). None when undetectable (e.g. non-Linux, or no real
+        # cgroup) -- the fallback below simply can't fire without it,
+        # never guesses a baseline.
+        _cgroup_path_at_start = current_cgroup_path()
+        _oom_kill_baseline = read_cgroup_oom_kill_count(_cgroup_path_at_start) if _cgroup_path_at_start else None
+
         # Called by BaseTool.run() right after a real SIGKILL, before it
         # decides whether to requeue in place -- see oom_retry_decision's
         # own docstring on BaseTool for the full real design. The real
@@ -153,10 +169,6 @@ class GetOrganelleRunner(BaseTool):
         # (the monitor's own kill-and-record is one synchronous step,
         # triggered by its own 5s poll cycle; this is a real wait for a
         # real write, not a guessed delay) before reading the result.
-        # No real record within that window means no real basis to
-        # escalate against -- e.g. a genuine kernel-level kill that
-        # bypassed our own proactive monitor entirely -- so this fails
-        # closed (stop retrying) rather than guessing at a number.
         def _oom_retry_decision() -> bool:
             if global_log_file is None:
                 return False
@@ -169,21 +181,59 @@ class GetOrganelleRunner(BaseTool):
                 if record is not None:
                     break
                 time.sleep(1.0)
-            if record is None:
+            if record is not None:
+                if record.get("exceeds_machine_capacity"):
+                    self.logger.warning(
+                        f"{{{sample.sample_id}}} Killed while already running with the whole machine "
+                        f"reserved (reserved_slots={record.get('reserved_slots')}) -- a proven, genuine "
+                        f"resource limit, not retrying further."
+                    )
+                    return False
+                return True
+
+            # No record from our own monitor within the wait window --
+            # real gap this closes, 2026-11-07: our own monitor polls
+            # every few seconds, so a real spike fast enough to outrun
+            # that poll can let the kernel's own cgroup OOM killer fire
+            # FIRST, with nothing of ours ever recording a matching
+            # escalation. Before failing closed, check the one real,
+            # independent signal that still proves a genuine OOM kill
+            # happened even when our own monitor never saw it coming:
+            # this cgroup's own real oom_kill counter (see
+            # read_cgroup_oom_kill_count's own docstring). That counter
+            # is cgroup-wide, not scoped to this one sample, so this
+            # only trusts a real INCREASE since this exact dispatch's
+            # own start (captured once, above, before any attempt ever
+            # ran) -- not an absolute count that could reflect some
+            # earlier, unrelated sample's own kernel kill.
+            current_count = read_cgroup_oom_kill_count(_cgroup_path_at_start) if _cgroup_path_at_start else None
+            if (_oom_kill_baseline is not None and current_count is not None
+                    and current_count > _oom_kill_baseline):
+                ceiling_mb = cgroup_memory_max_mb()
+                if ceiling_mb is not None:
+                    # No real peak reading of our own exists for this
+                    # kill (GNU time never got to write one, and our
+                    # monitor never saw it either) -- the real cgroup
+                    # ceiling itself is the honest, defensible proxy:
+                    # the kernel only ever OOM-kills once a cgroup is
+                    # genuinely AT that ceiling, so this sample's real
+                    # peak was genuinely at least that large.
+                    record_oom_kill(sample.sample_id, float(ceiling_mb), state_path, recommended_concurrent_slots())
                 self.logger.warning(
-                    f"{{{sample.sample_id}}} Killed by signal 9, but no real OOM-monitor escalation "
-                    f"record appeared within {_OOM_ESCALATION_RECORD_WAIT_SECONDS:.0f}s -- no real basis "
-                    f"to escalate against, not retrying."
+                    f"{{{sample.sample_id}}} Killed by signal 9 with no record from our own monitor, but "
+                    f"this cgroup's real oom_kill counter just increased ({_oom_kill_baseline} -> "
+                    f"{current_count}) -- a genuine kernel-level OOM kill that beat our own proactive "
+                    f"monitor's poll cycle. Escalating conservatively and retrying."
                 )
-                return False
-            if record.get("exceeds_machine_capacity"):
-                self.logger.warning(
-                    f"{{{sample.sample_id}}} Killed while already running with the whole machine "
-                    f"reserved (reserved_slots={record.get('reserved_slots')}) -- a proven, genuine "
-                    f"resource limit, not retrying further."
-                )
-                return False
-            return True
+                return True
+
+            self.logger.warning(
+                f"{{{sample.sample_id}}} Killed by signal 9, but no real OOM-monitor escalation record "
+                f"appeared within {_OOM_ESCALATION_RECORD_WAIT_SECONDS:.0f}s, and the real cgroup "
+                f"oom_kill counter shows no new kernel-level kill either -- no real basis to escalate "
+                f"against, not retrying."
+            )
+            return False
 
         super().__init__(tool_name = tool_name, working_dir = working_dir, logger = logger, metrics_dir = metrics_dir,
                          dispatch_admission_wait = lambda: wait_for_dispatch_admission(

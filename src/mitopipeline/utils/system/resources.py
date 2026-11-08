@@ -363,6 +363,39 @@ def current_cgroup_path() -> Path | None:
         return None
     return None
 
+def read_cgroup_oom_kill_count(cgroup_path: Path) -> int | None:
+    """
+    This cgroup's real, cumulative `oom_kill` counter from its own
+    memory.events -- a standard cgroup v2 interface file the kernel
+    itself increments for every real OOM kill in this cgroup, whether
+    launcher.oom_monitor caused it or the kernel's own OOM killer acted
+    on its own. Exists specifically to close a real race: our own
+    monitor polls every few seconds, so a real spike fast enough to
+    outrun that poll can let the kernel's own killer fire first, with
+    nothing of ours ever recording a matching oom_escalation_state.json
+    entry. This is the one real, independent signal that still proves
+    a genuine OOM kill happened even when our own monitor never saw it
+    coming -- see api.getorganelle's own oom_retry_decision, which
+    compares this against a real baseline taken at dispatch start
+    rather than trusting an absolute count alone (this counter is
+    cgroup-wide, not scoped to any one sample).
+
+    Args:
+        cgroup_path (Path): The real cgroup directory to read (see current_cgroup_path).
+
+    Returns:
+        int | None: The real cumulative oom_kill count, or None if memory.events can't be read or parsed.
+    """
+    try:
+        with open(cgroup_path / "memory.events", "r", encoding = "utf-8") as handle:
+            for line in handle:
+                key, _, value = line.strip().partition(" ")
+                if key == "oom_kill":
+                    return int(value)
+    except (OSError, ValueError):
+        return None
+    return None
+
 def job_root_from_global_log(global_log_file: Path) -> Path:
     """
     Derives this job's own output root from its global log file path

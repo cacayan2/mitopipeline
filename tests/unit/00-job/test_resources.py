@@ -266,3 +266,31 @@ def test_read_cgroup_working_set_treats_a_missing_inactive_file_key_as_zero(tmp_
     (cgroup_dir / "memory.current").write_text("1000")
     (cgroup_dir / "memory.stat").write_text("anon 500\nfile 500\n")
     assert resources.read_cgroup_working_set_bytes(cgroup_dir) == 1000
+
+def _write_memory_events(cgroup_dir: Path, oom_kill: int) -> None:
+    cgroup_dir.mkdir(parents = True, exist_ok = True)
+    (cgroup_dir / "memory.events").write_text(
+        f"low 0\nhigh 0\nmax 0\noom 0\noom_kill {oom_kill}\noom_group_kill 0\n"
+    )
+
+def test_read_cgroup_oom_kill_count_reads_the_real_counter(tmp_path: Path) -> None:
+    """Real format confirmed live on fishlabworkstn 2026-11-07 -- this is
+    the kernel's own count of OOM kills in this cgroup, used as a
+    fallback basis to detect a kernel kill that beat our own monitor's
+    5s poll cycle."""
+    cgroup_dir = tmp_path / "run-u1.scope"
+    _write_memory_events(cgroup_dir, oom_kill = 3)
+    assert resources.read_cgroup_oom_kill_count(cgroup_dir) == 3
+
+def test_read_cgroup_oom_kill_count_returns_none_when_memory_events_is_missing(tmp_path: Path) -> None:
+    cgroup_dir = tmp_path / "run-u1.scope"
+    cgroup_dir.mkdir()
+    assert resources.read_cgroup_oom_kill_count(cgroup_dir) is None
+
+def test_read_cgroup_oom_kill_count_returns_none_when_the_key_is_absent(tmp_path: Path) -> None:
+    """Fail to unknown rather than crash or silently read 0 as a real
+    count -- a malformed file must not look like \"no kills happened\"."""
+    cgroup_dir = tmp_path / "run-u1.scope"
+    cgroup_dir.mkdir()
+    (cgroup_dir / "memory.events").write_text("low 0\nhigh 0\nmax 0\n")
+    assert resources.read_cgroup_oom_kill_count(cgroup_dir) is None
