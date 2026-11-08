@@ -26,7 +26,7 @@ class CommandResult:
         user_cpu_seconds (float): The user CPU time of the command in seconds.
         system_cpu_seconds (float): The system CPU time of the command in seconds.
         tool_version (str | None): The real external tool's own version string (from its own --version-equivalent output), or None when BaseTool.version_command() wasn't overridden for this tool or the real check failed.
-        retry_attempts (list[dict]): Real per-attempt summaries for every attempt BEFORE this final one (empty for every command that never retried) -- see BaseTool.run()'s own oom_retry_decision. Each entry: {"attempt", "return_code", "runtime_seconds", "started_at", "ended_at", "peak_memory_mb", "user_cpu_seconds", "system_cpu_seconds"}. peak_memory_mb/cpu fields are None for a genuinely killed attempt -- GNU time never gets to write its own metrics file when the wrapped command dies by signal (see run()'s own comment on this), so there is real data to report for runtime/timing but honestly none for memory/CPU on that specific attempt. The real peak RSS at the moment of a kill is recorded separately, by launcher.oom_monitor itself (see utils.system.resources.record_oom_kill) -- not duplicated here, to avoid two sources of truth for the same real number.
+        retry_attempts (list[dict]): Real per-attempt summaries for every attempt BEFORE this final one (empty for every command that never retried) -- see BaseTool.run()'s own oom_retry_decision. Each entry: {"attempt", "return_code", "runtime_seconds", "started_at", "ended_at", "peak_memory_mb", "user_cpu_seconds", "system_cpu_seconds"}. peak_memory_mb/cpu fields are None for a genuinely killed attempt -- GNU time never gets to write its own metrics file when the wrapped command dies by signal (see run()'s own comment on this), so there is real data to report for runtime/timing but honestly none for memory/CPU on that specific attempt. The real peak RSS at the moment of a kill is recorded separately, by launcher.oom_monitor itself (see utils.system.resources.record_oom_kill) -- not duplicated here, to avoid two sources of truth for the same real number. Deliberately kept SEPARATE from the top-level runtime_seconds/peak_memory_mb/cpu fields, never summed into them -- Emil's own explicit call, 2026-11-07: the real report-facing metadata must reflect the actual GetOrganelle instance that produced the assembly (the final attempt alone), with failed attempts available for reference, not blended into a combined total that would muddy what the final attempt itself actually cost.
     """
     def __init__(self, command: str,
                  return_code: int,
@@ -97,22 +97,6 @@ class CommandResult:
             return None
         return self.user_cpu_seconds + self.system_cpu_seconds
 
-    @property
-    def total_runtime_seconds(self) -> float:
-        """
-        The real total wall-clock time this dispatch actually cost,
-        including every earlier, killed-and-requeued attempt's own
-        real duration -- runtime_seconds alone only ever reflects the
-        FINAL attempt, which would silently understate the true cost
-        of a sample that needed real retries (see retry_attempts' own
-        docstring). Equal to runtime_seconds when retry_attempts is
-        empty, i.e. for every command that never retried.
-
-        Returns:
-            float: The real cumulative wall-clock time across every attempt.
-        """
-        return self.runtime_seconds + sum(a["runtime_seconds"] for a in self.retry_attempts)
-
     def to_dict(self) -> dict:
         """
         Serializes this CommandResult to a JSON-safe dictionary,
@@ -134,7 +118,6 @@ class CommandResult:
             "return_code": self.return_code,
             "success": self.success,
             "runtime_seconds": self.runtime_seconds,
-            "total_runtime_seconds": self.total_runtime_seconds,
             "started_at": self.started_at.isoformat(),
             "ended_at": self.ended_at.isoformat(),
             "peak_memory_mb": self.peak_memory_mb,
