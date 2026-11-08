@@ -435,6 +435,32 @@ def test_build_command_uses_the_real_keep_temp_flag(tmp_path: Path, paired_sampl
     assert "--keep-temp" in command
     assert "--keep-temp-files" not in command
 
+def test_init_defaults_overwrite_without_mutating_caller_dict(tmp_path: Path, paired_sample: Sample) -> None:
+    """
+    overwrite defaults to True, via a COPY of tool_options -- the
+    caller's own dict must come back untouched. Real GetOrganelle
+    refuses outright against an "-o" that already exists (confirmed
+    live, 2026-11-07: "...existed! Please use a new output directory,
+    or use '--continue'/'--overwrite'"), and BaseTool.run()'s own
+    retry loop reuses the SAME output_dir for every in-place retry
+    after a real OOM kill -- without this default, the very first
+    retry of ANY GetOrganelle dispatch (primary or rescue) would hit
+    that exact refusal against its own prior partial output.
+    """
+    caller_options: dict = {}
+    runner = _make_runner(tmp_path, paired_sample, tool_options = caller_options)
+    assert runner.tool_options["overwrite"] is True
+    assert caller_options == {}
+
+def test_init_respects_explicit_overwrite_false(tmp_path: Path, paired_sample: Sample) -> None:
+    """An explicit overwrite=False from the caller is not overridden."""
+    runner = _make_runner(tmp_path, paired_sample, tool_options = {"overwrite": False})
+    assert runner.tool_options["overwrite"] is False
+
+def test_build_command_includes_overwrite_by_default(tmp_path: Path, paired_sample: Sample) -> None:
+    runner = _make_runner(tmp_path, paired_sample)
+    assert "--overwrite" in runner.build_command()
+
 def test_recruited_reads_paths_default_prefix(tmp_path: Path, paired_sample: Sample) -> None:
     """
     With no "prefix" tool option, the recruited-reads files are named

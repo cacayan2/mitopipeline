@@ -252,6 +252,19 @@ class GetOrganelleRunner(BaseTool):
         # recruited-reads QC step below would have nothing to QC.
         self.tool_options = dict(tool_options or {})
         self.tool_options.setdefault("keep_temp_files", True)
+        # Real GetOrganelle refuses outright against an "-o" directory
+        # that already exists, no matter what's in it (confirmed live,
+        # 2026-11-07: "...existed! Please use a new output directory, or
+        # use '--continue'/'--overwrite'"). BaseTool.run()'s own retry
+        # loop builds this command ONCE and reuses it verbatim for every
+        # in-place retry (see run()'s own comment) -- so the SAME
+        # output_dir, now genuinely non-empty from the killed attempt's
+        # own real partial output, would hit this exact refusal on its
+        # very first retry, for ANY caller (primary assembly or rescue,
+        # reseeded or not), defeating the whole escalate-and-requeue
+        # design before it ever gets a chance to use its extra room.
+        # Harmless on a genuine first attempt (nothing to overwrite yet).
+        self.tool_options.setdefault("overwrite", True)
 
         self.threads = int(threads)
         self.standardized_fasta = self.output_dir / "data.fasta"

@@ -177,19 +177,12 @@ def main() -> int:
         # _resolve_reseed always writes its own real provenance record
         # (rescue_seed_selection.json) under output_dir -- the same
         # directory GetOrganelleRunner is about to pass as "-o" -- so by
-        # this point output_dir unavoidably already exists. Real
-        # GetOrganelle refuses outright against an existing "-o"
-        # (confirmed live, 2026-11-07: "Please use a new output
-        # directory, or use '--continue'/'--overwrite'"), which made
-        # EVERY reseed-based rescue attempt fail in ~0.07s with no real
-        # assembly work done at all, misclassified as a genuine "missing"
-        # verdict. quarantine_existing_output_dir above only guards
-        # against a STALE directory from a prior dead invocation -- it
-        # can't catch this attempt creating its own collision moments
-        # later. Telling GetOrganelle --overwrite is exactly its own
-        # suggested fix, and is safe here specifically because nothing
-        # of real assembly value is ever in output_dir yet at this point.
-        tool_options["overwrite"] = True
+        # this point output_dir unavoidably already exists. This used to
+        # make every reseed-based attempt fail outright (real
+        # GetOrganelle refuses an existing "-o"); now covered by
+        # GetOrganelleRunner's own universal overwrite default (see its
+        # __init__), which exists for exactly this and the equivalent
+        # in-place-retry case, so nothing extra is needed here.
     elif args.seed_file is not None:
         tool_options["seed_file"] = str(args.seed_file)
     if args.kmer is not None:
