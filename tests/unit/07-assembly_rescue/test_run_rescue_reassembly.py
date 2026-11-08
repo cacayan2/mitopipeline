@@ -276,8 +276,17 @@ def test_reseed_derives_a_different_locus_and_uses_it(tmp_path: Path, monkeypatc
                                    fallback_used = False)
 
     seen = {}
+    built_command = []
     def _stub_run(self):
         seen.update(self.tool_options)
+        # Real GetOrganelle refuses outright against an "-o" directory
+        # that already exists (confirmed live, 2026-11-07) -- and
+        # _resolve_reseed above has already created output_dir (to
+        # write its own real provenance record into it) by the time
+        # this runs, so build_command() must carry --overwrite or a
+        # real dispatch would fail in ~0.07s with zero assembly work
+        # done, misclassified as a genuine "missing" verdict.
+        built_command.extend(self.build_command())
         return _stub_run_success(self)
 
     monkeypatch.setattr(run_rescue_reassembly, "select_seed", _fake_select_seed)
@@ -288,6 +297,8 @@ def test_reseed_derives_a_different_locus_and_uses_it(tmp_path: Path, monkeypatc
 
     assert run_rescue_reassembly.main() == 0
     assert seen.get("seed_file") == str(reseeded_fasta)
+    assert seen.get("overwrite") is True
+    assert "--overwrite" in built_command
     record = json.loads((output_dir / f"{sample_id}.rescue_seed_selection.json").read_text())
     assert record["excluded_gene"] == "COXI"
     assert record["gene"] != "COXI"
@@ -310,6 +321,14 @@ def test_reseed_without_scientific_name_falls_back_to_unseeded(tmp_path: Path, m
 
     assert run_rescue_reassembly.main() == 0
     assert "seed_file" not in seen
+    # --overwrite is set from --reseed alone, not from whether a seed
+    # was actually found -- this early-return path never reaches
+    # _resolve_reseed's own output_dir.mkdir(), but setting it
+    # unconditionally for any reseed attempt is harmless (GetOrganelle
+    # creates a genuinely-missing "-o" directory either way) and keeps
+    # this one real fix from depending on an internal branch of a
+    # function it doesn't control the return value of.
+    assert seen.get("overwrite") is True
 
 def test_reseed_takes_priority_over_an_explicit_seed_file(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """If a caller ever passes both (shouldn't happen from the real
