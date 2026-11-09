@@ -208,6 +208,27 @@ def test_record_oom_kill_marks_exceeds_capacity_when_killed_again_after_running_
     assert record["exceeds_machine_capacity"] is True
     assert record["kills"] == 2
 
+def test_record_oom_kill_converges_to_ran_alone_even_with_a_modest_peak_every_time(tmp_path: Path) -> None:
+    """Real gap found live 2026-11-09: six real samples were each
+    killed 11-31 times with modest peaks (4.8-13.6GB, nowhere near a
+    10-slot machine's own full capacity) that never escalated
+    reserved_slots toward total_slots on their own -- ran_alone (and
+    so exceeds_machine_capacity) never had a chance to fire, even
+    after dozens of real kills, because the pool was crowded by many
+    OTHER concurrent jobs, not because this one sample was too big.
+    At least one real slot of progress per kill guarantees this
+    converges within total_slots kills regardless of peak size."""
+    state_path = tmp_path / "oom_escalation_state.json"
+    record = None
+    for _ in range(10):
+        record = resources.record_oom_kill("unlucky_sample", peak_mb = 5000.0, state_path = state_path,
+                                           total_slots = 10, slot_mb = 8192)
+        if record["ran_alone"]:
+            break
+    assert record["ran_alone"] is True
+    assert record["reserved_slots"] == 10
+    assert record["kills"] <= 10
+
 def test_record_oom_kill_never_shrinks_a_samples_own_prior_reservation(tmp_path: Path) -> None:
     """A second, smaller observed peak (e.g. a different real
     bottleneck this time) must never reduce an already-escalated

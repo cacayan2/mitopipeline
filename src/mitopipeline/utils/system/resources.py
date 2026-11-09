@@ -492,17 +492,42 @@ def record_oom_kill(sample_id: str, peak_mb: float, state_path: Path, total_slot
     Escalation is in whole slots, never a blind multiplier (Emil's own
     explicit call, 2026-11-07): the next reservation is exactly enough
     real slots to have covered the peak just observed, plus ONE extra
-    slot of headroom -- nothing more. Once that requirement would
-    already need the entire machine (>= total_slots), the next retry
-    is capped at running completely alone, as the final escalation
-    step. If a sample that already ran alone gets killed again, that
-    is real, definitive proof this sample's need exceeds the whole
-    machine's real capacity -- recorded as exceeds_machine_capacity,
-    which is exactly what BaseTool.run()'s own oom_retry_decision
-    checks (see api.getorganelle) to finally stop requeuing this
-    sample in place, same dispatch, no fixed retry count. The same
-    real record also sizes a later, separate dispatch's own initial
-    floor (e.g. the sample's next rescue attempt) via read_reserved_mb.
+    slot of headroom -- nothing more, UNLESS that would mean a real
+    kill made zero real progress (see below). Once that requirement
+    would already need the entire machine (>= total_slots), the next
+    retry is capped at running completely alone, as the final
+    escalation step. If a sample that already ran alone gets killed
+    again, that is real, definitive proof this sample's need exceeds
+    the whole machine's real capacity -- recorded as
+    exceeds_machine_capacity, which is exactly what BaseTool.run()'s
+    own oom_retry_decision checks (see api.getorganelle) to finally
+    stop requeuing this sample in place, same dispatch, no fixed retry
+    count. The same real record also sizes a later, separate
+    dispatch's own initial floor (e.g. the sample's next rescue
+    attempt) via read_reserved_mb.
+
+    Real gap found and fixed, 2026-11-09: admission has no hard
+    concurrency cap (Emil's own explicit call, 2026-11-07, after a
+    fixed ceiling measurably starved throughput) -- it only checks
+    real free RAM at the moment a NEW job starts, never reserving room
+    against jobs already escalated. That means a sample with a
+    genuinely modest own peak (nowhere near a full-machine need) can
+    still be the real largest consumer at the instant SYSTEM-WIDE
+    pressure crosses the threshold, purely because many OTHER
+    concurrently-running jobs are collectively oversubscribing the
+    same pool -- confirmed live the same night: six real samples each
+    killed 11-31 times, every single kill's own peak (4.8-13.6GB)
+    nowhere near escalating reserved_slots toward total_slots, so
+    ran_alone/exceeds_machine_capacity never had a chance to fire.
+    Peak-only escalation has no way to tell "this sample is too big"
+    apart from "the pool is just crowded right now" -- it can retry
+    forever without ever reaching a real answer either way. Fixed by
+    also escalating by at least one real slot per kill regardless of
+    peak (still capped at total_slots, still never shrinking), so
+    every real kill is guaranteed forward progress toward a genuine
+    solo trial -- a repeatedly-killed sample now reaches
+    ran_alone/exceeds_machine_capacity within at most total_slots real
+    kills, whatever its own peak happens to be.
 
     Args:
         sample_id (str): The sample id.
@@ -529,11 +554,17 @@ def record_oom_kill(sample_id: str, peak_mb: float, state_path: Path, total_slot
                  "last_observed_peak_mb": peak_mb, "exceeds_machine_capacity": True}
     else:
         slots_needed = max(1, -(-int(peak_mb) // slot_mb))  # ceil division, real units
-        newly_required_slots = min(total_slots, slots_needed + 1)
+        prior_slots = existing.get("reserved_slots", 0)
+        # At least one real slot of forward progress every real kill,
+        # regardless of this kill's own peak -- a modest, genuinely
+        # unlucky-timing peak must never leave a repeatedly-killed
+        # sample stuck forever short of a genuine solo trial (see this
+        # function's own docstring, "Real gap found and fixed").
+        newly_required_slots = min(total_slots, max(slots_needed + 1, prior_slots + 1))
         # Reservations only ever grow -- a smaller observed peak on a
         # later kill (a different real bottleneck that round) must
         # never undo real evidence an earlier kill already established.
-        reserved_slots = max(newly_required_slots, existing.get("reserved_slots", 0))
+        reserved_slots = max(newly_required_slots, prior_slots)
         ran_alone = reserved_slots >= total_slots
         record = {
             "reserved_slots": reserved_slots,
