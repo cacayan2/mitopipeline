@@ -20,8 +20,10 @@ from mitopipeline.models.sample.sample import Sample
 from mitopipeline.utils.seed.models import SeedSelectionResult
 from mitopipeline.utils.system.resources import (
     GETORGANELLE_ADMISSION_FLOOR_MB,
+    acquire_exclusive_trial,
     cgroup_memory_max_mb,
     current_cgroup_path,
+    exclusive_trial_lock_path,
     job_root_from_global_log,
     oom_state_path,
     read_cgroup_oom_kill_count,
@@ -235,9 +237,33 @@ class GetOrganelleRunner(BaseTool):
             )
             return False
 
+        # Real gap closed, 2026-11-09: _admission_floor_mb above already
+        # raises the real RAM floor this dispatch itself must see, once
+        # escalated -- but that floor is just a point-in-time reading
+        # for THIS caller; it was never actually enforced against OTHER
+        # callers, so a small, unrelated sample could still see "enough
+        # room for ME" at a slightly different moment and start
+        # concurrently anyway (confirmed live the same night: a sample
+        # escalated to the real machine ceiling was still killed with
+        # an 8.4GB peak, nowhere near a genuine whole-machine need).
+        # Once this sample's own real reservation has reached the
+        # machine's real total capacity, it has earned a genuine solo
+        # trial, not just a generous floor -- wait for (and respect)
+        # any OTHER sample's own live trial, then claim this one before
+        # actually invoking GetOrganelle.
+        def _dispatch_admission_wait() -> None:
+            lock_path = (exclusive_trial_lock_path(job_root_from_global_log(global_log_file))
+                        if global_log_file is not None else None)
+            wait_for_dispatch_admission(logger = self.logger, floor_mb = _admission_floor_mb(),
+                                        sample_id = sample.sample_id, exclusive_lock_path = lock_path)
+            if lock_path is None:
+                return
+            record = read_oom_escalation_record(sample.sample_id, oom_state_path(job_root_from_global_log(global_log_file)))
+            if record is not None and record.get("reserved_slots", 0) >= recommended_concurrent_slots():
+                acquire_exclusive_trial(sample.sample_id, lock_path)
+
         super().__init__(tool_name = tool_name, working_dir = working_dir, logger = logger, metrics_dir = metrics_dir,
-                         dispatch_admission_wait = lambda: wait_for_dispatch_admission(
-                             logger = self.logger, floor_mb = _admission_floor_mb()),
+                         dispatch_admission_wait = _dispatch_admission_wait,
                          oom_retry_decision = _oom_retry_decision)
         self.output_dir = Path(output_dir)
         self.sample = sample

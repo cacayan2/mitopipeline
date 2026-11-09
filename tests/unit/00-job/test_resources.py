@@ -10,6 +10,7 @@ honest-None-on-unknown contract, not any one real machine's numbers.
 
 # Imports
 import builtins
+import logging
 from pathlib import Path
 import pytest
 from mitopipeline.utils.system import resources
@@ -239,6 +240,56 @@ def test_record_oom_kill_never_shrinks_a_samples_own_prior_reservation(tmp_path:
     first_reserved = resources.read_reserved_mb("sample", state_path, default_mb = 8192)
     record = resources.record_oom_kill("sample", peak_mb = 9000.0, state_path = state_path, total_slots = 10, slot_mb = 8192)
     assert record["reserved_mb"] >= first_reserved
+
+def test_acquire_exclusive_trial_then_blocks_a_different_sample_while_genuinely_alive(tmp_path: Path) -> None:
+    """Real gap found live 2026-11-09: a sample escalated to the real
+    machine ceiling was still killed with an 8.4GB peak -- its own
+    admission floor was raised, but nothing ever stopped a smaller,
+    unrelated sample from seeing "enough room for ME" a moment later
+    and starting concurrently anyway. A genuine, live-pid-checked
+    exclusive trial actually blocks that other sample."""
+    lock_path = tmp_path / "oom_exclusive_trial.json"
+    resources.acquire_exclusive_trial("big_sample", lock_path)
+    assert resources.exclusive_trial_blocks_others("small_sample", lock_path, is_pid_alive = lambda pid: True) is True
+
+def test_exclusive_trial_never_blocks_the_sample_that_holds_it(tmp_path: Path) -> None:
+    lock_path = tmp_path / "oom_exclusive_trial.json"
+    resources.acquire_exclusive_trial("big_sample", lock_path)
+    assert resources.exclusive_trial_blocks_others("big_sample", lock_path, is_pid_alive = lambda pid: True) is False
+
+def test_exclusive_trial_self_heals_once_the_holder_process_is_genuinely_gone(tmp_path: Path) -> None:
+    """No separate release call exists on purpose -- a finished,
+    crashed, or real-SIGKILLed trial (none of which run Python cleanup
+    code on the SIGKILL path) must stop blocking the instant anyone
+    checks, not stay stuck forever. Checked here via the injectable
+    liveness function; the real default re-reads /proc fresh."""
+    lock_path = tmp_path / "oom_exclusive_trial.json"
+    resources.acquire_exclusive_trial("big_sample", lock_path)
+    assert resources.exclusive_trial_blocks_others("small_sample", lock_path, is_pid_alive = lambda pid: False) is False
+
+def test_exclusive_trial_blocks_others_returns_false_when_lock_file_is_missing(tmp_path: Path) -> None:
+    lock_path = tmp_path / "does_not_exist" / "oom_exclusive_trial.json"
+    assert resources.exclusive_trial_blocks_others("any_sample", lock_path) is False
+
+def test_wait_for_dispatch_admission_waits_out_another_samples_live_exclusive_trial(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Even when real RAM headroom looks fine, a DIFFERENT sample's own
+    genuinely live exclusive trial must still hold this dispatch back
+    -- the whole point of the fix (a generous admission floor alone
+    was never enough to stop this exact oversubscription)."""
+    lock_path = tmp_path / "oom_exclusive_trial.json"
+    resources.acquire_exclusive_trial("big_sample", lock_path)
+    monkeypatch.setattr(resources, "dispatch_admission_ready", lambda *a, **k: True)
+    monkeypatch.setattr(resources, "exclusive_trial_blocks_others",
+                        lambda calling_sample_id, path, is_pid_alive = None: calling_sample_id != "big_sample")
+    calls = []
+    sleep_calls = {"n": 0}
+    def _fake_sleep(seconds):
+        sleep_calls["n"] += 1
+        if sleep_calls["n"] >= 2:
+            monkeypatch.setattr(resources, "exclusive_trial_blocks_others", lambda *a, **k: False)
+    resources.wait_for_dispatch_admission(logger = logging.getLogger("test"), sample_id = "small_sample",
+                                          exclusive_lock_path = lock_path, poll_seconds = 0, sleep_fn = _fake_sleep)
+    assert sleep_calls["n"] >= 2
 
 def _write_cgroup_files(cgroup_dir: Path, current_bytes: int, inactive_file_bytes: int) -> None:
     cgroup_dir.mkdir(parents = True, exist_ok = True)

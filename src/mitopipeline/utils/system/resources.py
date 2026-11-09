@@ -214,7 +214,8 @@ def dispatch_admission_ready(floor_mb: int = GETORGANELLE_ADMISSION_FLOOR_MB, re
 
 def wait_for_dispatch_admission(logger: Logger, floor_mb: int = GETORGANELLE_ADMISSION_FLOOR_MB,
                                 reserved_fraction: float = 0.15, poll_seconds: float = 5.0,
-                                sleep_fn: Callable[[float], None] = time.sleep) -> None:
+                                sleep_fn: Callable[[float], None] = time.sleep,
+                                sample_id: str | None = None, exclusive_lock_path: Path | None = None) -> None:
     """
     Blocks (re-polling real system state every poll_seconds) until
     dispatch_admission_ready confirms it's genuinely safe for a new
@@ -236,25 +237,123 @@ def wait_for_dispatch_admission(logger: Logger, floor_mb: int = GETORGANELLE_ADM
     out (minutes, not seconds), so the short interval costs nothing in
     practice while keeping the real reaction window tight.
 
+    Also waits out any OTHER sample's genuine exclusive trial (see
+    exclusive_trial_blocks_others) when sample_id/exclusive_lock_path
+    are given -- a real gap found live 2026-11-09: a sample that
+    escalated all the way to needing the whole machine only ever had
+    its OWN admission floor raised to match. That floor is just a
+    point-in-time RAM reading, never an enforced reservation against
+    OTHER callers, so a small, unrelated job could still see "enough
+    room for ME" a moment later and start concurrently -- the exact
+    same oversubscription the escalation was meant to rule out, now
+    one layer up. This has no separate release step to get wrong: the
+    other side's check is a live PID-liveness read, so a finished or
+    killed exclusive trial stops blocking automatically.
+
     Args:
         logger (Logger): Where to log once, the first time a call actually has to wait (never spammed every poll).
         floor_mb (int): See dispatch_admission_ready.
         reserved_fraction (float): See dispatch_admission_ready.
         poll_seconds (float): How often to re-check while waiting.
         sleep_fn (Callable[[float], None]): The sleep implementation to call between polls -- overridable for tests. Defaults to time.sleep.
+        sample_id (str | None): This dispatch's own sample id, so it never blocks on its own exclusive trial. None skips the exclusive-trial check entirely (e.g. a caller that doesn't track one).
+        exclusive_lock_path (Path | None): See exclusive_trial_blocks_others. None skips the check.
 
     Returns:
         None
     """
     logged_wait = False
     while True:
+        blocked_by_other = (sample_id is not None and exclusive_lock_path is not None
+                            and exclusive_trial_blocks_others(sample_id, exclusive_lock_path))
         ready = dispatch_admission_ready(floor_mb, reserved_fraction)
-        if ready is None or ready:
+        if not blocked_by_other and (ready is None or ready):
             return
         if not logged_wait:
-            logger.info(f"Dispatch admission: waiting for real headroom before starting (need ~{floor_mb}MB free).")
+            reason = "another sample's own genuine solo trial is in progress" if blocked_by_other \
+                else f"real headroom before starting (need ~{floor_mb}MB free)"
+            logger.info(f"Dispatch admission: waiting for {reason}.")
             logged_wait = True
         sleep_fn(poll_seconds)
+
+def exclusive_trial_lock_path(job_root: Path) -> Path:
+    """
+    Where a real "this sample has earned the whole machine, let it run
+    genuinely alone" marker is persisted -- same sanctioned scratch
+    folder as oom_state_path, which this is a companion to.
+
+    Args:
+        job_root (Path): This job's own output root (see job_root_from_global_log).
+
+    Returns:
+        Path: The lock file's path.
+    """
+    return job_root / f"mrl_{job_root.name}" / "oom_exclusive_trial.json"
+
+def acquire_exclusive_trial(sample_id: str, lock_path: Path) -> None:
+    """
+    Records that sample_id (this real process, by its own real pid) is
+    about to run its own genuine solo trial -- called only by a
+    dispatch whose own escalation record already shows reserved_slots
+    at the real machine ceiling (see GetOrganelleRunner), right before
+    it actually invokes GetOrganelle. No lock is acquired if another
+    sample's own trial is still genuinely alive (exclusive_trial_blocks_others
+    already made this dispatch wait for that); overwrites a stale
+    entry from a real process that has since exited.
+
+    Deliberately has no matching "release" call: this process's own
+    real pid IS the lock's proof of life, checked fresh by
+    exclusive_trial_blocks_others every time, so a normal exit, an
+    uncaught exception, or even a real SIGKILL all self-release the
+    instant this process is actually gone -- nothing to clean up, and
+    nothing that can leak into a permanent block.
+
+    Args:
+        sample_id (str): The real sample id about to run alone.
+        lock_path (Path): See exclusive_trial_lock_path.
+
+    Returns:
+        None
+    """
+    lock_path.parent.mkdir(parents = True, exist_ok = True)
+    tmp_path = lock_path.with_suffix(".json.tmp")
+    with tmp_path.open("w", encoding = "utf-8") as handle:
+        json.dump({"sample_id": sample_id, "pid": os.getpid()}, handle, indent = 4)
+    tmp_path.replace(lock_path)
+
+def exclusive_trial_blocks_others(calling_sample_id: str, lock_path: Path,
+                                  is_pid_alive: Callable[[int], bool] | None = None) -> bool:
+    """
+    Whether some OTHER sample currently holds a genuinely live
+    exclusive trial (see acquire_exclusive_trial) -- true real
+    exclusion, not just a generous admission floor: this reads the
+    real recorded pid and confirms via /proc that it is still actually
+    alive right now, so a trial that already finished (success,
+    non-OOM failure, or a real SIGKILL -- none of which run any
+    Python cleanup code) is recognized as over automatically, the very
+    next time anyone checks. Never blocks a sample on its own trial,
+    and a missing/unreadable/stale lock file never blocks anyone.
+
+    Args:
+        calling_sample_id (str): The sample about to ask "am I blocked."
+        lock_path (Path): See exclusive_trial_lock_path.
+        is_pid_alive (Callable[[int], bool] | None): Overridable real-pid-liveness check, for tests -- defaults to a real /proc read (Linux only; always reports "not alive" where /proc doesn't exist, same fail-open convention as the rest of this module).
+
+    Returns:
+        bool: True only if a DIFFERENT sample's own trial is genuinely still running right now.
+    """
+    if is_pid_alive is None:
+        is_pid_alive = lambda pid: Path(f"/proc/{pid}").exists()
+    try:
+        with lock_path.open("r", encoding = "utf-8") as handle:
+            record = json.load(handle)
+    except (OSError, json.JSONDecodeError):
+        return False
+    holder = record.get("sample_id")
+    pid = record.get("pid")
+    if holder is None or holder == calling_sample_id or not isinstance(pid, int):
+        return False
+    return is_pid_alive(pid)
 
 # How much real RAM is deliberately left OUTSIDE the pipeline's own
 # cgroup, for the OS/kernel itself -- small, since the proactive
