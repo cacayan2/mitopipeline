@@ -241,6 +241,23 @@ def test_record_oom_kill_never_shrinks_a_samples_own_prior_reservation(tmp_path:
     record = resources.record_oom_kill("sample", peak_mb = 9000.0, state_path = state_path, total_slots = 10, slot_mb = 8192)
     assert record["reserved_mb"] >= first_reserved
 
+def test_exclusive_trial_thread_count_uses_real_cores_minus_the_os_reserve(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Real gap found live 2026-11-09: a genuine solo trial already
+    reserves the whole machine's real MEMORY, but its own thread count
+    stayed whatever ordinary, crowded concurrency sized it at (-t 2 on
+    a 24-core machine with 22 real cores sitting idle). A sample that
+    earned the whole machine's memory has equally earned its CPU."""
+    monkeypatch.setattr(resources.os, "cpu_count", lambda: 24)
+    assert resources.exclusive_trial_thread_count() == 23
+
+def test_exclusive_trial_thread_count_never_goes_below_one(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(resources.os, "cpu_count", lambda: 1)
+    assert resources.exclusive_trial_thread_count() == 1
+
+def test_exclusive_trial_thread_count_falls_back_to_one_core_when_undetectable(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(resources.os, "cpu_count", lambda: None)
+    assert resources.exclusive_trial_thread_count() == 1
+
 def test_acquire_exclusive_trial_then_blocks_a_different_sample_while_genuinely_alive(tmp_path: Path) -> None:
     """Real gap found live 2026-11-09: a sample escalated to the real
     machine ceiling was still killed with an 8.4GB peak -- its own

@@ -24,6 +24,7 @@ from mitopipeline.utils.system.resources import (
     cgroup_memory_max_mb,
     current_cgroup_path,
     exclusive_trial_lock_path,
+    exclusive_trial_thread_count,
     job_root_from_global_log,
     oom_state_path,
     read_cgroup_oom_kill_count,
@@ -261,6 +262,17 @@ class GetOrganelleRunner(BaseTool):
             record = read_oom_escalation_record(sample.sample_id, oom_state_path(job_root_from_global_log(global_log_file)))
             if record is not None and record.get("reserved_slots", 0) >= recommended_concurrent_slots():
                 acquire_exclusive_trial(sample.sample_id, lock_path)
+                # Real gap found live 2026-11-09: this trial's own real
+                # memory reservation already covers the whole machine,
+                # but threads was still whatever ordinary, crowded
+                # concurrency sized it at (e.g. -t 2 on a 24-core
+                # machine with nothing else running). A sample that has
+                # earned the whole machine's memory has equally earned
+                # its real CPU -- this runs before build_command(), so
+                # the real -t flag it emits reflects this.
+                self.threads = exclusive_trial_thread_count()
+                self.logger.info(f"{{{sample.sample_id}}} Genuine solo trial: scaling real CPU threads to "
+                                 f"{self.threads} (this sample now has the whole machine to itself).")
 
         super().__init__(tool_name = tool_name, working_dir = working_dir, logger = logger, metrics_dir = metrics_dir,
                          dispatch_admission_wait = _dispatch_admission_wait,

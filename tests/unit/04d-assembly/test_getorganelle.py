@@ -58,6 +58,40 @@ def _make_runner(tmp_path: Path, sample: Sample, **overrides) -> GetOrganelleRun
     defaults.update(overrides)
     return GetOrganelleRunner(**defaults)
 
+def test_dispatch_admission_wait_scales_threads_once_a_genuine_solo_trial_is_earned(
+        tmp_path: Path, paired_sample: Sample, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Real gap found live 2026-11-09: a sample's own exclusive trial
+    already reserves the whole machine's real MEMORY, but its threads
+    stayed whatever ordinary, crowded concurrency sized it at. Once
+    this sample's own real escalation record shows it has earned the
+    machine's full reservation, its own dispatch_admission_wait (run
+    BEFORE build_command, see base_tool.run()) must raise threads to
+    match -- so the real -t flag it emits reflects having the whole
+    machine to itself, not the old, crowded-concurrency count."""
+    import mitopipeline.api.getorganelle as getorganelle_module
+
+    job_root = tmp_path / "outputs" / "job1"
+    global_log_file = job_root / "logs" / "00-job" / "job1.global.log"
+    global_log_file.parent.mkdir(parents = True, exist_ok = True)
+    global_log_file.touch()
+    state_path = job_root / "mrl_job1" / "oom_escalation_state.json"
+    state_path.parent.mkdir(parents = True, exist_ok = True)
+    state_path.write_text(json.dumps({
+        "SAMPLE_01": {"reserved_slots": 10, "reserved_mb": 81920, "kills": 10,
+                      "last_observed_peak_mb": 8000.0, "ran_alone": True, "exceeds_machine_capacity": False},
+    }))
+
+    monkeypatch.setattr(getorganelle_module, "wait_for_dispatch_admission", lambda *a, **k: None)
+    monkeypatch.setattr(getorganelle_module, "recommended_concurrent_slots", lambda: 10)
+    monkeypatch.setattr(getorganelle_module, "exclusive_trial_thread_count", lambda: 23)
+
+    runner = _make_runner(tmp_path, paired_sample, threads = 2, global_log_file = global_log_file)
+    runner.dispatch_admission_wait()
+
+    assert runner.threads == 23
+    assert "-t" in runner.build_command()
+    assert str(23) in runner.build_command()
+
 def test_build_command_without_seed_omits_seed_flag(tmp_path: Path, paired_sample: Sample) -> None:
     """
     A run with no "seed_file" tool option is a valid, intentional

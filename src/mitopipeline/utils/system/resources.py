@@ -146,6 +146,28 @@ def recommended_concurrent_slots(min_mb_per_job: int = 8192, reserved_fraction: 
         slots = min(slots, max_slots)
     return max(1, slots)
 
+def exclusive_trial_thread_count(os_reserve_cores: int = 1) -> int:
+    """
+    How many real CPU threads a sample running its own genuine
+    exclusive trial (see exclusive_trial_lock_path) should actually be
+    given -- real gap found live 2026-11-09: the exclusive trial
+    reserves the whole machine's real MEMORY for one sample, but its
+    thread count was never scaled to match, so it kept running at the
+    same small per-slot thread count sized for ordinary, crowded
+    concurrency (confirmed live: -t 2 on a 24-core machine with
+    nothing else running, 22 real cores sitting idle). A sample that
+    has earned the whole machine's memory has equally earned the
+    whole machine's real CPU.
+
+    Args:
+        os_reserve_cores (int): How many real cores to leave for the OS/oom_monitor itself, same small-margin philosophy as this module's RAM-side reserved_fraction. Defaults to 1.
+
+    Returns:
+        int: At least 1, never more than this machine's real core count.
+    """
+    cpu_count = os.cpu_count() or 1
+    return max(1, cpu_count - os_reserve_cores)
+
 def compute_job_memory_budget_mb(concurrent_slots: int, reserved_fraction: float = 0.15) -> int | None:
     """
     This specific job's own fair-share memory ceiling, in MB -- read
