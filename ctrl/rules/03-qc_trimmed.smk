@@ -7,9 +7,6 @@ Executes and validates FastQC on trimmed data.
 # Imports
 from pathlib import Path
 
-# To make things easier, we'll subset the portion of the config related to GetOrganelle.
-QC_TRIMMED_CONFIG = config["stage_options"]["qc.trimmed"]["fastqc"]
-
 rule qc_trimmed:
     # When the pipeline is run, a runtime manifest is generated.
     # While a passed manifest includes relative paths for both r1 and
@@ -75,7 +72,9 @@ rule qc_trimmed:
         metrics_dir = str(JOB_DIR / "metrics" / "03-qc_trimmed" / "{sample}"),
         exec_script = str(SRC_DIR / "mitopipeline" / "exec" / "03-qc_trimmed" / "run_fastqc_trimmed.py")
     threads:
-        QC_TRIMMED_CONFIG.get("threads")
+        # Live, intelligently-decided fair share -- never a
+        # hand-tuned, per-machine config value.
+        recommended_thread_count(CONCURRENT_SLOTS, cpu_count_override = CONFIGURED_CORES)
     conda:
         "../../envs/01-qc.yaml"
     shell:

@@ -745,6 +745,30 @@ def _stop_oom_monitor(process: subprocess.Popen, logger: logging.Logger) -> None
         process.kill()
         process.wait()
 
+def resolve_concurrent_slots(config: dict) -> int:
+    """
+    This run's own real concurrency ceiling for GetOrganelle-class
+    jobs, resolved from the pipeline's only two user-facing resource
+    knobs -- `resources.cores`/`resources.ram_gb`. Both null (the
+    default) means fully live-detected, never hardcoded to one box.
+    `getorganelle_slots` itself is never a knob the user sets
+    directly -- a third, redundant number that could silently
+    disagree with cores/ram_gb -- it's purely derived from these two,
+    once, here.
+
+    Args:
+        config (dict): The run's own config (job or runtime) -- reads config["resources"]["cores"]/["ram_gb"].
+
+    Returns:
+        int: The real recommended concurrent-slots ceiling (see utils.system.resources.recommended_concurrent_slots).
+    """
+    resources_config = config.get("resources") or {}
+    configured_cores = resources_config.get("cores")
+    configured_ram_gb = resources_config.get("ram_gb")
+    configured_ram_mb = int(configured_ram_gb * 1024) if configured_ram_gb is not None else None
+    return recommended_concurrent_slots(cpu_count_override = configured_cores,
+                                        total_ram_mb_override = configured_ram_mb)
+
 def launch_pipeline(
         config_path: Path,
         snakefile: Path = Path("ctrl/Snakefile"),
@@ -797,14 +821,11 @@ def launch_pipeline(
             # AND in the written runtime_config.yaml (read by each rule as
             # `--concurrent-slots`, to size that job's own live memory
             # budget) -- never two independently-derived numbers that could
-            # drift apart. An explicit `resources.getorganelle_slots` in the
-            # user's own config always wins over the live auto-detected
-            # recommendation, matching this config's existing convention of
-            # explicit values overriding computed defaults.
-            configured_slots = (config.get("resources") or {}).get("getorganelle_slots")
-            concurrent_slots = int(configured_slots) if configured_slots is not None else recommended_concurrent_slots()
+            # drift apart.
+            concurrent_slots = resolve_concurrent_slots(config)
+            resources_config = config.get("resources") or {}
             runtime_config_values = dict(config)
-            runtime_config_values["resources"] = {**(config.get("resources") or {}), "getorganelle_slots": concurrent_slots}
+            runtime_config_values["resources"] = {**resources_config, "getorganelle_slots": concurrent_slots}
 
             runtime_config = write_runtime_config(config = runtime_config_values,
                                                   job = job,

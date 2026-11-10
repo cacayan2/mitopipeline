@@ -33,7 +33,9 @@ rule mafft_alignment:
         metrics_dir = str(JOB_DIR / "metrics" / "11-phylogeny" / "{sample}"),
         exec_script = str(SRC_DIR / "mitopipeline" / "exec" / "11-phylogeny" / "run_mafft_alignment.py")
     threads:
-        MAFFT_CONFIG.get("threads", 4)
+        # Live, intelligently-decided fair share -- never a
+        # hand-tuned, per-machine config value.
+        recommended_thread_count(CONCURRENT_SLOTS, cpu_count_override = CONFIGURED_CORES)
     conda:
         "../../envs/08-phylogeny.yaml"
     shell:
@@ -76,7 +78,9 @@ rule iqtree_inference:
         metrics_dir = str(JOB_DIR / "metrics" / "11-phylogeny" / "{sample}"),
         exec_script = str(SRC_DIR / "mitopipeline" / "exec" / "11-phylogeny" / "run_iqtree.py")
     threads:
-        IQTREE_CONFIG.get("threads", 4)
+        # Live, intelligently-decided fair share -- never a
+        # hand-tuned, per-machine config value.
+        recommended_thread_count(CONCURRENT_SLOTS, cpu_count_override = CONFIGURED_CORES)
     conda:
         "../../envs/08-phylogeny.yaml"
     shell:

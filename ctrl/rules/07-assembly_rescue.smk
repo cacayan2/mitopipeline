@@ -138,7 +138,10 @@ rule rescue_mapping:
         metrics_dir = str(JOB_DIR / "metrics" / "07-assembly_rescue" / "{sample}"),
         exec_script = str(SRC_DIR / "mitopipeline" / "exec" / "07-assembly_rescue" / "run_rescue_mapping.py")
     threads:
-        RESCUE_CONFIG.get("threads", 4)
+        # Live, intelligently-decided fair share -- shares the same
+        # getorganelle_slots pool as rescue_reassembly/assembly below,
+        # never a hand-tuned, per-machine config value.
+        recommended_thread_count(CONCURRENT_SLOTS, cpu_count_override = CONFIGURED_CORES)
     resources:
         # Confirmed live, 2026-11-06: capping rescue_reassembly's own
         # concurrency (its own rule, below) wasn't enough on its own --
@@ -213,7 +216,14 @@ rule rescue_reassembly:
         concurrent_slots = CONCURRENT_SLOTS,
         exec_script = str(SRC_DIR / "mitopipeline" / "exec" / "07-assembly_rescue" / "run_rescue_reassembly.py")
     threads:
-        RESCUE_CONFIG.get("threads", 4)
+        # Live, intelligently-decided fair share (see
+        # recommended_thread_count's own docstring) -- never a
+        # hand-tuned, per-machine config value. The real executed -t
+        # flag can still climb higher than this at runtime, once this
+        # specific sample earns real OOM-escalated headroom (see
+        # getorganelle.py's own dispatch_admission_wait); this is just
+        # the ordinary, unescalated starting point.
+        recommended_thread_count(CONCURRENT_SLOTS, cpu_count_override = CONFIGURED_CORES)
     resources:
         # Same real concern as 04d-assembly.smk's primary assembly rule
         # (see its own comment) -- a full_pool rescue reassembly runs

@@ -97,7 +97,8 @@ def read_available_ram_mb() -> int | None:
     return read_meminfo_mb("MemAvailable")
 
 def recommended_concurrent_slots(min_mb_per_job: int = 8192, reserved_fraction: float = 0.15,
-                                 max_slots: int | None = None) -> int:
+                                 max_slots: int | None = None, cpu_count_override: int | None = None,
+                                 total_ram_mb_override: int | None = None) -> int:
     """
     A live, RAM-aware concurrency ceiling for GetOrganelle-class jobs
     (primary assembly, rescue mapping/reassembly) -- how many of them
@@ -128,12 +129,14 @@ def recommended_concurrent_slots(min_mb_per_job: int = 8192, reserved_fraction: 
         min_mb_per_job (int): How much RAM one job should comfortably be able to claim without the whole pool already being oversubscribed at idle. Defaults to 8192 (8GB) -- real measured p75 peak memory across 145 completed primary-assembly runs, 2026-11-06.
         reserved_fraction (float): The same safety margin compute_job_memory_budget_mb reserves for the OS/other processes -- kept identical here so the two functions agree on how much RAM is actually being divided up.
         max_slots (int | None): An optional hard ceiling (e.g. to leave headroom for other users/processes on a shared machine); None applies no extra ceiling beyond the machine's own real CPU count.
+        cpu_count_override (int | None): This machine's real core count, when already known (e.g. the pipeline's own `resources.cores` config knob) -- avoids a second, possibly inconsistent os.cpu_count() read. None reads it live.
+        total_ram_mb_override (int | None): This machine's real total RAM in MB, when already known (e.g. the pipeline's own `resources.ram_gb` config knob). None reads it live.
 
     Returns:
         int: The recommended slot count, at least 1.
     """
-    total_ram_mb = read_total_ram_mb()
-    cpu_count = os.cpu_count() or 1
+    total_ram_mb = total_ram_mb_override if total_ram_mb_override is not None else read_total_ram_mb()
+    cpu_count = cpu_count_override if cpu_count_override is not None else (os.cpu_count() or 1)
 
     if total_ram_mb is None:
         slots = 1
@@ -147,7 +150,7 @@ def recommended_concurrent_slots(min_mb_per_job: int = 8192, reserved_fraction: 
     return max(1, slots)
 
 def thread_count_for_reserved_slots(reserved_slots: int, total_slots: int, default_threads: int,
-                                    os_reserve_cores: int = 1) -> int:
+                                    os_reserve_cores: int = 1, cpu_count_override: int | None = None) -> int:
     """
     How many real CPU threads a sample should actually be given, given
     how many of the machine's real memory slots it has earned through
@@ -170,16 +173,56 @@ def thread_count_for_reserved_slots(reserved_slots: int, total_slots: int, defau
         total_slots (int): This machine's real total concurrency ceiling (recommended_concurrent_slots()) -- what reserved_slots is itself capped against.
         default_threads (int): This job's own ordinary, unescalated thread count (whatever the pipeline's config/CLI already specifies) -- the real floor; this function only ever scales UP from it, never down, so an unescalated job's thread count is always left exactly as configured.
         os_reserve_cores (int): How many real cores to leave for the OS/oom_monitor itself, same small-margin philosophy as this module's RAM-side reserved_fraction. Defaults to 1.
+        cpu_count_override (int | None): This machine's real core count, when already known. None reads it live.
 
     Returns:
         int: At least default_threads, never more than this machine's real core count minus os_reserve_cores.
     """
-    cpu_count = os.cpu_count() or 1
+    cpu_count = cpu_count_override if cpu_count_override is not None else (os.cpu_count() or 1)
     max_threads = max(1, cpu_count - os_reserve_cores)
     if total_slots <= 0 or reserved_slots <= 0:
         return default_threads
     proportional = -(-(max_threads * min(reserved_slots, total_slots)) // total_slots)  # ceil division, real units
     return max(default_threads, min(max_threads, proportional))
+
+def recommended_thread_count(total_slots: int, reserved_slots: int = 0, os_reserve_cores: int = 1,
+                             cpu_count_override: int | None = None) -> int:
+    """
+    This machine's own live, intelligently-decided thread count for
+    one job in a pool of up to total_slots concurrently-running jobs
+    -- replaces a manually hand-tuned, per-tool, per-machine `threads:`
+    config value with a number derived purely from this machine's real
+    core count and the SAME slot count already sizing memory (never a
+    number someone has to notice is wrong and re-tune by hand, e.g.
+    the real, documented history in prod_config.yaml of getorganelle/
+    assembly_rescue's own threads being lowered by hand after observing
+    real CPU utilization on one specific machine).
+
+    An ordinary, unescalated job gets a fair SHARE of the real core
+    budget (cores / total_slots) -- enough concurrent jobs can run at
+    once to use every real core, without any one of them being able to
+    starve the others. A job that has earned extra memory through real
+    OOM escalation (reserved_slots > 0) gets a proportionally larger
+    share too, via thread_count_for_reserved_slots -- see that
+    function's own docstring for why that climbs gradually rather than
+    jumping once at the end.
+
+    Args:
+        total_slots (int): How many jobs this pool is sized to run concurrently (recommended_concurrent_slots()) -- the same number this job's own fair share is divided against.
+        reserved_slots (int): This job's own current reserved_slots from a real OOM escalation record, if any. 0 (the default) means "no escalation yet" -- just the ordinary fair share.
+        os_reserve_cores (int): How many real cores to leave for the OS itself. Defaults to 1.
+        cpu_count_override (int | None): This machine's real core count, when already known (e.g. the pipeline's own `resources.cores` config knob). None reads it live.
+
+    Returns:
+        int: At least 1, never more than this machine's real core count minus os_reserve_cores.
+    """
+    cpu_count = cpu_count_override if cpu_count_override is not None else (os.cpu_count() or 1)
+    max_threads = max(1, cpu_count - os_reserve_cores)
+    fair_share = max(1, max_threads // max(1, total_slots))
+    if reserved_slots <= 0:
+        return fair_share
+    return thread_count_for_reserved_slots(reserved_slots, total_slots, fair_share,
+                                           os_reserve_cores = os_reserve_cores, cpu_count_override = cpu_count)
 
 def compute_job_memory_budget_mb(concurrent_slots: int, reserved_fraction: float = 0.15) -> int | None:
     """

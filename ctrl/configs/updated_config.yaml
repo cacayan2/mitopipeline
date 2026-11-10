@@ -13,15 +13,17 @@ job_configuration:
   job_id:
   validate_input_files:
 
-# How many GetOrganelle-class jobs (primary assembly, rescue
-# reassembly) are allowed to run at once, and how much memory each one
-# gets. Leave getorganelle_slots unset (the default) to let the
-# launcher detect it live from THIS machine's own real CPU count and
-# total RAM every time it runs -- never hardcoded to one specific
-# box. Set it explicitly only to override that detection (e.g. to
-# deliberately leave headroom for other work on a shared machine).
+# The only two resource knobs this pipeline exposes. Every per-tool
+# thread count (fastp/fastqc/blast/GetOrganelle/rescue/MAFFT/IQ-TREE)
+# is decided live from these, never a separate hand-tuned value per
+# tool -- leave both unset (the default) to let the launcher detect
+# this machine's own real CPU count and total RAM every time it runs,
+# never hardcoded to one specific box. Set either explicitly only to
+# override that detection (e.g. to deliberately leave headroom for
+# other work on a shared machine).
 resources:
-  getorganelle_slots:
+  cores:
+  ram_gb:
 
 # You can choose which stages to turn on/off
 # (this is mostly for debugging purposes - most
@@ -49,11 +51,9 @@ stages:
 
 stage_options:
   qc.raw:
-    fastqc: 
-      threads: 2
+    fastqc: {}
   trimming:
     fastp:
-      threads: 4
       qualified_quality_phred: 20
       length_required: 50
       trim_front1: null
@@ -78,8 +78,7 @@ stage_options:
       trim_poly_g: false
       trim_poly_x: false
   qc.trimmed:
-    fastqc: 
-      threads: 2
+    fastqc: {}
   assembly:
     seed:
       # Downloaded automatically (ctrl/rules/04c-seed_sequences.smk's
@@ -103,7 +102,6 @@ stage_options:
       # A rescue profile may set its own seed_mode for its reseed.
       mode: mitofish_gene
     getorganelle:
-      threads: 4
       database_type: animal_mt
       # NOT YET WIRED: nothing in the pipeline currently reads this key.
       # GetOrganelle's own bundled label database (used to classify
@@ -167,11 +165,6 @@ stage_options:
     #     the anchor itself -- not the read recruitment -- was the
     #     problem.
     assembly_rescue:
-      # Same real-utilization finding as prod_config.yaml's getorganelle
-      # block -- confirmed live (2026-11-06), real average usage across
-      # completed rescue reassembly runs is ~2.1 cores against a
-      # 4-thread default. Lowered to 2.
-      threads: 2
       trigger_statuses:
       - fragmented
       getorganelle_profiles:
@@ -232,7 +225,6 @@ stage_options:
       initialize_database: true
       overwrite_database: true
       parse_seqids: true
-      threads: 8
       task: blastn
       evalue: 1.0e-05
       max_target_seqs: 50
@@ -259,10 +251,8 @@ stage_options:
       output_format: 6 qseqid sseqid pident length mismatch gapopen qstart qend sstart
         send evalue bitscore qcovs staxids sscinames stitle
     mafft:
-      threads: 8
       strategy: auto
     iqtree:
-      threads: 16
       sequence_type: DNA
       model: MFP
       ultrafast_bootstrap: 1000

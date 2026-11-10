@@ -141,7 +141,9 @@ rule trimming:
         exec_script = str(SRC_DIR / "mitopipeline" / "exec" / "02-trimming" / "run_fastp.py"),
         optional_args = fastp_optional_args(config)
     threads:
-        FASTP_CONFIG.get("threads")
+        # Live, intelligently-decided fair share -- never a
+        # hand-tuned, per-machine config value.
+        recommended_thread_count(CONCURRENT_SLOTS, cpu_count_override = CONFIGURED_CORES)
     conda:
         "../../envs/02-trimming.yaml"
     shell:

@@ -21,7 +21,7 @@ from mitopipeline.launcher.pipeline_launcher import (
     _configured_job_id, _job_configuration, _reexec_under_memory_cgroup,
     _rerender_run_report_with_final_status, _start_oom_monitor, _stop_oom_monitor,
     _systemd_user_scope_available, discover_fastq_pairs, load_config, parse_args,
-    prepare_runtime_manifest, run_snakemake, write_validated_manifest,
+    prepare_runtime_manifest, resolve_concurrent_slots, run_snakemake, write_validated_manifest,
 )
 from mitopipeline.models.sample.sample import Sample
 
@@ -169,6 +169,42 @@ def test_run_snakemake_defaults_concurrent_slots_to_a_live_detection(tmp_path: P
                   logger = logging.getLogger("test"))
 
     assert "getorganelle_slots=42" in captured_commands[0]
+
+def test_resolve_concurrent_slots_defaults_to_live_detection_with_no_resources_config() -> None:
+    """The only two user-facing resource knobs are resources.cores/
+    resources.ram_gb -- a config with neither (or no resources block
+    at all) must fall through to this machine's own real, live
+    detection, never a hardcoded number."""
+    assert resolve_concurrent_slots({}) == pipeline_launcher.recommended_concurrent_slots()
+
+def test_resolve_concurrent_slots_respects_an_explicit_cores_override(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A deliberate resources.cores override (e.g. to leave headroom
+    on a shared machine) must reach the real slot computation as the
+    live core count, not get silently ignored in favor of this
+    machine's own real os.cpu_count()."""
+    captured = {}
+    def _fake(cpu_count_override = None, total_ram_mb_override = None):
+        captured["cpu_count_override"] = cpu_count_override
+        captured["total_ram_mb_override"] = total_ram_mb_override
+        return 7
+    monkeypatch.setattr(pipeline_launcher, "recommended_concurrent_slots", _fake)
+    result = resolve_concurrent_slots({"resources": {"cores": 12}})
+    assert result == 7
+    assert captured["cpu_count_override"] == 12
+    assert captured["total_ram_mb_override"] is None
+
+def test_resolve_concurrent_slots_respects_an_explicit_ram_gb_override(monkeypatch: pytest.MonkeyPatch) -> None:
+    """resources.ram_gb is in GB (human-friendly, matching the config's
+    own unit); the real slot computation needs MB -- confirms the
+    conversion actually happens rather than silently passing GB
+    straight through as if it were MB."""
+    captured = {}
+    def _fake(cpu_count_override = None, total_ram_mb_override = None):
+        captured["total_ram_mb_override"] = total_ram_mb_override
+        return 3
+    monkeypatch.setattr(pipeline_launcher, "recommended_concurrent_slots", _fake)
+    resolve_concurrent_slots({"resources": {"ram_gb": 64}})
+    assert captured["total_ram_mb_override"] == 64 * 1024
 
 def test_rerun_triggers_flag_is_parsed_and_defaults_to_none(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(sys, "argv", ["pipeline_launcher.py", "--config", "config.yaml"])

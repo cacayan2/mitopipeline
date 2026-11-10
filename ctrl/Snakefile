@@ -7,6 +7,7 @@ Top-level Snakemake file for the pipeline.
 # Imports
 from pathlib import Path
 import pandas as pd
+from mitopipeline.utils.system.resources import recommended_thread_count
 
 # Setting wildcard constraints - wildcard can match any sequence of one or or more characters 
 # except the forward slash. 
@@ -62,6 +63,21 @@ STAGES = config.get("stages", {})
 # (the old hardcoded default) only for a runtime_config.yaml written
 # before this existed.
 CONCURRENT_SLOTS = (config.get("resources") or {}).get("getorganelle_slots", 8)
+
+# The only two real resource knobs this pipeline exposes (config.yaml's
+# own resources.cores/resources.ram_gb) -- every per-tool `threads:`
+# this file and ctrl/rules/ used to read from config was a manually
+# hand-tuned, per-machine number someone had to notice was wrong and
+# re-tune (prod_config.yaml's own real history: getorganelle/
+# assembly_rescue's threads were both lowered by hand after observing
+# real CPU utilization on one specific machine). Both default to None
+# (live-detected, never hardcoded to one box) unless explicitly
+# overridden -- e.g. to deliberately leave headroom for other work on
+# a shared machine. Used by every rule below via recommended_thread_
+# count/solo_stage_thread_count instead of a static config value.
+_RESOURCES_CONFIG = config.get("resources") or {}
+CONFIGURED_CORES = _RESOURCES_CONFIG.get("cores")
+CONFIGURED_RAM_MB = (_RESOURCES_CONFIG.get("ram_gb") * 1024) if _RESOURCES_CONFIG.get("ram_gb") is not None else None
 
 # The whole-pipeline log every stage's logger also writes to, in
 # addition to its own per-step log file. Same path PipelineJob itself

@@ -7,9 +7,6 @@ Executes and validates FastQC on raw data.
 # Imports
 from pathlib import Path
 
-# To make things easier, we'll subset the portion of the config related to GetOrganelle.
-QC_RAW_CONFIG = config["stage_options"]["qc.raw"]["fastqc"]
-
 rule qc_raw:
     # When the pipeline is run, a runtime manifest is generated.
     # While a passed manifest includes relative paths for both r1 and
@@ -81,7 +78,12 @@ rule qc_raw:
         metrics_dir = str(JOB_DIR / "metrics" / "01-qc_raw" / "{sample}"),
         exec_script = str(SRC_DIR / "mitopipeline" / "exec" / "01-qc_raw" / "run_fastqc_raw.py")
     threads:
-        QC_RAW_CONFIG.get("threads")
+        # Live, intelligently-decided fair share -- no artificial cap
+        # on this rule's own concurrency (unlike GetOrganelle-class
+        # jobs), but the same real machine's cores are still shared
+        # with everything else ready to run, so the same live anchor
+        # applies: never a hand-tuned, per-machine config value.
+        recommended_thread_count(CONCURRENT_SLOTS, cpu_count_override = CONFIGURED_CORES)
     conda:
         "../../envs/01-qc.yaml"
     shell:

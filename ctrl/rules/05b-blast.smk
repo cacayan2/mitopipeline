@@ -8,8 +8,6 @@ configuration.
 # Imports
 from pathlib import Path
 
-BLAST_CONFIG = config["stage_options"]["phylogeny"]["blast"]
-
 rule blast:
     input:
         config_done = str(JOB_DIR / "05a-blast_config" / "{sample}" / "{sample}.blast_config.done")
@@ -27,7 +25,9 @@ rule blast:
         metrics_dir = str(JOB_DIR / "metrics" / "05b-blast" / "{sample}"),
         exec_script = str(SRC_DIR / "mitopipeline" / "exec" / "05b-blast" / "run_blast.py")
     threads:
-        BLAST_CONFIG.get("threads", 4)
+        # Live, intelligently-decided fair share -- never a
+        # hand-tuned, per-machine config value.
+        recommended_thread_count(CONCURRENT_SLOTS, cpu_count_override = CONFIGURED_CORES)
     conda:
         "../../envs/05-blast.yaml"
     shell:
