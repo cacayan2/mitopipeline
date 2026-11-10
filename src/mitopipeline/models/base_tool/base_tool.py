@@ -179,12 +179,6 @@ class BaseTool(ABC):
         self.validate_inputs()
         self.logger.info(f"{context} Suecessfully validated inputs.")
 
-        # Loggina dnd executing build command portion. 
-        self.logger.info(f"{context} Building command.")
-        command = self.build_command()
-        self.logger.info(f"{context} Successfully built command.")
-        self.logger.debug(f"{context} Command: {shlex.join(command)}")
-
         # Real per-attempt history -- every attempt BEFORE the final
         # one gets a real summary appended here (see CommandResult's
         # own retry_attempts docstring), so a sample that needed real
@@ -204,6 +198,23 @@ class BaseTool(ABC):
         # place for as long as oom_retry_decision() itself keeps
         # saying yes (see its own docstring -- no fixed count here).
         while True:
+            # Rebuilt every iteration, not just once before the loop --
+            # a real gap found live 2026-11-09: dispatch_admission_wait()
+            # is called again before each in-place retry (above/below),
+            # and can raise self.threads once a sample earns a genuine
+            # solo trial mid-retry (the normal case -- it takes repeated
+            # kills to reach that point). A command built once up front
+            # and only unpacked into timed_command here would keep
+            # re-launching with its original, stale -t value forever --
+            # confirmed live: a sample escalated to a 24-core solo trial
+            # after 9 kills still ran its final, successful retry with
+            # -t 2, because its real command list had already been
+            # frozen on attempt 1, long before it earned the trial.
+            self.logger.info(f"{context} Building command.")
+            command = self.build_command()
+            self.logger.info(f"{context} Successfully built command.")
+            self.logger.debug(f"{context} Command: {shlex.join(command)}")
+
             # Creating a tempfile for GNU time statistics.
             with tempfile.NamedTemporaryFile(mode = "w", suffix = ".json", delete = False) as handle:
                 metrics_path = Path(handle.name)

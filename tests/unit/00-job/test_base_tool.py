@@ -8,6 +8,7 @@ Unit tests for the BaseTool class.
 import json
 import logging
 import resource
+import shlex
 import threading
 import time
 from pathlib import Path
@@ -432,6 +433,56 @@ def test_run_requeues_in_place_after_a_real_sigkill_and_succeeds(tmp_path: Path)
     assert result.success is True
     assert result.stdout.strip() == "recovered"
     assert counter_path.read_text().strip() == "2"  # 1 real kill + 1 real success
+
+class _ScalingTool(_SelfKillingTool):
+    """
+    A real _SelfKillingTool whose own command reflects a mutable
+    self.scale attribute at the moment build_command() is called --
+    used to confirm run()'s retry loop rebuilds the real command
+    fresh on every attempt, including the one that finally succeeds,
+    rather than reusing whatever build_command() returned before the
+    loop ever started.
+    """
+    def __init__(self, working_dir: Path, logger: logging.Logger, counter_path: Path,
+                 kills_before_success: int, oom_retry_decision = None, dispatch_admission_wait = None) -> None:
+        super().__init__(working_dir = working_dir, logger = logger, counter_path = counter_path,
+                         kills_before_success = kills_before_success, oom_retry_decision = oom_retry_decision,
+                         dispatch_admission_wait = dispatch_admission_wait)
+        self.scale = 2
+
+    def build_command(self) -> list[str]:
+        return ["bash", "-c",
+               f'n=$(cat "{self.counter_path}" 2>/dev/null || echo 0); n=$((n+1)); '
+               f'echo $n > "{self.counter_path}"; '
+               f'if [ $n -le {self.kills_before_success} ]; then kill -9 0; '
+               f'else echo "scale={self.scale}"; fi']
+
+def test_run_rebuilds_the_command_fresh_before_every_retry(tmp_path: Path) -> None:
+    """The real bug this closes, found live 2026-11-09: a sample that
+    only earns a higher resource allocation (e.g. more CPU threads)
+    partway through its own retries -- the normal case, since it
+    takes real repeated kills to reach that point -- still ran its
+    final, successful retry with its ORIGINAL allocation, because
+    run() built the real command list once before the loop and just
+    kept reusing it ever after. dispatch_admission_wait here raises
+    self.scale only on its SECOND call (the one made before the retry
+    that actually succeeds) -- the real executed command must reflect
+    that updated value, not whatever self.scale held when run()
+    started."""
+    counter_path = tmp_path / "counter.txt"
+    calls = []
+    tool = _ScalingTool(working_dir = tmp_path, logger = logging.getLogger("test"),
+                        counter_path = counter_path, kills_before_success = 1,
+                        oom_retry_decision = lambda: True)
+    def _wait() -> None:
+        calls.append(1)
+        if len(calls) >= 2:
+            tool.scale = 23
+    tool.dispatch_admission_wait = _wait
+    result = tool.run()
+    assert result.success is True
+    assert result.stdout.strip() == "scale=23"
+    assert "scale=23" in shlex.join(result.command)
 
 def test_run_calls_dispatch_admission_wait_again_before_each_retry(tmp_path: Path) -> None:
     """Confirms a retry only actually starts once real system state is
