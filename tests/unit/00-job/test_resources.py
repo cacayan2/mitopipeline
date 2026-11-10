@@ -241,22 +241,41 @@ def test_record_oom_kill_never_shrinks_a_samples_own_prior_reservation(tmp_path:
     record = resources.record_oom_kill("sample", peak_mb = 9000.0, state_path = state_path, total_slots = 10, slot_mb = 8192)
     assert record["reserved_mb"] >= first_reserved
 
-def test_exclusive_trial_thread_count_uses_real_cores_minus_the_os_reserve(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Real gap found live 2026-11-09: a genuine solo trial already
-    reserves the whole machine's real MEMORY, but its own thread count
-    stayed whatever ordinary, crowded concurrency sized it at (-t 2 on
-    a 24-core machine with 22 real cores sitting idle). A sample that
-    earned the whole machine's memory has equally earned its CPU."""
+def test_thread_count_for_reserved_slots_scales_proportionally_to_the_real_escalation_climb(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Real gap found live 2026-11-09/10: memory reservation escalates
+    gradually, one slot per kill, but thread count used to only ever
+    jump once, at the very last step (all slots reserved) -- a sample
+    stuck at a small thread count through many real kills and several
+    real hours before finally earning that one jump. Threads should
+    track the same reserved_slots fraction memory already does."""
     monkeypatch.setattr(resources.os, "cpu_count", lambda: 24)
-    assert resources.exclusive_trial_thread_count() == 23
+    assert resources.thread_count_for_reserved_slots(reserved_slots = 5, total_slots = 10, default_threads = 4) == 12
+    assert resources.thread_count_for_reserved_slots(reserved_slots = 1, total_slots = 10, default_threads = 4) == 4
 
-def test_exclusive_trial_thread_count_never_goes_below_one(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_thread_count_for_reserved_slots_converges_to_the_prior_all_or_nothing_behavior_at_full_reservation(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A genuine solo trial (reserved_slots == total_slots) already
+    reserves the whole machine's real MEMORY, but its own thread count
+    used to stay whatever ordinary, crowded concurrency sized it at
+    (-t 2 on a 24-core machine with 22 real cores sitting idle). A
+    sample that earned the whole machine's memory has equally earned
+    its CPU -- this must still land on exactly 23 at full reservation,
+    matching the prior exclusive-trial-only behavior."""
+    monkeypatch.setattr(resources.os, "cpu_count", lambda: 24)
+    assert resources.thread_count_for_reserved_slots(reserved_slots = 10, total_slots = 10, default_threads = 4) == 23
+
+def test_thread_count_for_reserved_slots_never_scales_below_the_configured_default(monkeypatch: pytest.MonkeyPatch) -> None:
+    """No escalation record yet (reserved_slots = 0) must leave an
+    ordinary, unescalated job's thread count exactly as configured."""
+    monkeypatch.setattr(resources.os, "cpu_count", lambda: 24)
+    assert resources.thread_count_for_reserved_slots(reserved_slots = 0, total_slots = 10, default_threads = 4) == 4
+
+def test_thread_count_for_reserved_slots_never_goes_below_one_core(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(resources.os, "cpu_count", lambda: 1)
-    assert resources.exclusive_trial_thread_count() == 1
+    assert resources.thread_count_for_reserved_slots(reserved_slots = 1, total_slots = 1, default_threads = 1) == 1
 
-def test_exclusive_trial_thread_count_falls_back_to_one_core_when_undetectable(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_thread_count_for_reserved_slots_falls_back_to_one_core_when_undetectable(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(resources.os, "cpu_count", lambda: None)
-    assert resources.exclusive_trial_thread_count() == 1
+    assert resources.thread_count_for_reserved_slots(reserved_slots = 1, total_slots = 1, default_threads = 1) == 1
 
 def test_acquire_exclusive_trial_then_blocks_a_different_sample_while_genuinely_alive(tmp_path: Path) -> None:
     """Real gap found live 2026-11-09: a sample escalated to the real

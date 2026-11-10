@@ -83,7 +83,7 @@ def test_dispatch_admission_wait_scales_threads_once_a_genuine_solo_trial_is_ear
 
     monkeypatch.setattr(getorganelle_module, "wait_for_dispatch_admission", lambda *a, **k: None)
     monkeypatch.setattr(getorganelle_module, "recommended_concurrent_slots", lambda: 10)
-    monkeypatch.setattr(getorganelle_module, "exclusive_trial_thread_count", lambda: 23)
+    monkeypatch.setattr(getorganelle_module, "thread_count_for_reserved_slots", lambda *a, **k: 23)
 
     runner = _make_runner(tmp_path, paired_sample, threads = 2, global_log_file = global_log_file)
     runner.dispatch_admission_wait()
@@ -91,6 +91,43 @@ def test_dispatch_admission_wait_scales_threads_once_a_genuine_solo_trial_is_ear
     assert runner.threads == 23
     assert "-t" in runner.build_command()
     assert str(23) in runner.build_command()
+
+def test_dispatch_admission_wait_scales_threads_proportionally_mid_escalation(
+        tmp_path: Path, paired_sample: Sample, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Real gap found live 2026-11-09/10: memory reservation escalates
+    gradually across many kills, but threads used to only ever jump
+    once, at the very last step (full reservation) -- a sample stuck
+    at a small thread count through many real kills and several real
+    hours before finally reaching that one jump. A sample mid-climb
+    (reserved_slots short of total_slots) must still see its threads
+    scaled up proportionally, not just left at the ordinary default,
+    and must NOT yet claim the exclusive-trial lock (that's reserved
+    for full reservation only)."""
+    import mitopipeline.api.getorganelle as getorganelle_module
+
+    job_root = tmp_path / "outputs" / "job1"
+    global_log_file = job_root / "logs" / "00-job" / "job1.global.log"
+    global_log_file.parent.mkdir(parents = True, exist_ok = True)
+    global_log_file.touch()
+    state_path = job_root / "mrl_job1" / "oom_escalation_state.json"
+    state_path.parent.mkdir(parents = True, exist_ok = True)
+    state_path.write_text(json.dumps({
+        "SAMPLE_01": {"reserved_slots": 5, "reserved_mb": 40960, "kills": 4,
+                      "last_observed_peak_mb": 15000.0, "ran_alone": False, "exceeds_machine_capacity": False},
+    }))
+
+    acquired = []
+    monkeypatch.setattr(getorganelle_module, "wait_for_dispatch_admission", lambda *a, **k: None)
+    monkeypatch.setattr(getorganelle_module, "recommended_concurrent_slots", lambda: 10)
+    monkeypatch.setattr(getorganelle_module, "thread_count_for_reserved_slots", lambda *a, **k: 12)
+    monkeypatch.setattr(getorganelle_module, "acquire_exclusive_trial", lambda *a, **k: acquired.append(1))
+
+    runner = _make_runner(tmp_path, paired_sample, threads = 4, global_log_file = global_log_file)
+    runner.dispatch_admission_wait()
+
+    assert runner.threads == 12
+    assert str(12) in runner.build_command()
+    assert acquired == []
 
 def test_build_command_without_seed_omits_seed_flag(tmp_path: Path, paired_sample: Sample) -> None:
     """

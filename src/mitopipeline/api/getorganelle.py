@@ -24,7 +24,6 @@ from mitopipeline.utils.system.resources import (
     cgroup_memory_max_mb,
     current_cgroup_path,
     exclusive_trial_lock_path,
-    exclusive_trial_thread_count,
     job_root_from_global_log,
     oom_state_path,
     read_cgroup_oom_kill_count,
@@ -32,6 +31,7 @@ from mitopipeline.utils.system.resources import (
     read_reserved_mb,
     record_oom_kill,
     recommended_concurrent_slots,
+    thread_count_for_reserved_slots,
     wait_for_dispatch_admission,
 )
 from mitopipeline.api.fastqc import FastQCRunner
@@ -252,6 +252,8 @@ class GetOrganelleRunner(BaseTool):
         # trial, not just a generous floor -- wait for (and respect)
         # any OTHER sample's own live trial, then claim this one before
         # actually invoking GetOrganelle.
+        default_threads = int(threads)
+
         def _dispatch_admission_wait() -> None:
             lock_path = (exclusive_trial_lock_path(job_root_from_global_log(global_log_file))
                         if global_log_file is not None else None)
@@ -260,19 +262,28 @@ class GetOrganelleRunner(BaseTool):
             if lock_path is None:
                 return
             record = read_oom_escalation_record(sample.sample_id, oom_state_path(job_root_from_global_log(global_log_file)))
-            if record is not None and record.get("reserved_slots", 0) >= recommended_concurrent_slots():
+            if record is None:
+                return
+            reserved_slots = record.get("reserved_slots", 0)
+            total_slots = recommended_concurrent_slots()
+            # Real gap found live 2026-11-09/10: memory reservation
+            # escalates gradually, one slot per kill, but threads used
+            # to only ever jump once, at the very end, when reserved_slots
+            # finally reached total_slots -- confirmed live, a sample
+            # stuck at -t 4 through 8 real kills and several real hours
+            # before finally earning that last-step jump. Threads now
+            # track the same reserved_slots fraction, so the scale-up
+            # happens across the climb, not just at its last step -- this
+            # runs before build_command() on every attempt (including
+            # in-place retries), so the real -t flag it emits reflects
+            # whatever this sample has ACTUALLY earned so far.
+            scaled_threads = thread_count_for_reserved_slots(reserved_slots, total_slots, default_threads)
+            if scaled_threads > self.threads:
+                self.threads = scaled_threads
+                self.logger.info(f"{{{sample.sample_id}}} Escalated reservation ({reserved_slots}/{total_slots} "
+                                 f"real slots): scaling real CPU threads to {self.threads}.")
+            if reserved_slots >= total_slots:
                 acquire_exclusive_trial(sample.sample_id, lock_path)
-                # Real gap found live 2026-11-09: this trial's own real
-                # memory reservation already covers the whole machine,
-                # but threads was still whatever ordinary, crowded
-                # concurrency sized it at (e.g. -t 2 on a 24-core
-                # machine with nothing else running). A sample that has
-                # earned the whole machine's memory has equally earned
-                # its real CPU -- this runs before build_command(), so
-                # the real -t flag it emits reflects this.
-                self.threads = exclusive_trial_thread_count()
-                self.logger.info(f"{{{sample.sample_id}}} Genuine solo trial: scaling real CPU threads to "
-                                 f"{self.threads} (this sample now has the whole machine to itself).")
 
         super().__init__(tool_name = tool_name, working_dir = working_dir, logger = logger, metrics_dir = metrics_dir,
                          dispatch_admission_wait = _dispatch_admission_wait,

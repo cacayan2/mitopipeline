@@ -146,27 +146,40 @@ def recommended_concurrent_slots(min_mb_per_job: int = 8192, reserved_fraction: 
         slots = min(slots, max_slots)
     return max(1, slots)
 
-def exclusive_trial_thread_count(os_reserve_cores: int = 1) -> int:
+def thread_count_for_reserved_slots(reserved_slots: int, total_slots: int, default_threads: int,
+                                    os_reserve_cores: int = 1) -> int:
     """
-    How many real CPU threads a sample running its own genuine
-    exclusive trial (see exclusive_trial_lock_path) should actually be
-    given -- real gap found live 2026-11-09: the exclusive trial
-    reserves the whole machine's real MEMORY for one sample, but its
-    thread count was never scaled to match, so it kept running at the
-    same small per-slot thread count sized for ordinary, crowded
-    concurrency (confirmed live: -t 2 on a 24-core machine with
-    nothing else running, 22 real cores sitting idle). A sample that
-    has earned the whole machine's memory has equally earned the
-    whole machine's real CPU.
+    How many real CPU threads a sample should actually be given, given
+    how many of the machine's real memory slots it has earned through
+    OOM escalation -- real gap found live 2026-11-09/10: memory
+    reservation escalates gradually, one slot at a time, tracking each
+    kill's own real observed peak, but threads used to only ever jump
+    ONCE, at the very end, when a sample reached a genuine exclusive
+    trial (all slots). Every kill before that final one left real idle
+    cores on the table (confirmed live: a sample stuck at -t 4 through
+    8 real kills and several real hours, on a 24-core machine, before
+    finally reaching exclusivity). Threads now track the SAME
+    reserved_slots fraction memory already does, so the scale-up
+    happens progressively across the escalation climb instead of only
+    at its very last step -- which still converges to exactly the
+    prior all-or-nothing behavior once reserved_slots reaches
+    total_slots.
 
     Args:
+        reserved_slots (int): This sample's own current reserved_slots, from its real OOM escalation record (oom_escalation_state.json). 0 (no record yet) yields default_threads.
+        total_slots (int): This machine's real total concurrency ceiling (recommended_concurrent_slots()) -- what reserved_slots is itself capped against.
+        default_threads (int): This job's own ordinary, unescalated thread count (whatever the pipeline's config/CLI already specifies) -- the real floor; this function only ever scales UP from it, never down, so an unescalated job's thread count is always left exactly as configured.
         os_reserve_cores (int): How many real cores to leave for the OS/oom_monitor itself, same small-margin philosophy as this module's RAM-side reserved_fraction. Defaults to 1.
 
     Returns:
-        int: At least 1, never more than this machine's real core count.
+        int: At least default_threads, never more than this machine's real core count minus os_reserve_cores.
     """
     cpu_count = os.cpu_count() or 1
-    return max(1, cpu_count - os_reserve_cores)
+    max_threads = max(1, cpu_count - os_reserve_cores)
+    if total_slots <= 0 or reserved_slots <= 0:
+        return default_threads
+    proportional = -(-(max_threads * min(reserved_slots, total_slots)) // total_slots)  # ceil division, real units
+    return max(default_threads, min(max_threads, proportional))
 
 def compute_job_memory_budget_mb(concurrent_slots: int, reserved_fraction: float = 0.15) -> int | None:
     """
