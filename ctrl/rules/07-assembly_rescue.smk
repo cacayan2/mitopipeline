@@ -256,7 +256,26 @@ rule rescue_reassembly:
             # An array's own members are never re-parsed this way.
             SEED_ARGS=()
             if [ -n "{params.reseed_flag}" ]; then
-                SEED_ARGS=(--reseed --exclude-gene {params.primary_seed_gene:q} --scientific-name {params.scientific_name:q} --database-dir {params.database_dir:q} --seed-mode {params.reseed_mode:q})
+                # --exclude-gene is appended conditionally, never
+                # inline in the array literal above -- real bug found
+                # live 2026-11-10/11: when the primary's own seed
+                # selection fell back (empty gene), {:q}-quoting an
+                # EMPTY string renders as nothing at all, not even
+                # empty quotes, silently vanishing that whole token
+                # from the array literal. That shifts every token
+                # after it, making --scientific-name (which starts
+                # with "-", so argparse refuses it as a value) look
+                # like --exclude-gene's own argument instead --
+                # "expected one argument," crashing the whole dispatch.
+                # --exclude-gene is already optional in the exec
+                # script's own argparse (None tries the full locus
+                # chain from the top) -- omitting it outright when
+                # there's truly nothing to exclude is both correct and
+                # safe, not just a quoting workaround.
+                SEED_ARGS=(--reseed --scientific-name {params.scientific_name:q} --database-dir {params.database_dir:q} --seed-mode {params.reseed_mode:q})
+                if [ -n "{params.primary_seed_gene}" ]; then
+                    SEED_ARGS+=(--exclude-gene {params.primary_seed_gene:q})
+                fi
             elif [ -n "{params.reuse_primary_seed}" ] && [ -n "{params.primary_seed_fasta}" ]; then
                 # Reusing the primary's own seed only ever makes sense
                 # if that seed recruited SOMETHING -- a profile that
