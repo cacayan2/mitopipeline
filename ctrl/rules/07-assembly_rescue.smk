@@ -259,10 +259,11 @@ rule rescue_reassembly:
                 # --exclude-gene is appended conditionally, never
                 # inline in the array literal above -- real bug found
                 # live 2026-11-10/11: when the primary's own seed
-                # selection fell back (empty gene), {:q}-quoting an
-                # EMPTY string renders as nothing at all, not even
-                # empty quotes, silently vanishing that whole token
-                # from the array literal. That shifts every token
+                # selection fell back (empty gene), Snakemake's own
+                # quote-formatting of an EMPTY string renders as
+                # nothing at all, not even empty quotes, silently
+                # vanishing that whole token from the array literal.
+                # That shifts every token
                 # after it, making --scientific-name (which starts
                 # with "-", so argparse refuses it as a value) look
                 # like --exclude-gene's own argument instead --
