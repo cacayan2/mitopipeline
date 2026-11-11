@@ -270,16 +270,29 @@ def scale_pre_grouping(budget_mb: int | None) -> int | None:
     scaled = _GETORGANELLE_PRE_GROUPING_ANCHOR_VALUE * budget_mb / _GETORGANELLE_PRE_GROUPING_ANCHOR_MB
     return max(10_000, int(scaled))
 
-def dispatch_admission_ready(floor_mb: int = GETORGANELLE_ADMISSION_FLOOR_MB, reserved_fraction: float = 0.15) -> bool | None:
+def dispatch_admission_ready(floor_mb: int = GETORGANELLE_ADMISSION_FLOOR_MB) -> bool | None:
     """
     Whether a new GetOrganelle-class job may safely start RIGHT NOW --
     purely a live read of real current headroom, never a guess about
     any specific already-running job's future growth. See
     GETORGANELLE_ADMISSION_FLOOR_MB for why no such guess is needed.
 
+    Real gap found live 2026-11-11: this used to apply ANOTHER 15%
+    safety margin on top of floor_mb (available_mb * 0.85 >= floor_mb)
+    -- fine for the ordinary flat 8GB floor, but floor_mb for a sample
+    already escalated to the real machine ceiling (read_reserved_mb)
+    is itself already ~85% of total RAM (that's exactly how
+    recommended_concurrent_slots sized it). Re-applying the same
+    margin here compounded into needing ~96% of total RAM free --
+    confirmed live: a sample needing 81920MB (of 98.2GB total) never
+    actually saw enough "available" RAM to admit, even with nothing
+    else running. floor_mb already carries whatever margin it needs;
+    comparing raw availability against it directly is correct for
+    both the flat ordinary floor and an already-margined escalated
+    one.
+
     Args:
-        floor_mb (int): The minimum real headroom (after reserved_fraction) a new job must see before starting. Defaults to GETORGANELLE_ADMISSION_FLOOR_MB.
-        reserved_fraction (float): The same OS/safety margin every other budget function in this module reserves. Defaults to 0.15.
+        floor_mb (int): The minimum real headroom a new job must see before starting. Defaults to GETORGANELLE_ADMISSION_FLOOR_MB.
 
     Returns:
         bool | None: True if there's real room, False if not, None if available RAM is undetectable -- callers must treat None as "unknown," never substitute a guess (see wait_for_dispatch_admission, which fails open on None).
@@ -287,11 +300,10 @@ def dispatch_admission_ready(floor_mb: int = GETORGANELLE_ADMISSION_FLOOR_MB, re
     available_mb = read_available_ram_mb()
     if available_mb is None:
         return None
-    usable_mb = available_mb * (1.0 - reserved_fraction)
-    return usable_mb >= floor_mb
+    return available_mb >= floor_mb
 
 def wait_for_dispatch_admission(logger: Logger, floor_mb: int = GETORGANELLE_ADMISSION_FLOOR_MB,
-                                reserved_fraction: float = 0.15, poll_seconds: float = 5.0,
+                                poll_seconds: float = 5.0,
                                 sleep_fn: Callable[[float], None] = time.sleep,
                                 sample_id: str | None = None, exclusive_lock_path: Path | None = None) -> None:
     """
@@ -331,7 +343,6 @@ def wait_for_dispatch_admission(logger: Logger, floor_mb: int = GETORGANELLE_ADM
     Args:
         logger (Logger): Where to log once, the first time a call actually has to wait (never spammed every poll).
         floor_mb (int): See dispatch_admission_ready.
-        reserved_fraction (float): See dispatch_admission_ready.
         poll_seconds (float): How often to re-check while waiting.
         sleep_fn (Callable[[float], None]): The sleep implementation to call between polls -- overridable for tests. Defaults to time.sleep.
         sample_id (str | None): This dispatch's own sample id, so it never blocks on its own exclusive trial. None skips the exclusive-trial check entirely (e.g. a caller that doesn't track one).
@@ -344,7 +355,7 @@ def wait_for_dispatch_admission(logger: Logger, floor_mb: int = GETORGANELLE_ADM
     while True:
         blocked_by_other = (sample_id is not None and exclusive_lock_path is not None
                             and exclusive_trial_blocks_others(sample_id, exclusive_lock_path))
-        ready = dispatch_admission_ready(floor_mb, reserved_fraction)
+        ready = dispatch_admission_ready(floor_mb)
         if not blocked_by_other and (ready is None or ready):
             return
         if not logged_wait:
@@ -393,8 +404,17 @@ def acquire_exclusive_trial(sample_id: str, lock_path: Path) -> None:
     Returns:
         None
     """
+    # Real race found live 2026-11-11: this used a FIXED tmp filename
+    # shared by every caller -- harmless if only ever one sample earns
+    # this at a time, but two samples reaching the ceiling within
+    # moments of each other both write to the SAME tmp path, and
+    # whichever one's rename runs second finds it already consumed by
+    # the first (FileNotFoundError on tmp_path.replace), crashing that
+    # dispatch outright instead of a clean retry. Suffixing with this
+    # process's own real pid makes every caller's tmp file genuinely
+    # unique, so concurrent writers can never collide.
     lock_path.parent.mkdir(parents = True, exist_ok = True)
-    tmp_path = lock_path.with_suffix(".json.tmp")
+    tmp_path = lock_path.with_suffix(f".json.{os.getpid()}.tmp")
     with tmp_path.open("w", encoding = "utf-8") as handle:
         json.dump({"sample_id": sample_id, "pid": os.getpid()}, handle, indent = 4)
     tmp_path.replace(lock_path)

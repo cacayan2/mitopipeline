@@ -10,6 +10,7 @@ honest-None-on-unknown contract, not any one real machine's numbers.
 
 # Imports
 import builtins
+import json
 import logging
 from pathlib import Path
 import pytest
@@ -110,13 +111,26 @@ def test_scale_pre_grouping_never_goes_below_a_sane_floor() -> None:
 
 def test_dispatch_admission_ready_true_when_real_headroom_covers_the_floor(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(resources, "read_available_ram_mb", lambda: 10000)
-    # 10000 * 0.85 = 8500 >= floor_mb=8192
+    # 10000 >= floor_mb=8192 -- raw comparison, no extra margin (see
+    # the double-margin regression test below for why not).
     assert resources.dispatch_admission_ready(floor_mb = 8192) is True
 
 def test_dispatch_admission_ready_false_when_real_headroom_is_tight(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(resources, "read_available_ram_mb", lambda: 5000)
-    # 5000 * 0.85 = 4250 < floor_mb=8192
+    # 5000 < floor_mb=8192
     assert resources.dispatch_admission_ready(floor_mb = 8192) is False
+
+def test_dispatch_admission_ready_does_not_double_apply_a_reserved_margin(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Real gap found live 2026-11-11: floor_mb for a sample already
+    escalated to the real machine ceiling is itself already ~85% of
+    total RAM (exactly how recommended_concurrent_slots sized it) --
+    applying another 15% margin here on top compounded into needing
+    ~96% of total RAM free, which a real, busy 10-slot machine could
+    almost never satisfy. 81920 available covering an 81920 floor
+    must be enough -- no hidden extra margin reducing what counts as
+    "enough" below the floor's own face value."""
+    monkeypatch.setattr(resources, "read_available_ram_mb", lambda: 81920)
+    assert resources.dispatch_admission_ready(floor_mb = 81920) is True
 
 def test_dispatch_admission_ready_returns_none_when_ram_undetectable(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(resources, "read_available_ram_mb", lambda: None)
@@ -302,6 +316,23 @@ def test_exclusive_trial_self_heals_once_the_holder_process_is_genuinely_gone(tm
     lock_path = tmp_path / "oom_exclusive_trial.json"
     resources.acquire_exclusive_trial("big_sample", lock_path)
     assert resources.exclusive_trial_blocks_others("small_sample", lock_path, is_pid_alive = lambda pid: False) is False
+
+def test_acquire_exclusive_trial_uses_a_pid_unique_tmp_file_not_a_shared_one(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Real race found live 2026-11-11: a fixed, shared tmp filename
+    meant two samples reaching the ceiling within moments of each
+    other both wrote to the SAME tmp path -- whichever one's rename
+    ran second found it already consumed by the first
+    (FileNotFoundError on tmp_path.replace), crashing that dispatch
+    outright instead of a clean retry. Simulates two real, different
+    pids calling in immediate succession; both must succeed cleanly,
+    and no stray tmp file should survive either real call."""
+    lock_path = tmp_path / "oom_exclusive_trial.json"
+    monkeypatch.setattr(resources.os, "getpid", lambda: 1111)
+    resources.acquire_exclusive_trial("sample_a", lock_path)
+    monkeypatch.setattr(resources.os, "getpid", lambda: 2222)
+    resources.acquire_exclusive_trial("sample_b", lock_path)
+    assert json.loads(lock_path.read_text())["sample_id"] == "sample_b"
+    assert list(tmp_path.glob("*.tmp")) == []
 
 def test_exclusive_trial_blocks_others_returns_false_when_lock_file_is_missing(tmp_path: Path) -> None:
     lock_path = tmp_path / "does_not_exist" / "oom_exclusive_trial.json"
