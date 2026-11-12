@@ -680,7 +680,7 @@ def read_reserved_mb(sample_id: str, state_path: Path, default_mb: int) -> int:
     return max(default_mb, int(record["reserved_mb"]))
 
 def record_oom_kill(sample_id: str, peak_mb: float, state_path: Path, total_slots: int,
-                    slot_mb: int = GETORGANELLE_ADMISSION_FLOOR_MB) -> dict:
+                    slot_mb: int = GETORGANELLE_ADMISSION_FLOOR_MB, genuinely_alone: bool = True) -> dict:
     """
     Records a real observed OOM kill for sample_id -- called ONLY by
     the proactive OOM monitor, immediately after it kills a process,
@@ -694,14 +694,34 @@ def record_oom_kill(sample_id: str, peak_mb: float, state_path: Path, total_slot
     would already need the entire machine (>= total_slots), the next
     retry is capped at running completely alone, as the final
     escalation step. If a sample that already ran alone gets killed
-    again, that is real, definitive proof this sample's need exceeds
-    the whole machine's real capacity -- recorded as
-    exceeds_machine_capacity, which is exactly what BaseTool.run()'s
+    again WHILE GENUINELY ALONE, that is real, definitive proof this
+    sample's need exceeds the whole machine's real capacity -- recorded
+    as exceeds_machine_capacity, which is exactly what BaseTool.run()'s
     own oom_retry_decision checks (see api.getorganelle) to finally
     stop requeuing this sample in place, same dispatch, no fixed retry
     count. The same real record also sizes a later, separate
     dispatch's own initial floor (e.g. the sample's next rescue
     attempt) via read_reserved_mb.
+
+    Real gap found live, 2026-11-11: "ran_alone" only ever meant this
+    sample earned the right to run without a NEW competing dispatch
+    starting -- it never meant the cgroup was actually empty of OTHER
+    jobs already in flight before this sample's own trial began (a
+    multi-hour SPAdes run started minutes earlier doesn't get paused
+    just because a different sample's reservation later reached the
+    ceiling). Confirmed live against real logs: 7 samples were marked
+    exceeds_machine_capacity with real peaks of 262MB-25.6GB, nowhere
+    close to this machine's real ~94GB aggregate threshold, every one
+    of them killed during a window with other real GetOrganelle
+    dispatches genuinely still running. genuinely_alone (passed by the
+    monitor from its own real process census at the moment of THIS
+    kill, see oom_monitor.run_monitor) gates exceeds_machine_capacity
+    on the one thing that actually proves it: no other real
+    get_organelle_from_reads process existed at kill time. A kill while
+    ran_alone but NOT genuinely_alone still counts (kills increments,
+    reserved_slots/reserved_mb stay capped at the ceiling) -- this
+    sample still deserves another genuinely uncontended attempt, not a
+    guess dressed up as proof.
 
     Real gap found and fixed, 2026-11-09: admission has no hard
     concurrency cap (Emil's own explicit call, 2026-11-07, after a
@@ -745,10 +765,15 @@ def record_oom_kill(sample_id: str, peak_mb: float, state_path: Path, total_slot
     existing = state.get(sample_id, {})
 
     if existing.get("ran_alone"):
-        # Already escalated all the way to the whole machine and STILL
-        # killed -- a real, proven ceiling, not escalated further.
+        # Already escalated all the way to the whole machine and killed
+        # again -- a real, proven ceiling ONLY if this specific kill
+        # genuinely happened with no other real GetOrganelle process
+        # running (see this function's own docstring). Otherwise this
+        # sample's own real need is still unproven -- record the kill,
+        # but don't claim proof a crowded pool never actually tested.
         record = {**existing, "kills": existing.get("kills", 0) + 1,
-                 "last_observed_peak_mb": peak_mb, "exceeds_machine_capacity": True}
+                 "last_observed_peak_mb": peak_mb,
+                 "exceeds_machine_capacity": bool(genuinely_alone)}
     else:
         slots_needed = max(1, -(-int(peak_mb) // slot_mb))  # ceil division, real units
         prior_slots = existing.get("reserved_slots", 0)

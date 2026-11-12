@@ -136,6 +136,18 @@ def run_monitor(cgroup_path: Path, threshold_mb: int, job_root: Path, logger: lo
                 if not processes:
                     logger.warning(f"OOM monitor: real usage {current_mb}MB over threshold, but no real get_organelle_from_reads process found -- likely transient (SPAdes/bowtie2 child spike); skipping this cycle.")
                 else:
+                    # Real gap found live, 2026-11-11: whether this
+                    # sample was genuinely alone at the moment of ITS
+                    # OWN kill is the one thing that actually proves
+                    # exceeds_machine_capacity -- not just that its own
+                    # reservation record says "ran_alone" (that only
+                    # blocks NEW dispatches, never pauses jobs already
+                    # in flight before this sample's trial began). This
+                    # process census, taken right now, is the real
+                    # ground truth: more than one real
+                    # get_organelle_from_reads process means this kill
+                    # proves nothing about this sample's own real need.
+                    genuinely_alone = len(processes) == 1
                     pid, rss_mb, sample_id = max(processes, key = lambda item: item[1])
                     # Killing the whole process GROUP, not just this one
                     # pid: BaseTool.run() isolates the wrapped command
@@ -163,8 +175,10 @@ def run_monitor(cgroup_path: Path, threshold_mb: int, job_root: Path, logger: lo
                         except ProcessLookupError:
                             logger.info(f"OOM monitor: process group {pgid} already exited before the kill landed.")
                     if sample_id is not None:
-                        new_record = record_oom_kill(sample_id, float(rss_mb), state_path, total_slots)
-                        logger.warning(f"OOM monitor: recorded real kill for {sample_id}: {new_record}.")
+                        new_record = record_oom_kill(sample_id, float(rss_mb), state_path, total_slots,
+                                                     genuinely_alone = genuinely_alone)
+                        logger.warning(f"OOM monitor: recorded real kill for {sample_id} "
+                                       f"(genuinely_alone={genuinely_alone}): {new_record}.")
                     else:
                         logger.error(f"OOM monitor: killed pid {pid} but could not parse its sample id from cmdline -- no reservation recorded; this sample will retry at the normal, un-escalated share next time.")
         except Exception as e:  # noqa: BLE001 -- this process must never die from one bad cycle

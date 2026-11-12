@@ -215,13 +215,39 @@ def test_record_oom_kill_caps_at_running_alone_when_requirement_exceeds_total_sl
 
 def test_record_oom_kill_marks_exceeds_capacity_when_killed_again_after_running_alone(tmp_path: Path) -> None:
     """The real, definitive terminal case: already escalated to the
-    whole machine and STILL killed -- proven to exceed real capacity,
-    not escalated further (Emil's explicit call, 2026-11-07)."""
+    whole machine and STILL killed genuinely alone -- proven to exceed
+    real capacity, not escalated further (Emil's explicit call,
+    2026-11-07)."""
     state_path = tmp_path / "oom_escalation_state.json"
     resources.record_oom_kill("doomed_sample", peak_mb = 90000.0, state_path = state_path, total_slots = 10, slot_mb = 8192)
     record = resources.record_oom_kill("doomed_sample", peak_mb = 85000.0, state_path = state_path, total_slots = 10, slot_mb = 8192)
     assert record["exceeds_machine_capacity"] is True
     assert record["kills"] == 2
+
+def test_record_oom_kill_does_not_confirm_exceeds_capacity_when_not_genuinely_alone(tmp_path: Path) -> None:
+    """Real gap found live 2026-11-11: 7 real samples were marked
+    exceeds_machine_capacity with real peaks of 262MB-25.6GB (nowhere
+    near this machine's own real capacity), every one killed while
+    other real GetOrganelle dispatches were still genuinely running --
+    "ran_alone" only ever blocked NEW dispatches, it never paused jobs
+    already in flight before this sample's own trial began. A kill
+    while ran_alone but not genuinely alone must still count (forward
+    progress stays intact) without claiming a crowded pool proved
+    anything about this sample's own real need."""
+    state_path = tmp_path / "oom_escalation_state.json"
+    resources.record_oom_kill("crowded_sample", peak_mb = 90000.0, state_path = state_path, total_slots = 10, slot_mb = 8192)
+    record = resources.record_oom_kill("crowded_sample", peak_mb = 262.0, state_path = state_path, total_slots = 10,
+                                       slot_mb = 8192, genuinely_alone = False)
+    assert record["exceeds_machine_capacity"] is False
+    assert record["ran_alone"] is True
+    assert record["kills"] == 2
+    assert record["reserved_slots"] == 10
+
+    # A LATER kill that genuinely was alone still proves it for real.
+    record = resources.record_oom_kill("crowded_sample", peak_mb = 91000.0, state_path = state_path, total_slots = 10,
+                                       slot_mb = 8192, genuinely_alone = True)
+    assert record["exceeds_machine_capacity"] is True
+    assert record["kills"] == 3
 
 def test_record_oom_kill_converges_to_ran_alone_even_with_a_modest_peak_every_time(tmp_path: Path) -> None:
     """Real gap found live 2026-11-09: six real samples were each
