@@ -71,7 +71,8 @@ def test_successful_circular_assembly_writes_status_json(tmp_path: Path, monkeyp
 
     assert run_getorganelle_assembly.main() == 0
     status = json.loads((assembly_dir / f"{sample_id}.assembly_status.json").read_text())
-    assert status == {"sample_id": sample_id, "status": "circular", "success": True}
+    assert status == {"sample_id": sample_id, "status": "circular", "success": True,
+                      "candidate_count": 1, "killed_by_signal": None}
 
 def test_successful_but_fragmented_assembly_is_still_exit_zero(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """GetOrganelle completing without error but without a complete
@@ -113,7 +114,8 @@ def test_assembly_with_no_native_candidate_is_classified_missing_and_fails(tmp_p
 
     assert run_getorganelle_assembly.main() == 1
     status = json.loads((assembly_dir / f"{sample_id}.assembly_status.json").read_text())
-    assert status == {"sample_id": sample_id, "status": "missing", "success": False}
+    assert status == {"sample_id": sample_id, "status": "missing", "success": False,
+                      "candidate_count": 0, "killed_by_signal": None}
 
 def test_interrupted_run_never_records_circular_even_with_a_complete_checkpoint_present(
         tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -224,7 +226,8 @@ def test_a_re_run_against_a_genuinely_incomplete_output_dir_still_runs(tmp_path:
 
     assert run_getorganelle_assembly.main() == 0
     status = json.loads((assembly_dir / f"{sample_id}.assembly_status.json").read_text())
-    assert status == {"sample_id": sample_id, "status": "circular", "success": True}
+    assert status == {"sample_id": sample_id, "status": "circular", "success": True,
+                      "candidate_count": 1, "killed_by_signal": None}
 
 def test_seeded_config_passes_seed_file_through_to_the_runner(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     sample_id = "SAMPLE_06"

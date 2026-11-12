@@ -85,7 +85,8 @@ def test_successful_rescue_writes_status_with_profile_name(tmp_path: Path, monke
     status = json.loads((output_dir / f"{sample_id}.assembly_status.json").read_text())
     assert status == {"sample_id": sample_id, "status": "circular", "success": True,
                        "profile_name": "reduced_coverage", "seed_file": None,
-                       "kmer": "21,45,65,85,105", "target_coverage": 100.0, "max_rounds": None}
+                       "kmer": "21,45,65,85,105", "target_coverage": 100.0, "max_rounds": None,
+                       "candidate_count": 1, "killed_by_signal": None}
 
 def test_tool_options_carry_the_profile_tuning_through(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     sample_id = "SAMPLE_02"

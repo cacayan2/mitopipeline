@@ -16,7 +16,7 @@ from mitopipeline.utils.rescue.trigger import decide_rescue
 
 CONFIG = {"trigger_statuses": ["fragmented"], "getorganelle_profiles": [None, None, None]}
 
-def _simulate_sequence(statuses: list[str]) -> list:
+def _simulate_sequence(statuses: list[str], recruitment: str = "full_pool") -> list:
     """
     Drives decide_rescue() across a simulated sequence of reassembly
     outcomes, one call per attempt -- statuses[i] is what the PREVIOUS
@@ -24,15 +24,24 @@ def _simulate_sequence(statuses: list[str]) -> list:
     Stops calling decide_rescue() the moment a decision is terminal,
     exactly as Snakemake would stop requesting another attempt.
 
+    recruitment defaults to "full_pool", not decide_rescue()'s own
+    "candidate_mapped" default -- these tests exercise the general
+    trigger_statuses/exhaustion chain, not the narrower, later-added
+    candidate_mapped-specific "no candidate to map against" block (see
+    trigger.py's own _CANDIDATE_REQUIRED_RECRUITMENT), which would
+    otherwise short-circuit "missing" before trigger_statuses is ever
+    consulted.
+
     Args:
         statuses (list[str]): The assembly status feeding each successive decide_rescue() call.
+        recruitment (str): The recruitment strategy to simulate for every call. Defaults to "full_pool".
 
     Returns:
         list: The decisions actually made, in order, up to and including the first terminal one.
     """
     decisions = []
     for attempt, status in enumerate(statuses):
-        decision = decide_rescue(status, attempt, CONFIG)
+        decision = decide_rescue(status, attempt, CONFIG, recruitment = recruitment)
         decisions.append(decision)
         if decision.terminal:
             break
@@ -80,7 +89,8 @@ def test_missing_configured_as_a_trigger_keeps_retrying_through_a_failure() -> N
     # same as "fragmented" -- rescue keeps retrying rather than giving
     # up on the first tool failure, up to the same profile-count bound.
     config = {"trigger_statuses": ["fragmented", "missing"], "getorganelle_profiles": [None, None]}
-    decisions = [decide_rescue(s, i, config) for i, s in enumerate(["fragmented", "missing", "fragmented"])]
+    decisions = [decide_rescue(s, i, config, recruitment = "full_pool")
+                for i, s in enumerate(["fragmented", "missing", "fragmented"])]
     assert [d.should_rescue for d in decisions] == [True, True, False]
     assert decisions[-1].terminal is True
     assert "exhausted" in decisions[-1].reason
