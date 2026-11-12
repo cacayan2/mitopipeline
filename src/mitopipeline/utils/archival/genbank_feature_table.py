@@ -147,18 +147,65 @@ def _location_segments(start: int, end: int, strand: str | None, genome_length: 
 
 
 def _write_feature(lines: list[str], feature_key: str, start: int, end: int, strand: str | None,
-                    genome_length: int, qualifiers: list[tuple[str, str]]) -> None:
-    """Appends one feature's real location line(s) plus its qualifier lines to lines, in real 5-column .tbl format."""
+                    genome_length: int, qualifiers: list[tuple[str, str]], partial_3prime: bool = False) -> None:
+    """
+    Appends one feature's real location line(s) plus its qualifier
+    lines to lines, in real 5-column .tbl format.
+
+    partial_3prime marks this feature's real 3' end as incomplete,
+    NCBI's own ">" location convention -- the one real, documented
+    case being a vertebrate mitochondrial CDS whose stop codon is
+    completed by post-transcriptional polyadenylation rather than
+    present in the genomic sequence itself (see
+    _is_cds_terminal_stop_complete). Always applies to the SECOND
+    column of the LAST location line regardless of strand or
+    origin-crossing: _location_segments always returns that column as
+    this feature's own real 3' end in every case (plus-strand end,
+    minus-strand start, and both wrapped equivalents).
+    """
     segments = _location_segments(start, end, strand, genome_length)
     for index, (col1, col2) in enumerate(segments):
         key = feature_key if index == 0 else ""
-        lines.append(f"{col1}\t{col2}\t{key}")
+        is_last = index == len(segments) - 1
+        col2_text = f">{col2}" if (partial_3prime and is_last) else str(col2)
+        lines.append(f"{col1}\t{col2_text}\t{key}")
     for qualifier_key, qualifier_value in qualifiers:
         lines.append(f"\t\t\t{qualifier_key}\t{qualifier_value}")
 
 
+def _is_cds_terminal_stop_complete(sequence: str, start: int, end: int, strand: str | None,
+                                    genome_length: int) -> bool:
+    """
+    Whether this CDS's own final codon, translated under the real
+    vertebrate mitochondrial genetic code, is an actual stop --
+    False for the well-documented incomplete-terminal-codon case
+    (e.g. a genomic "T"/"TA" completed to a real stop by post-
+    transcriptional polyadenylation), which must be marked partial
+    at the 3' end in the feature table rather than claimed complete
+    (see _write_feature's partial_3prime). This checks ONLY the
+    final codon -- a real premature internal stop is check_cds_
+    translations' own, separate concern.
+
+    Args:
+        sequence (str): The assembled genome's own real sequence (uppercase).
+        start (int): The CDS's real 1-based start, as MITOS2 reports it.
+        end (int): The CDS's real 1-based end, as MITOS2 reports it.
+        strand (str | None): "+" or "-", or None (treated as "+").
+        genome_length (int): The assembled sequence's own real length.
+
+    Returns:
+        bool: True if the final codon is a real stop under table 2.
+    """
+    nucleotides = _extract_cds_nucleotides(sequence, start, end, strand, genome_length)
+    usable_length = len(nucleotides) - (len(nucleotides) % 3)
+    if usable_length < 3:
+        return False
+    final_codon = nucleotides[usable_length - 3:usable_length]
+    return str(Seq(final_codon).translate(table = VERTEBRATE_MITOCHONDRIAL_GENETIC_CODE)) == "*"
+
+
 def build_feature_table(sample_id: str, seqid: str, genes: list[GeneFeature], trnas: list[GeneFeature],
-                         rrnas: list[GeneFeature], genome_length: int, organism: str,
+                         rrnas: list[GeneFeature], genome_length: int, organism: str, sequence: str,
                          logger: Logger | None = None) -> tuple[str, list[str]]:
     """
     Builds one sample's real NCBI 5-column feature table text from
@@ -172,6 +219,17 @@ def build_feature_table(sample_id: str, seqid: str, genes: list[GeneFeature], tr
     RRNA_PRODUCTS or TRNA_AMINO_ACID_CODES is skipped with a logged
     warning rather than guessed at.
 
+    Real bug found live, 2026-11-12: 35 of 56 real samples checked
+    failed table2asn with SEQ_FEAT.NoStop -- every one a genuine
+    vertebrate-mitochondrial incomplete terminal codon (completed by
+    post-transcriptional polyadenylation, not an annotation defect;
+    check_cds_translations already documented this exact biology but
+    never told the .tbl writer about it). Each CDS's own real
+    terminal codon is now checked (_is_cds_terminal_stop_complete)
+    and marked partial at the 3' end (_write_feature's
+    partial_3prime) when it isn't a real stop, the standard NCBI fix
+    for this well-documented case.
+
     Args:
         sample_id (str): The sample id (only used for logging/warnings).
         seqid (str): The real sequence id the ">Feature" header names.
@@ -180,6 +238,7 @@ def build_feature_table(sample_id: str, seqid: str, genes: list[GeneFeature], tr
         rrnas (list[GeneFeature]): MITOS2's own "rRNA" features.
         genome_length (int): The assembled sequence's own real length.
         organism (str): The real organism name for the source feature.
+        sequence (str): The assembled genome's own real sequence (uppercase) -- needed to check each CDS's own real terminal codon.
         logger (Logger | None): Logger to use. Defaults to None.
 
     Returns:
@@ -202,10 +261,12 @@ def build_feature_table(sample_id: str, seqid: str, genes: list[GeneFeature], tr
                 if logger is not None: logger.warning(warnings[-1])
                 continue
             symbol, product = product_entry
+            stop_complete = _is_cds_terminal_stop_complete(sequence, gene.start, gene.end, gene.strand, genome_length)
             _write_feature(lines, "gene", gene.start, gene.end, gene.strand, genome_length, [("gene", symbol)])
             _write_feature(lines, "CDS", gene.start, gene.end, gene.strand, genome_length,
                             [("gene", symbol), ("product", product), ("codon_start", "1"),
-                             ("transl_table", str(VERTEBRATE_MITOCHONDRIAL_GENETIC_CODE))])
+                             ("transl_table", str(VERTEBRATE_MITOCHONDRIAL_GENETIC_CODE))],
+                            partial_3prime = not stop_complete)
         elif category == "rRNA":
             product_entry = RRNA_PRODUCTS.get(key)
             if product_entry is None:
@@ -320,12 +381,14 @@ def build_sample_feature_table(sample_id: str, gff_path: str | Path, genome_fast
     # sample_id as its own defline; the ">Feature" line in the .tbl
     # must match that, not the raw assembly FASTA's own header.
     seqid = sample_id
+    sequence = str(records[0].seq).upper()
 
     genes = parse_mitos_gff(gff_path, logger = logger, feature_type = "gene")
     trnas = parse_mitos_gff(gff_path, logger = logger, feature_type = "tRNA")
     rrnas = parse_mitos_gff(gff_path, logger = logger, feature_type = "rRNA")
 
-    table_text, warnings = build_feature_table(sample_id, seqid, genes, trnas, rrnas, genome_length, organism, logger)
+    table_text, warnings = build_feature_table(sample_id, seqid, genes, trnas, rrnas, genome_length, organism,
+                                               sequence, logger)
     warnings += check_cds_translations(genes, genome_fasta, genome_length, logger)
 
     output_tbl_path = Path(output_tbl_path)

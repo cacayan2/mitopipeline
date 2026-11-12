@@ -45,8 +45,11 @@ def test_trna_product_rejects_unrecognized_code() -> None:
 
 def test_build_feature_table_writes_source_gene_and_cds_lines() -> None:
     genes = [_gene("cox2", 1, 600)]
+    # A real, complete stop (TAA) at the CDS's own final codon
+    # (positions 598-600) -- the ordinary case, no partial marking.
+    sequence = "A" * 597 + "TAA" + "A" * 400
     text, warnings = build_feature_table("sample1", "seq1", genes, [], [], genome_length = 1000,
-                                           organism = "Danio rerio")
+                                           organism = "Danio rerio", sequence = sequence)
     assert warnings == []
     lines = text.splitlines()
     assert lines[0] == ">Feature seq1"
@@ -64,7 +67,7 @@ def test_build_feature_table_writes_source_gene_and_cds_lines() -> None:
 def test_build_feature_table_writes_trna_and_rrna_lines() -> None:
     text, warnings = build_feature_table(
         "sample1", "seq1", [], [_gene("trnG", 100, 169)], [_gene("rrnS", 200, 1149)],
-        genome_length = 2000, organism = "Danio rerio",
+        genome_length = 2000, organism = "Danio rerio", sequence = "A" * 2000,
     )
     assert warnings == []
     assert "100\t169\ttRNA" in text.splitlines()
@@ -78,7 +81,7 @@ def test_minus_strand_feature_writes_reversed_location_columns() -> None:
     # regardless of strand -- the strand column alone carries the
     # biological direction, matching real MITOS2 output.
     text, _ = build_feature_table("sample1", "seq1", [_gene("nad6", 100, 500, strand = "-")], [], [],
-                                    genome_length = 1000, organism = "Danio rerio")
+                                    genome_length = 1000, organism = "Danio rerio", sequence = "A" * 1000)
     # Minus strand is encoded by writing the larger coordinate first --
     # never a separate qualifier.
     assert "500\t100\tgene" in text.splitlines()
@@ -90,7 +93,8 @@ def test_origin_crossing_feature_splits_into_two_location_lines() -> None:
     # convention (confirmed against circular_map.py's identical
     # handling), never start > end.
     text, warnings = build_feature_table("sample1", "seq1", [], [_gene("trnQ", 16560, 16620)], [],
-                                           genome_length = 16596, organism = "Danio rerio")
+                                           genome_length = 16596, organism = "Danio rerio",
+                                           sequence = "A" * 16596)
     assert warnings == []
     lines = text.splitlines()
     assert "16560\t16596\ttRNA" in lines
@@ -99,10 +103,48 @@ def test_origin_crossing_feature_splits_into_two_location_lines() -> None:
 
 def test_unrecognized_gene_skipped_with_warning() -> None:
     text, warnings = build_feature_table("sample1", "seq1", [_gene("mystery_gene", 1, 100)], [], [],
-                                           genome_length = 1000, organism = "Danio rerio")
+                                           genome_length = 1000, organism = "Danio rerio", sequence = "A" * 1000)
     assert len(warnings) == 1
     assert "mystery_gene" in warnings[0]
     assert "1\t100\tgene" not in text.splitlines()
+
+
+def test_cds_with_a_real_complete_stop_codon_is_not_marked_partial() -> None:
+    genes = [_gene("cox1", 1, 300)]
+    sequence = "A" * 297 + "TAA" + "A" * 100
+    text, _ = build_feature_table("sample1", "seq1", genes, [], [], genome_length = 400,
+                                    organism = "Danio rerio", sequence = sequence)
+    assert "1\t300\tCDS" in text.splitlines()
+    assert "1\t>300\tCDS" not in text.splitlines()
+
+
+def test_cds_with_a_real_incomplete_terminal_codon_is_marked_partial_at_the_3prime_end() -> None:
+    # Real bug found live, 2026-11-12: a genomic "T"/"TA" completed to
+    # a real stop by post-transcriptional polyadenylation is real,
+    # documented vertebrate-mitochondrial biology, not a defect --
+    # table2asn correctly rejects an UNMARKED claim that this is a
+    # complete stop (SEQ_FEAT.NoStop). The fix marks the CDS's own
+    # real 3' end partial instead of silently claiming completeness.
+    genes = [_gene("cox1", 1, 300)]
+    sequence = "A" * 297 + "AAT" + "A" * 100  # final codon AAT (Asn) -- not a real stop under table 2
+    text, _ = build_feature_table("sample1", "seq1", genes, [], [], genome_length = 400,
+                                    organism = "Danio rerio", sequence = sequence)
+    assert "1\t>300\tCDS" in text.splitlines()
+
+
+def test_cds_with_an_incomplete_terminal_codon_on_minus_strand_marks_the_real_3prime_column() -> None:
+    # Minus strand writes (end, start) -- the real 3' end is the
+    # SMALLER coordinate (start), which is what must carry the ">".
+    genes = [_gene("cox1", 101, 400, strand = "-")]
+    # The CDS's own coding-strand sequence is the reverse complement
+    # of sequence[100:400] (0-based); its own final codon is the
+    # reverse complement of the genomic bases at 1-based positions
+    # 101-103 -- placing "ATT" there (revcomp "AAT") is not a real
+    # stop under table 2.
+    sequence = "A" * 100 + "ATT" + "A" * 397
+    text, _ = build_feature_table("sample1", "seq1", genes, [], [], genome_length = 500,
+                                    organism = "Danio rerio", sequence = sequence)
+    assert "400\t>101\tCDS" in text.splitlines()
 
 
 def test_check_cds_translations_passes_a_clean_orf(tmp_path: Path) -> None:

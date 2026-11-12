@@ -64,7 +64,11 @@ def test_full_submission_folder_builds_a_real_feature_table(tmp_path: Path) -> N
 
     assert record["review_status"] == "READY"
     assert Path(record["annotation_tbl"]).is_file()
-    assert "1\t600\tCDS" in Path(record["annotation_tbl"]).read_text().splitlines()
+    # This fixture's repeating "ACGT" filler's own final codon (CGT,
+    # Arg) genuinely isn't a stop under table 2 -- correctly marked
+    # partial at the 3' end (see test_genbank_feature_table.py's own
+    # dedicated coverage for this real behavior), not a real defect.
+    assert "1\t>600\tCDS" in Path(record["annotation_tbl"]).read_text().splitlines()
     assert record["feature_table_warnings"] == ""
 
 
