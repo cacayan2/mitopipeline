@@ -311,7 +311,15 @@ def build_sample_feature_table(sample_id: str, gff_path: str | Path, genome_fast
     if not records:
         raise ValueError(f"Genome FASTA contains no records: {genome_fasta}.")
     genome_length = len(str(records[0].seq))
-    seqid = records[0].id
+    # Real bug found live, 2026-11-11: the assembled genome FASTA's own
+    # header is whatever the assembler wrote, not a GenBank-safe id --
+    # for a circular genome whose graph revisits a repeat, GetOrganelle
+    # names the record after the literal path it walked (e.g.
+    # "37+,637+,193+,637+...(circular)"), which table2asn rejects as a
+    # malformed ID. The already-NCBI-tagged .fsa file correctly uses
+    # sample_id as its own defline; the ">Feature" line in the .tbl
+    # must match that, not the raw assembly FASTA's own header.
+    seqid = sample_id
 
     genes = parse_mitos_gff(gff_path, logger = logger, feature_type = "gene")
     trnas = parse_mitos_gff(gff_path, logger = logger, feature_type = "tRNA")

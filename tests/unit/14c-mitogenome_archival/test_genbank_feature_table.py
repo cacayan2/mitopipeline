@@ -139,7 +139,26 @@ def test_build_sample_feature_table_writes_a_real_file(tmp_path: Path) -> None:
 
     assert output.is_file()
     text = output.read_text()
-    assert ">Feature seq1" in text
+    assert ">Feature sample1" in text
     assert "1\t600\tCDS" in text.splitlines()
     assert "601\t670\ttRNA" in text.splitlines()
     assert warnings == []
+
+
+def test_build_sample_feature_table_uses_sample_id_not_the_assembly_fastas_own_header(tmp_path: Path) -> None:
+    gff = tmp_path / "result.gff"
+    gff.write_text("##gff-version 3\n"
+                    "seq1\tmitos\tgene\t1\t9\t.\t+\t.\tID=gene_cox2;Name=cox2;gene_id=cox2\n")
+    fasta = tmp_path / "genome.fasta"
+    # Real header found live, 2026-11-11: a circular genome whose graph
+    # revisits a repeat gets named by GetOrganelle after the literal
+    # path walked, not a clean id -- table2asn rejects this outright as
+    # a malformed id, so the ">Feature" line must use sample_id instead.
+    fasta.write_text(">37+,637+,193+,637+(circular)\nATGCCCCCCTAA\n")
+    output = tmp_path / "sample1.tbl"
+
+    build_sample_feature_table("sample1", gff, fasta, "Danio rerio", output)
+
+    text = output.read_text()
+    assert ">Feature sample1" in text
+    assert "37+,637+" not in text
