@@ -218,6 +218,21 @@ def main() -> int:
     )
     context = f"{{{args.sample_id}}}"
 
+    # A hard kill mid-chain (e.g. a forced pipeline stop) can't run this
+    # script's own try/except cleanup below -- unlike GetOrganelle's
+    # quarantine_existing_output_dir() (forced by real GetOrganelle
+    # refusing to reuse an existing "-o" directory), nothing here
+    # depends on these paths being absent, so a dead invocation's own
+    # partial .sam/.bam/.bai would otherwise sit as orphaned disk use
+    # until some later invocation happens to finish cleanly and run
+    # _cleanup_mapping_scratch() itself. Clearing them unconditionally
+    # before this attempt starts is a no-op when nothing stale exists
+    # (unlink's own missing_ok=True) and never loses real data -- these
+    # three files are pure scratch, never a declared Snakemake output
+    # and never read by anything downstream (see _cleanup_mapping_scratch's
+    # own docstring).
+    _cleanup_mapping_scratch(_mapping_scratch_paths(args.output_dir, args.sample_id), logger, context)
+
     config = {
         "trigger_statuses": [s.strip() for s in args.trigger_statuses.split(",") if s.strip()],
         # decide_rescue only needs the COUNT of configured profiles, not
