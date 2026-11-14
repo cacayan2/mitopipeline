@@ -384,6 +384,37 @@ def test_wait_for_dispatch_admission_waits_out_another_samples_live_exclusive_tr
                                           exclusive_lock_path = lock_path, poll_seconds = 0, sleep_fn = _fake_sleep)
     assert sleep_calls["n"] >= 2
 
+def test_wait_for_dispatch_admission_ignores_a_crowded_pool_by_default(monkeypatch: pytest.MonkeyPatch) -> None:
+    """require_pool_genuinely_empty defaults to False -- an ordinary
+    (non-exclusive) dispatch must never be held back by other real
+    GetOrganelle activity, only by real RAM and another sample's own
+    exclusive trial."""
+    monkeypatch.setattr(resources, "read_available_ram_mb", lambda: 10000)
+    monkeypatch.setattr(resources, "real_getorganelle_processes", lambda: [(123, 5000, "someone_else")])
+    calls = []
+    resources.wait_for_dispatch_admission(logger = _FakeLogger(), floor_mb = 8192,
+                                          sleep_fn = lambda seconds: calls.append(seconds))
+    assert calls == []
+
+def test_wait_for_dispatch_admission_waits_for_a_genuinely_empty_pool_when_required(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Real gap found live, 2026-11-14: a sample that earned the whole
+    machine's reservation would still claim its exclusive trial and
+    relaunch the instant real RAM looked free, even while an ordinary,
+    already-admitted dispatch was genuinely still running -- confirmed
+    live via `lythrurus_fumeus_run_may2026_106` retrying in place 39
+    times over 13+ hours, the OOM monitor's own log recording
+    genuinely_alone=False on every single kill. require_pool_genuinely_empty
+    must hold the caller back until a real process census comes back
+    empty, not just until RAM/the other-sample lock check clear."""
+    monkeypatch.setattr(resources, "read_available_ram_mb", lambda: 10000)
+    readings = iter([[(123, 5000, "someone_else")], [(123, 5000, "someone_else")], []])
+    monkeypatch.setattr(resources, "real_getorganelle_processes", lambda: next(readings))
+    sleeps = []
+    resources.wait_for_dispatch_admission(logger = _FakeLogger(), floor_mb = 8192,
+                                          require_pool_genuinely_empty = True,
+                                          sleep_fn = lambda seconds: sleeps.append(seconds))
+    assert len(sleeps) == 2
+
 def _write_cgroup_files(cgroup_dir: Path, current_bytes: int, inactive_file_bytes: int) -> None:
     cgroup_dir.mkdir(parents = True, exist_ok = True)
     (cgroup_dir / "memory.current").write_text(str(current_bytes))

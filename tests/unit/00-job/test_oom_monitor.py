@@ -4,11 +4,14 @@ test_oom_monitor.py
 Unit tests for launcher.oom_monitor -- specifically the sample-id
 extraction regex, the one piece of real, novel parsing logic this
 module depends on (everything else is thin /proc reads already
-covered elsewhere).
+covered elsewhere). The regex itself now lives in utils.system.resources
+(shared with GetOrganelleRunner's own pool-emptiness check, see
+wait_for_dispatch_admission's require_pool_genuinely_empty) -- this
+still tests it via its real, only consumer-facing name.
 """
 
 # Imports
-from mitopipeline.launcher.oom_monitor import _SAMPLE_ID_PATTERN
+from mitopipeline.utils.system.resources import _REAL_GETORGANELLE_SAMPLE_ID_PATTERN as _SAMPLE_ID_PATTERN
 
 
 def test_sample_id_pattern_matches_a_real_primary_assembly_cmdline() -> None:

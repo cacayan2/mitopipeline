@@ -21,6 +21,7 @@ divided fairly across the jobs currently allowed to run.
 from __future__ import annotations
 import json
 import os
+import re
 import time
 from logging import Logger
 from pathlib import Path
@@ -95,6 +96,60 @@ def read_available_ram_mb() -> int | None:
     doesn't masquerade as unavailable. None if undetectable.
     """
     return read_meminfo_mb("MemAvailable")
+
+# A sample's own real output directory appears verbatim in its
+# get_organelle_from_reads.py invocation's own "-o" argument -- e.g.
+# ".../04d-assembly/<sample>/primary" or
+# ".../07-assembly_rescue/<sample>/attempt_N/reassembly" -- confirmed
+# directly against real dispatched commands, not guessed. Shared with
+# launcher.oom_monitor, which used to keep its own private copy of
+# this same pattern/function pair -- moved here so GetOrganelleRunner
+# can use the identical real process census the monitor itself uses
+# (see wait_for_dispatch_admission's require_pool_genuinely_empty).
+_REAL_GETORGANELLE_SAMPLE_ID_PATTERN = re.compile(r"/(?:04d-assembly|07-assembly_rescue)/([^/]+)/")
+
+def real_getorganelle_processes() -> list[tuple[int, int, str | None]]:
+    """
+    Every currently-running get_organelle_from_reads.py process on
+    this machine, with its real RSS and the sample id parsed from its
+    own real "-o" argument. A direct /proc census -- never a guess,
+    never scoped to this caller's own sample.
+
+    Returns:
+        list[tuple[int, int, str | None]]: (pid, rss_mb, sample_id) for each real process found; sample_id is None if it couldn't be parsed.
+    """
+    results = []
+    proc_dir = Path("/proc")
+    if not proc_dir.is_dir():
+        return results
+    for entry in proc_dir.iterdir():
+        if not entry.name.isdigit():
+            continue
+        pid = int(entry.name)
+        try:
+            cmdline = (entry / "cmdline").read_bytes().decode("utf-8", errors = "replace")
+        except OSError:
+            continue
+        if "get_organelle_from_reads" not in cmdline:
+            continue
+        match = _REAL_GETORGANELLE_SAMPLE_ID_PATTERN.search(cmdline.replace("\x00", " "))
+        sample_id = match.group(1) if match else None
+        rss_mb = _read_getorganelle_rss_mb(pid)
+        if rss_mb is not None:
+            results.append((pid, rss_mb, sample_id))
+    return results
+
+def _read_getorganelle_rss_mb(pid: int) -> int | None:
+    """This pid's real current resident memory, in MB, or None if unreadable (already exited, permission)."""
+    try:
+        with open(f"/proc/{pid}/status", "r", encoding = "utf-8") as handle:
+            for line in handle:
+                if line.startswith("VmRSS:"):
+                    kb = int(line.split()[1])
+                    return kb // 1024
+    except (OSError, ValueError, IndexError):
+        pass
+    return None
 
 def recommended_concurrent_slots(min_mb_per_job: int = 8192, reserved_fraction: float = 0.15,
                                  max_slots: int | None = None, cpu_count_override: int | None = None,
@@ -305,7 +360,8 @@ def dispatch_admission_ready(floor_mb: int = GETORGANELLE_ADMISSION_FLOOR_MB) ->
 def wait_for_dispatch_admission(logger: Logger, floor_mb: int = GETORGANELLE_ADMISSION_FLOOR_MB,
                                 poll_seconds: float = 5.0,
                                 sleep_fn: Callable[[float], None] = time.sleep,
-                                sample_id: str | None = None, exclusive_lock_path: Path | None = None) -> None:
+                                sample_id: str | None = None, exclusive_lock_path: Path | None = None,
+                                require_pool_genuinely_empty: bool = False) -> None:
     """
     Blocks (re-polling real system state every poll_seconds) until
     dispatch_admission_ready confirms it's genuinely safe for a new
@@ -347,6 +403,7 @@ def wait_for_dispatch_admission(logger: Logger, floor_mb: int = GETORGANELLE_ADM
         sleep_fn (Callable[[float], None]): The sleep implementation to call between polls -- overridable for tests. Defaults to time.sleep.
         sample_id (str | None): This dispatch's own sample id, so it never blocks on its own exclusive trial. None skips the exclusive-trial check entirely (e.g. a caller that doesn't track one).
         exclusive_lock_path (Path | None): See exclusive_trial_blocks_others. None skips the check.
+        require_pool_genuinely_empty (bool): When True, also waits until zero real get_organelle_from_reads.py processes exist anywhere (see real_getorganelle_processes) before returning -- for a caller about to CLAIM an exclusive trial, not just hold the admission floor for one. Real gap found live, 2026-11-14: a sample that had already escalated to reserved_slots==total_slots would call acquire_exclusive_trial() and relaunch as soon as real RAM looked free and no OTHER sample's lock blocked it -- but nothing checked whether some ordinary (non-escalated) dispatch, admitted earlier and still genuinely running, was ALSO alive right now. Confirmed live: `lythrurus_fumeus_run_may2026_106` retried in place 39 times over 13+ hours, re-launching into a real crowd every single time (the OOM monitor's own log recorded genuinely_alone=False on every one of those kills) -- it could never win a trial it never actually ran alone for, and could never prove exceeds_machine_capacity either, so nothing would ever have stopped it. This flag closes that gap: the exclusivity claim now waits for a real, momentarily-empty pool before it's made, instead of claiming it in name only.
 
     Returns:
         None
@@ -355,12 +412,17 @@ def wait_for_dispatch_admission(logger: Logger, floor_mb: int = GETORGANELLE_ADM
     while True:
         blocked_by_other = (sample_id is not None and exclusive_lock_path is not None
                             and exclusive_trial_blocks_others(sample_id, exclusive_lock_path))
+        blocked_by_crowd = require_pool_genuinely_empty and len(real_getorganelle_processes()) > 0
         ready = dispatch_admission_ready(floor_mb)
-        if not blocked_by_other and (ready is None or ready):
+        if not blocked_by_other and not blocked_by_crowd and (ready is None or ready):
             return
         if not logged_wait:
-            reason = "another sample's own genuine solo trial is in progress" if blocked_by_other \
-                else f"real headroom before starting (need ~{floor_mb}MB free)"
+            if blocked_by_crowd:
+                reason = "the pool to be genuinely empty (this sample has earned an exclusive trial and must not claim it into a real crowd)"
+            elif blocked_by_other:
+                reason = "another sample's own genuine solo trial is in progress"
+            else:
+                reason = f"real headroom before starting (need ~{floor_mb}MB free)"
             logger.info(f"Dispatch admission: waiting for {reason}.")
             logged_wait = True
         sleep_fn(poll_seconds)

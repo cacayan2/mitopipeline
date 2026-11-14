@@ -283,6 +283,19 @@ class GetOrganelleRunner(BaseTool):
                 self.logger.info(f"{{{sample.sample_id}}} Escalated reservation ({reserved_slots}/{total_slots} "
                                  f"real slots): scaling real CPU threads to {self.threads}.")
             if reserved_slots >= total_slots:
+                # Don't claim exclusivity into a real crowd: this
+                # sample has earned the whole machine, but nothing
+                # upstream of this point has confirmed the pool is
+                # actually empty of other real GetOrganelle work right
+                # now -- without this wait, acquire_exclusive_trial()
+                # below would still fire immediately once real RAM and
+                # the OTHER-sample lock check both looked clear, even
+                # while some ordinary (already-admitted, still
+                # genuinely running) dispatch keeps the real process
+                # census above 1. Confirmed live, 2026-11-14 (see
+                # wait_for_dispatch_admission's own docstring).
+                wait_for_dispatch_admission(logger = self.logger, floor_mb = _admission_floor_mb(),
+                                            require_pool_genuinely_empty = True)
                 acquire_exclusive_trial(sample.sample_id, lock_path)
 
         super().__init__(tool_name = tool_name, working_dir = working_dir, logger = logger, metrics_dir = metrics_dir,

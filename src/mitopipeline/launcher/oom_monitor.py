@@ -22,13 +22,13 @@ from __future__ import annotations
 import argparse
 import logging
 import os
-import re
 import signal
 import time
 from pathlib import Path
 from mitopipeline.utils.system.resources import (
     oom_state_path,
     read_cgroup_working_set_bytes,
+    real_getorganelle_processes,
     recommended_concurrent_slots,
     record_oom_kill,
 )
@@ -37,63 +37,6 @@ from mitopipeline.utils.system.resources import (
 # memory growth plays out over minutes (confirmed live, 2026-11-06/07),
 # so this is far more frequent than it needs to be to react in time.
 _POLL_SECONDS = 5.0
-
-# A sample's own real output directory appears verbatim in its
-# get_organelle_from_reads.py invocation's own "-o" argument -- e.g.
-# ".../04d-assembly/<sample>/primary" or
-# ".../07-assembly_rescue/<sample>/attempt_N/reassembly" -- confirmed
-# directly against real dispatched commands, not guessed. The sample
-# id is always the path segment immediately after either stage
-# folder, in both real shapes -- no need to anchor on what follows it.
-# Capturing the sample id this way (rather than, say, --sample-id)
-# works because it's read from the REAL memory-hogging process itself
-# (get_organelle_from_reads.py), not an ancestor wrapper script.
-_SAMPLE_ID_PATTERN = re.compile(r"/(?:04d-assembly|07-assembly_rescue)/([^/]+)/")
-
-
-def _real_getorganelle_processes() -> list[tuple[int, int, str]]:
-    """
-    Every currently-running get_organelle_from_reads.py process on
-    this machine, with its real RSS and the sample id parsed from its
-    own real "-o" argument.
-
-    Returns:
-        list[tuple[int, int, str]]: (pid, rss_mb, sample_id) for each real process found; sample_id is None if it couldn't be parsed.
-    """
-    results = []
-    proc_dir = Path("/proc")
-    if not proc_dir.is_dir():
-        return results
-    for entry in proc_dir.iterdir():
-        if not entry.name.isdigit():
-            continue
-        pid = int(entry.name)
-        try:
-            cmdline = (entry / "cmdline").read_bytes().decode("utf-8", errors = "replace")
-        except OSError:
-            continue
-        if "get_organelle_from_reads" not in cmdline:
-            continue
-        match = _SAMPLE_ID_PATTERN.search(cmdline.replace("\x00", " "))
-        sample_id = match.group(1) if match else None
-        rss_mb = _read_rss_mb(pid)
-        if rss_mb is not None:
-            results.append((pid, rss_mb, sample_id))
-    return results
-
-
-def _read_rss_mb(pid: int) -> int | None:
-    """This pid's real current resident memory, in MB, or None if unreadable (already exited, permission)."""
-    try:
-        with open(f"/proc/{pid}/status", "r", encoding = "utf-8") as handle:
-            for line in handle:
-                if line.startswith("VmRSS:"):
-                    kb = int(line.split()[1])
-                    return kb // 1024
-    except (OSError, ValueError, IndexError):
-        pass
-    return None
-
 
 def run_monitor(cgroup_path: Path, threshold_mb: int, job_root: Path, logger: logging.Logger) -> None:
     """
@@ -132,7 +75,7 @@ def run_monitor(cgroup_path: Path, threshold_mb: int, job_root: Path, logger: lo
             current_mb = working_set_bytes // (1024 * 1024)
 
             if current_mb >= threshold_mb:
-                processes = _real_getorganelle_processes()
+                processes = real_getorganelle_processes()
                 if not processes:
                     logger.warning(f"OOM monitor: real usage {current_mb}MB over threshold, but no real get_organelle_from_reads process found -- likely transient (SPAdes/bowtie2 child spike); skipping this cycle.")
                 else:
