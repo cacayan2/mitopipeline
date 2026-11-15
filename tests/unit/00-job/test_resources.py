@@ -257,18 +257,65 @@ def test_record_oom_kill_converges_to_ran_alone_even_with_a_modest_peak_every_ti
     so exceeds_machine_capacity) never had a chance to fire, even
     after dozens of real kills, because the pool was crowded by many
     OTHER concurrent jobs, not because this one sample was too big.
-    At least one real slot of progress per kill guarantees this
-    converges within total_slots kills regardless of peak size."""
+    Guaranteed forward progress still converges this within a real
+    bound (now total_slots * _OOM_FORCED_PROGRESS_GRACE_KILLS, slower
+    than the original fix's unconditional total_slots -- see the
+    2026-11-14 docstring addition on why -- but never unbounded)."""
     state_path = tmp_path / "oom_escalation_state.json"
+    max_kills = 10 * resources._OOM_FORCED_PROGRESS_GRACE_KILLS
     record = None
-    for _ in range(10):
+    for _ in range(max_kills):
         record = resources.record_oom_kill("unlucky_sample", peak_mb = 5000.0, state_path = state_path,
                                            total_slots = 10, slot_mb = 8192)
         if record["ran_alone"]:
             break
     assert record["ran_alone"] is True
     assert record["reserved_slots"] == 10
-    assert record["kills"] <= 10
+    assert record["kills"] <= max_kills
+
+def test_record_oom_kill_does_not_force_full_escalation_on_every_unjustified_kill(tmp_path: Path) -> None:
+    """Real gap found live, 2026-11-14: a modest, genuinely small real
+    peak that keeps getting killed purely from aggregate pool crowding
+    (not its own growth) used to force reserved_slots up by one on
+    EVERY single kill regardless -- converging any repeatedly-killed
+    sample to a genuine exclusive trial within total_slots kills no
+    matter how small it really was, flooding the (correctly) serialized
+    exclusive-trial gate with jobs that never needed it. A real peak
+    well below what's already reserved must NOT force growth on every
+    kill -- only after _OOM_FORCED_PROGRESS_GRACE_KILLS consecutive
+    unjustified kills at the same level."""
+    state_path = tmp_path / "oom_escalation_state.json"
+    # First kill: real peak (5000MB) genuinely exceeds a from-scratch
+    # reservation, so it escalates for real, same as always.
+    record = resources.record_oom_kill("small_sample", peak_mb = 5000.0, state_path = state_path,
+                                       total_slots = 10, slot_mb = 8192)
+    assert record["reserved_slots"] == 2  # ceil(5000/8192)+1 == 2, from-scratch
+    reserved_after_first = record["reserved_slots"]
+    # Next two kills: the SAME modest real peak, well under what's
+    # already reserved -- must not force any further growth yet.
+    for _ in range(resources._OOM_FORCED_PROGRESS_GRACE_KILLS - 1):
+        record = resources.record_oom_kill("small_sample", peak_mb = 5000.0, state_path = state_path,
+                                           total_slots = 10, slot_mb = 8192)
+        assert record["reserved_slots"] == reserved_after_first
+    # The grace-kills-th consecutive unjustified kill: still forces one
+    # real slot of progress, so this never becomes unbounded.
+    record = resources.record_oom_kill("small_sample", peak_mb = 5000.0, state_path = state_path,
+                                       total_slots = 10, slot_mb = 8192)
+    assert record["reserved_slots"] == reserved_after_first + 1
+
+def test_record_oom_kill_resets_the_grace_counter_on_a_real_peak_justified_escalation(tmp_path: Path) -> None:
+    """A real, peak-justified escalation (this sample's own growth, not
+    crowding) must reset the unjustified-kill grace counter -- a later
+    unjustified kill should get the FULL grace window again, not pick
+    up wherever an earlier, unrelated crowding streak left off."""
+    state_path = tmp_path / "oom_escalation_state.json"
+    resources.record_oom_kill("sample", peak_mb = 5000.0, state_path = state_path, total_slots = 10, slot_mb = 8192)
+    record = resources.record_oom_kill("sample", peak_mb = 5000.0, state_path = state_path, total_slots = 10, slot_mb = 8192)
+    assert record["unjustified_kills_at_level"] == 1
+    # A genuinely larger peak this time -- real escalation, resets the counter.
+    record = resources.record_oom_kill("sample", peak_mb = 20000.0, state_path = state_path, total_slots = 10, slot_mb = 8192)
+    assert record["unjustified_kills_at_level"] == 0
+    assert record["reserved_slots"] > 1
 
 def test_record_oom_kill_never_shrinks_a_samples_own_prior_reservation(tmp_path: Path) -> None:
     """A second, smaller observed peak (e.g. a different real

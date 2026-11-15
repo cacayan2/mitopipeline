@@ -741,6 +741,17 @@ def read_reserved_mb(sample_id: str, state_path: Path, default_mb: int) -> int:
         return default_mb
     return max(default_mb, int(record["reserved_mb"]))
 
+# How many consecutive kills a sample may absorb at its CURRENT
+# reservation, with a real peak that doesn't justify more room, before
+# record_oom_kill forces one more slot of progress anyway -- see its
+# own 2026-11-14 docstring addition. 3 chosen deliberately small: still
+# bounds the worst case (a genuinely crowding-only kill every time) to
+# 3x total_slots real kills before reaching a genuine exclusive trial,
+# versus the unconditional 1x before this fix -- real peak-justified
+# escalation (the common case for a job that's actually growing) is
+# completely unaffected, since it never enters this branch at all.
+_OOM_FORCED_PROGRESS_GRACE_KILLS = 3
+
 def record_oom_kill(sample_id: str, peak_mb: float, state_path: Path, total_slots: int,
                     slot_mb: int = GETORGANELLE_ADMISSION_FLOOR_MB, genuinely_alone: bool = True) -> dict:
     """
@@ -839,16 +850,45 @@ def record_oom_kill(sample_id: str, peak_mb: float, state_path: Path, total_slot
     else:
         slots_needed = max(1, -(-int(peak_mb) // slot_mb))  # ceil division, real units
         prior_slots = existing.get("reserved_slots", 0)
-        # At least one real slot of forward progress every real kill,
-        # regardless of this kill's own peak -- a modest, genuinely
-        # unlucky-timing peak must never leave a repeatedly-killed
-        # sample stuck forever short of a genuine solo trial (see this
-        # function's own docstring, "Real gap found and fixed").
-        newly_required_slots = min(total_slots, max(slots_needed + 1, prior_slots + 1))
-        # Reservations only ever grow -- a smaller observed peak on a
-        # later kill (a different real bottleneck that round) must
-        # never undo real evidence an earlier kill already established.
-        reserved_slots = max(newly_required_slots, prior_slots)
+        # This kill's own real peak, alone, justifies at most this many
+        # slots -- the honest, peak-only number, no forced minimum yet.
+        peak_justified_slots = max(slots_needed + 1, prior_slots)
+        if peak_justified_slots > prior_slots:
+            # This kill's own real peak genuinely grew past what this
+            # sample already had reserved -- real evidence, escalate
+            # for real and reset the grace counter below.
+            reserved_slots = min(total_slots, peak_justified_slots)
+            unjustified_kills = 0
+        else:
+            # Real gap found live, 2026-11-14: forcing at least one
+            # slot of progress on EVERY kill (see this function's own
+            # 2026-11-09 fix below) converges ANY repeatedly-killed
+            # sample to a genuine exclusive trial within total_slots
+            # kills, regardless of whether its own real peak ever
+            # justified that much room -- confirmed live the same
+            # night: 16 samples sitting at reserved_slots==total_slots
+            # with real peaks of 6-8GB on an 80GB reservation, each one
+            # then forced to take its own serialized turn at the
+            # now-fixed exclusive-trial gate (see
+            # wait_for_dispatch_admission's require_pool_genuinely_empty)
+            # for no real reason -- a pile of genuinely small jobs
+            # queuing one at a time behind a gate meant for jobs that
+            # actually need the whole machine. This kill's own peak
+            # doesn't justify more room than already reserved -- almost
+            # certainly aggregate pool crowding, not this job's own
+            # growth -- so don't force the ceiling for that alone.
+            # Still guarantees bounded forward progress (never the
+            # pre-2026-11-09 bug of zero escalation ever) by forcing one
+            # real slot of progress every _OOM_FORCED_PROGRESS_GRACE_KILLS
+            # kills instead of every single one -- slower to reach a
+            # genuine exclusive trial when nothing REAL is driving it,
+            # but still a bounded, guaranteed climb.
+            unjustified_kills = existing.get("unjustified_kills_at_level", 0) + 1
+            if unjustified_kills >= _OOM_FORCED_PROGRESS_GRACE_KILLS:
+                reserved_slots = min(total_slots, prior_slots + 1)
+                unjustified_kills = 0
+            else:
+                reserved_slots = prior_slots
         ran_alone = reserved_slots >= total_slots
         record = {
             "reserved_slots": reserved_slots,
@@ -857,6 +897,7 @@ def record_oom_kill(sample_id: str, peak_mb: float, state_path: Path, total_slot
             "last_observed_peak_mb": peak_mb,
             "ran_alone": ran_alone,
             "exceeds_machine_capacity": False,
+            "unjustified_kills_at_level": unjustified_kills,
         }
 
     state[sample_id] = record
