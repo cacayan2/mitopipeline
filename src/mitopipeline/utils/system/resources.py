@@ -405,15 +405,47 @@ def wait_for_dispatch_admission(logger: Logger, floor_mb: int = GETORGANELLE_ADM
         exclusive_lock_path (Path | None): See exclusive_trial_blocks_others. None skips the check.
         require_pool_genuinely_empty (bool): When True, also waits until zero real get_organelle_from_reads.py processes exist anywhere (see real_getorganelle_processes) before returning -- for a caller about to CLAIM an exclusive trial, not just hold the admission floor for one. Real gap found live, 2026-11-14: a sample that had already escalated to reserved_slots==total_slots would call acquire_exclusive_trial() and relaunch as soon as real RAM looked free and no OTHER sample's lock blocked it -- but nothing checked whether some ordinary (non-escalated) dispatch, admitted earlier and still genuinely running, was ALSO alive right now. Confirmed live: `lythrurus_fumeus_run_may2026_106` retried in place 39 times over 13+ hours, re-launching into a real crowd every single time (the OOM monitor's own log recorded genuinely_alone=False on every one of those kills) -- it could never win a trial it never actually ran alone for, and could never prove exceeds_machine_capacity either, so nothing would ever have stopped it. This flag closes that gap: the exclusivity claim now waits for a real, momentarily-empty pool before it's made, instead of claiming it in name only.
 
+    Real gap found live, 2026-11-15 (Emil's own diagnosis): dispatch_admission_ready's
+    floor_mb check only ever asked "is there enough real room for ME, right
+    now" -- it never accounted for other real GetOrganelle-class jobs that
+    were ALSO just admitted moments ago and are still genuinely ramping up
+    (minutes to tens of minutes from near-zero RSS to their real peak, not
+    instant). That let Snakemake burst-admit several jobs in a short window,
+    each one individually honest about "room for me" at its own check, before
+    any of them had grown enough to reveal the real AGGREGATE demand -- only
+    once several had ramped up together did the total actually cross the
+    monitor's threshold, at which point it killed whichever one happened to
+    be biggest at that instant, not necessarily whichever admission actually
+    caused the overcommit. Confirmed live: 18+ samples with modest real peaks
+    (4-29GB) each accumulated 8-22 kills overnight and mechanically earned a
+    full exclusive-trial reservation they never needed, purely from this
+    unaccounted-for burst-admission pattern. Fixed below by requiring
+    proportionally more real headroom for every OTHER real GetOrganelle-class
+    process already running -- still a pure live-headroom check, no fixed
+    concurrency cap reintroduced, just an honest one that no longer treats
+    "room for me alone" as "room for everyone already in flight too."
+
     Returns:
         None
     """
     logged_wait = False
     while True:
+        running_elsewhere = len(real_getorganelle_processes())
         blocked_by_other = (sample_id is not None and exclusive_lock_path is not None
                             and exclusive_trial_blocks_others(sample_id, exclusive_lock_path))
-        blocked_by_crowd = require_pool_genuinely_empty and len(real_getorganelle_processes()) > 0
-        ready = dispatch_admission_ready(floor_mb)
+        blocked_by_crowd = require_pool_genuinely_empty and running_elsewhere > 0
+        # +1 real floor's worth of margin per OTHER real GetOrganelle-class
+        # job already running, on top of this caller's own floor_mb -- see
+        # this function's own 2026-11-15 docstring addition. Additive, never
+        # multiplicative, deliberately: floor_mb for an already-escalated
+        # sample's own retry can already be ~85% of total RAM (see
+        # dispatch_admission_ready's own 2026-11-11 fix) -- multiplying THAT
+        # by (running_elsewhere + 1) would instantly demand more than the
+        # machine could ever have, recreating the exact compounding bug that
+        # fix closed. A bounded additive margin, sized off the same ordinary
+        # per-job floor, avoids that while still scaling with real crowding.
+        effective_floor_mb = floor_mb + running_elsewhere * GETORGANELLE_ADMISSION_FLOOR_MB
+        ready = dispatch_admission_ready(effective_floor_mb)
         if not blocked_by_other and not blocked_by_crowd and (ready is None or ready):
             return
         if not logged_wait:
@@ -422,7 +454,7 @@ def wait_for_dispatch_admission(logger: Logger, floor_mb: int = GETORGANELLE_ADM
             elif blocked_by_other:
                 reason = "another sample's own genuine solo trial is in progress"
             else:
-                reason = f"real headroom before starting (need ~{floor_mb}MB free)"
+                reason = f"real headroom before starting (need ~{effective_floor_mb}MB free, {running_elsewhere} other real job(s) already running)"
             logger.info(f"Dispatch admission: waiting for {reason}.")
             logged_wait = True
         sleep_fn(poll_seconds)

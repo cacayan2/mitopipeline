@@ -138,6 +138,7 @@ def test_dispatch_admission_ready_returns_none_when_ram_undetectable(monkeypatch
 
 def test_wait_for_dispatch_admission_returns_immediately_when_already_ready(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(resources, "read_available_ram_mb", lambda: 10000)
+    monkeypatch.setattr(resources, "real_getorganelle_processes", lambda: [])
     calls = []
     resources.wait_for_dispatch_admission(logger = _FakeLogger(), floor_mb = 8192,
                                           sleep_fn = lambda seconds: calls.append(seconds))
@@ -146,9 +147,12 @@ def test_wait_for_dispatch_admission_returns_immediately_when_already_ready(monk
 def test_wait_for_dispatch_admission_polls_until_real_room_opens_up(monkeypatch: pytest.MonkeyPatch) -> None:
     """Simulates real headroom that's tight at first, then opens up --
     confirms this actually blocks and re-checks, rather than trusting
-    a one-time snapshot."""
+    a one-time snapshot. real_getorganelle_processes mocked to empty
+    throughout -- isolates this from the SEPARATE crowd-aware-floor
+    behavior, covered by its own dedicated tests below."""
     readings = iter([5000, 5000, 10000])
     monkeypatch.setattr(resources, "read_available_ram_mb", lambda: next(readings))
+    monkeypatch.setattr(resources, "real_getorganelle_processes", lambda: [])
     sleeps = []
     resources.wait_for_dispatch_admission(logger = _FakeLogger(), floor_mb = 8192,
                                           sleep_fn = lambda seconds: sleeps.append(seconds))
@@ -156,6 +160,7 @@ def test_wait_for_dispatch_admission_polls_until_real_room_opens_up(monkeypatch:
 
 def test_wait_for_dispatch_admission_fails_open_when_ram_undetectable(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(resources, "read_available_ram_mb", lambda: None)
+    monkeypatch.setattr(resources, "real_getorganelle_processes", lambda: [])
     calls = []
     resources.wait_for_dispatch_admission(logger = _FakeLogger(), sleep_fn = lambda seconds: calls.append(seconds))
     assert calls == []
@@ -163,9 +168,42 @@ def test_wait_for_dispatch_admission_fails_open_when_ram_undetectable(monkeypatc
 def test_wait_for_dispatch_admission_logs_only_once_while_waiting(monkeypatch: pytest.MonkeyPatch) -> None:
     readings = iter([5000, 5000, 10000])
     monkeypatch.setattr(resources, "read_available_ram_mb", lambda: next(readings))
+    monkeypatch.setattr(resources, "real_getorganelle_processes", lambda: [])
     logger = _FakeLogger()
     resources.wait_for_dispatch_admission(logger = logger, floor_mb = 8192, sleep_fn = lambda seconds: None)
     assert len(logger.info_messages) == 1
+
+def test_wait_for_dispatch_admission_requires_proportionally_more_room_per_other_real_job(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Real gap found live, 2026-11-15 (Emil's own diagnosis): the admission
+    floor only ever asked "is there room for ME," never accounting for
+    other real GetOrganelle-class jobs admitted moments earlier that are
+    still genuinely ramping up -- letting Snakemake burst-admit several
+    jobs before any of them revealed the real aggregate demand. With 2
+    other real jobs already running and only the ordinary 8192MB floor
+    of headroom free, this must NOT be treated as ready (needs
+    8192 + 2*8192 = 24576MB) -- confirms the floor now scales with real
+    concurrent GetOrganelle-class activity, not just a flat per-job minimum."""
+    readings = iter([16000, 30000])  # first: not enough even combined; second: plenty
+    monkeypatch.setattr(resources, "read_available_ram_mb", lambda: next(readings))
+    monkeypatch.setattr(resources, "real_getorganelle_processes",
+                        lambda: [(1, 5000, "a"), (2, 6000, "b")])
+    calls = []
+    resources.wait_for_dispatch_admission(logger = _FakeLogger(), floor_mb = 8192,
+                                          sleep_fn = lambda seconds: calls.append(seconds))
+    assert len(calls) == 1
+
+def test_wait_for_dispatch_admission_is_ready_once_real_room_covers_the_scaled_floor(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Same 2-other-real-jobs scenario, but with enough real headroom to
+    cover the scaled floor (24576MB needed, 30000MB free) -- must return
+    immediately, confirming this is still a pure live-headroom check and
+    never an arbitrary hard concurrency cap."""
+    monkeypatch.setattr(resources, "read_available_ram_mb", lambda: 30000)
+    monkeypatch.setattr(resources, "real_getorganelle_processes",
+                        lambda: [(1, 5000, "a"), (2, 6000, "b")])
+    calls = []
+    resources.wait_for_dispatch_admission(logger = _FakeLogger(), floor_mb = 8192,
+                                          sleep_fn = lambda seconds: calls.append(seconds))
+    assert calls == []
 
 def test_job_root_from_global_log_strips_the_logs_00_job_suffix() -> None:
     global_log = Path("/home/fishl/mitogenome_project/outputs/final_output_v020/logs/00-job/final_output_v020.global.log")
@@ -419,6 +457,7 @@ def test_wait_for_dispatch_admission_waits_out_another_samples_live_exclusive_tr
     lock_path = tmp_path / "oom_exclusive_trial.json"
     resources.acquire_exclusive_trial("big_sample", lock_path)
     monkeypatch.setattr(resources, "dispatch_admission_ready", lambda *a, **k: True)
+    monkeypatch.setattr(resources, "real_getorganelle_processes", lambda: [])
     monkeypatch.setattr(resources, "exclusive_trial_blocks_others",
                         lambda calling_sample_id, path, is_pid_alive = None: calling_sample_id != "big_sample")
     calls = []
@@ -430,18 +469,6 @@ def test_wait_for_dispatch_admission_waits_out_another_samples_live_exclusive_tr
     resources.wait_for_dispatch_admission(logger = logging.getLogger("test"), sample_id = "small_sample",
                                           exclusive_lock_path = lock_path, poll_seconds = 0, sleep_fn = _fake_sleep)
     assert sleep_calls["n"] >= 2
-
-def test_wait_for_dispatch_admission_ignores_a_crowded_pool_by_default(monkeypatch: pytest.MonkeyPatch) -> None:
-    """require_pool_genuinely_empty defaults to False -- an ordinary
-    (non-exclusive) dispatch must never be held back by other real
-    GetOrganelle activity, only by real RAM and another sample's own
-    exclusive trial."""
-    monkeypatch.setattr(resources, "read_available_ram_mb", lambda: 10000)
-    monkeypatch.setattr(resources, "real_getorganelle_processes", lambda: [(123, 5000, "someone_else")])
-    calls = []
-    resources.wait_for_dispatch_admission(logger = _FakeLogger(), floor_mb = 8192,
-                                          sleep_fn = lambda seconds: calls.append(seconds))
-    assert calls == []
 
 def test_wait_for_dispatch_admission_waits_for_a_genuinely_empty_pool_when_required(monkeypatch: pytest.MonkeyPatch) -> None:
     """Real gap found live, 2026-11-14: a sample that earned the whole
