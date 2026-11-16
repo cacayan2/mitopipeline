@@ -567,19 +567,37 @@ _OOM_MONITOR_SAFETY_GAP_MB = 3072
 def read_cgroup_working_set_bytes(cgroup_path: Path) -> int | None:
     """
     This cgroup's real "working set" -- memory.current minus its own
-    real inactive_file (the LRU-cold, first-to-be-reclaimed file
-    cache) -- the same correction container runtimes/cAdvisor/
-    Kubernetes apply to report a container's own real memory pressure,
-    and conceptually the same one read_available_ram_mb already
-    applies at the whole-machine level via /proc/meminfo's own
-    MemAvailable. Raw memory.current includes reclaimable file cache
-    (FASTQ/BLAST-database reads, in this pipeline's case) that the
-    kernel evicts for free under real pressure, long before any OOM
-    risk exists -- confirmed live, 2026-11-07: a fresh run's cgroup
-    showed ~95GB memory.current while real anon+kernel usage was only
-    ~5GB, nearly all of the rest reclaimable file cache. Treating raw
-    memory.current as real pressure made the proactive monitor kill
-    small, healthy GetOrganelle jobs that were never actually at risk.
+    real reclaimable file cache (inactive_file AND active_file both --
+    the same correction container runtimes/cAdvisor/Kubernetes apply
+    to report a container's own real memory pressure), and conceptually
+    the same one read_available_ram_mb already applies at the
+    whole-machine level via /proc/meminfo's own MemAvailable. Raw
+    memory.current includes reclaimable file cache (FASTQ/BLAST-
+    database reads, in this pipeline's case) that the kernel evicts for
+    free under real pressure, long before any OOM risk exists --
+    confirmed live, 2026-11-07: a fresh run's cgroup showed ~95GB
+    memory.current while real anon+kernel usage was only ~5GB, nearly
+    all of the rest reclaimable file cache. Treating raw memory.current
+    as real pressure made the proactive monitor kill small, healthy
+    GetOrganelle jobs that were never actually at risk.
+
+    Real gap found live, 2026-11-16 (Emil's own direct challenge --
+    he was watching real `free -h` show ~6GB used against this
+    function's own ~85GB reading): "active" vs "inactive" for file-
+    backed pages is purely an LRU recency ranking the kernel uses to
+    decide reclaim ORDER under pressure -- it reclaims inactive pages
+    first, then active ones, but both are equally clean, equally
+    file-backed, and equally reclaimable for free; neither is pinned.
+    Only ever subtracting inactive_file left active_file -- confirmed
+    live at 73GB out of this cgroup's own 79GB total file cache, the
+    overwhelming majority -- counted as if it were real, non-reclaimable
+    pressure. That's exactly why `MemAvailable` at the whole-machine
+    level (which correctly treats ALL reclaimable cache as available,
+    confirmed live showing ~92GB free against this function's ~85GB
+    "pressure" on the same box at the same moment) disagreed so sharply
+    with this function's own cgroup-scoped reading -- a real,
+    confirmed-live, 90-kill-deep livelock on one sample traced directly
+    to this split-brain inconsistency between the two checks.
 
     Args:
         cgroup_path (Path): The real cgroup directory to read (see current_cgroup_path).
@@ -589,16 +607,15 @@ def read_cgroup_working_set_bytes(cgroup_path: Path) -> int | None:
     """
     try:
         current_bytes = int((cgroup_path / "memory.current").read_text().strip())
-        inactive_file_bytes = 0
+        reclaimable_file_bytes = 0
         with (cgroup_path / "memory.stat").open("r", encoding = "utf-8") as handle:
             for line in handle:
                 key, _, value = line.strip().partition(" ")
-                if key == "inactive_file":
-                    inactive_file_bytes = int(value)
-                    break
+                if key in ("inactive_file", "active_file"):
+                    reclaimable_file_bytes += int(value)
     except (OSError, ValueError):
         return None
-    return max(0, current_bytes - inactive_file_bytes)
+    return max(0, current_bytes - reclaimable_file_bytes)
 
 def cgroup_memory_max_mb() -> int | None:
     """

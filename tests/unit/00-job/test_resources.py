@@ -489,14 +489,15 @@ def test_wait_for_dispatch_admission_waits_for_a_genuinely_empty_pool_when_requi
                                           sleep_fn = lambda seconds: sleeps.append(seconds))
     assert len(sleeps) == 2
 
-def _write_cgroup_files(cgroup_dir: Path, current_bytes: int, inactive_file_bytes: int) -> None:
+def _write_cgroup_files(cgroup_dir: Path, current_bytes: int, inactive_file_bytes: int,
+                       active_file_bytes: int = 7_391_235_584) -> None:
     cgroup_dir.mkdir(parents = True, exist_ok = True)
     (cgroup_dir / "memory.current").write_text(str(current_bytes))
     (cgroup_dir / "memory.stat").write_text(
         f"anon 3550072832\n"
         f"file 75164696576\n"
         f"inactive_file {inactive_file_bytes}\n"
-        f"active_file 7391235584\n"
+        f"active_file {active_file_bytes}\n"
     )
 
 def test_read_cgroup_working_set_subtracts_real_reclaimable_file_cache(tmp_path: Path) -> None:
@@ -504,15 +505,36 @@ def test_read_cgroup_working_set_subtracts_real_reclaimable_file_cache(tmp_path:
     memory.current can read ~95GB on a fresh run reading FASTQ/BLAST-db
     files while real anon+kernel usage is only ~5GB -- almost all of the
     rest is reclaimable file cache the kernel would evict for free, never
-    a real OOM risk."""
+    a real OOM risk. Subtracts BOTH inactive_file and active_file (see
+    the 2026-11-16 docstring addition on why active_file counts too)."""
     cgroup_dir = tmp_path / "run-u1.scope"
-    _write_cgroup_files(cgroup_dir, current_bytes = 80_341_622_784, inactive_file_bytes = 67_773_460_480)
+    _write_cgroup_files(cgroup_dir, current_bytes = 80_341_622_784, inactive_file_bytes = 60_000_000_000,
+                       active_file_bytes = 7_773_460_480)
     working_set = resources.read_cgroup_working_set_bytes(cgroup_dir)
-    assert working_set == 80_341_622_784 - 67_773_460_480
+    assert working_set == 80_341_622_784 - 60_000_000_000 - 7_773_460_480
+
+def test_read_cgroup_working_set_subtracts_active_file_too(tmp_path: Path) -> None:
+    """Real gap found live, 2026-11-16 (Emil's own direct challenge --
+    real `free -h` showed ~6GB used while this function read ~85GB):
+    "active" vs "inactive" file cache is purely an LRU recency ranking,
+    not a reclaimable-vs-pinned distinction -- both are equally clean,
+    equally evictable file-backed pages. Confirmed live: a cgroup
+    reporting 88GB memory.current with only 5.5GB real anon usage had
+    73GB sitting in active_file alone -- subtracting only inactive_file
+    (5.3GB) left ~77GB looking like real pressure when the true working
+    set was really ~6GB, directly causing a confirmed 90-kill livelock
+    on one sample that was never actually at risk."""
+    cgroup_dir = tmp_path / "run-u1.scope"
+    _write_cgroup_files(cgroup_dir, current_bytes = 88_233_594_880, inactive_file_bytes = 5_696_151_552,
+                       active_file_bytes = 73_283_895_296)
+    working_set = resources.read_cgroup_working_set_bytes(cgroup_dir)
+    # Real anon usage (~5.5GB) plus kernel/slab overhead -- nowhere near
+    # the ~77GB the old inactive-only correction would have reported.
+    assert working_set < 10_000_000_000
 
 def test_read_cgroup_working_set_never_goes_negative(tmp_path: Path) -> None:
     cgroup_dir = tmp_path / "run-u1.scope"
-    _write_cgroup_files(cgroup_dir, current_bytes = 1000, inactive_file_bytes = 5000)
+    _write_cgroup_files(cgroup_dir, current_bytes = 1000, inactive_file_bytes = 5000, active_file_bytes = 5000)
     assert resources.read_cgroup_working_set_bytes(cgroup_dir) == 0
 
 def test_read_cgroup_working_set_returns_none_when_memory_current_is_missing(tmp_path: Path) -> None:
@@ -527,10 +549,11 @@ def test_read_cgroup_working_set_returns_none_when_memory_stat_is_missing(tmp_pa
     (cgroup_dir / "memory.current").write_text("1000")
     assert resources.read_cgroup_working_set_bytes(cgroup_dir) is None
 
-def test_read_cgroup_working_set_treats_a_missing_inactive_file_key_as_zero(tmp_path: Path) -> None:
-    """A real cgroup v2 memory.stat always has this key, but this function
-    must never crash if a future kernel ever omits it -- fail to the
-    conservative (not-yet-corrected) reading rather than raise."""
+def test_read_cgroup_working_set_treats_missing_file_cache_keys_as_zero(tmp_path: Path) -> None:
+    """A real cgroup v2 memory.stat always has these keys, but this
+    function must never crash if a future kernel ever omits them --
+    fail to the conservative (not-yet-corrected) reading rather than
+    raise."""
     cgroup_dir = tmp_path / "run-u1.scope"
     cgroup_dir.mkdir()
     (cgroup_dir / "memory.current").write_text("1000")
