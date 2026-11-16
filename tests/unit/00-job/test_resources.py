@@ -449,6 +449,45 @@ def test_exclusive_trial_blocks_others_returns_false_when_lock_file_is_missing(t
     lock_path = tmp_path / "does_not_exist" / "oom_exclusive_trial.json"
     assert resources.exclusive_trial_blocks_others("any_sample", lock_path) is False
 
+def test_claim_exclusive_trial_mutex_is_a_real_os_level_lock(tmp_path: Path) -> None:
+    """Real gap found live, 2026-11-16: two samples that both already
+    carried ran_alone=True from before a restart could both see a
+    genuinely empty pool in the same poll window and both launch --
+    checking-then-claiming wasn't atomic across processes. This must be
+    a REAL mutex (a second, independent open of the same lock file must
+    genuinely fail to acquire it non-blocking while the first holder is
+    still inside the context), not just a marker file another check
+    could race past the same way."""
+    import fcntl
+    job_root = tmp_path / "final_output_v020"
+    with resources.claim_exclusive_trial_mutex(job_root):
+        lock_path = job_root / "mrl_final_output_v020" / "oom_exclusive_trial_claim.lock"
+        assert lock_path.is_file()
+        with lock_path.open("w") as other_handle:
+            with pytest.raises(BlockingIOError):
+                fcntl.flock(other_handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+
+def test_claim_exclusive_trial_mutex_releases_on_exit(tmp_path: Path) -> None:
+    import fcntl
+    job_root = tmp_path / "final_output_v020"
+    with resources.claim_exclusive_trial_mutex(job_root):
+        pass
+    lock_path = job_root / "mrl_final_output_v020" / "oom_exclusive_trial_claim.lock"
+    with lock_path.open("w") as handle:
+        fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+
+def test_claim_exclusive_trial_mutex_releases_even_on_exception(tmp_path: Path) -> None:
+    import fcntl
+    job_root = tmp_path / "final_output_v020"
+    with pytest.raises(ValueError):
+        with resources.claim_exclusive_trial_mutex(job_root):
+            raise ValueError("boom")
+    lock_path = job_root / "mrl_final_output_v020" / "oom_exclusive_trial_claim.lock"
+    with lock_path.open("w") as handle:
+        fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+
 def test_wait_for_dispatch_admission_waits_out_another_samples_live_exclusive_trial(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """Even when real RAM headroom looks fine, a DIFFERENT sample's own
     genuinely live exclusive trial must still hold this dispatch back

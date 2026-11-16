@@ -22,6 +22,7 @@ from mitopipeline.utils.system.resources import (
     GETORGANELLE_ADMISSION_FLOOR_MB,
     acquire_exclusive_trial,
     cgroup_memory_max_mb,
+    claim_exclusive_trial_mutex,
     current_cgroup_path,
     exclusive_trial_lock_path,
     job_root_from_global_log,
@@ -293,10 +294,18 @@ class GetOrganelleRunner(BaseTool):
                 # while some ordinary (already-admitted, still
                 # genuinely running) dispatch keeps the real process
                 # census above 1. Confirmed live, 2026-11-14 (see
-                # wait_for_dispatch_admission's own docstring).
-                wait_for_dispatch_admission(logger = self.logger, floor_mb = _admission_floor_mb(),
-                                            require_pool_genuinely_empty = True)
-                acquire_exclusive_trial(sample.sample_id, lock_path)
+                # wait_for_dispatch_admission's own docstring). Also
+                # wrapped in claim_exclusive_trial_mutex -- real gap
+                # found live 2026-11-16: two samples that both already
+                # carried ran_alone=True from before a restart could
+                # both see a genuinely empty pool in the same instant
+                # and both launch, one only nominally "holding" the
+                # lock file afterward. The mutex serializes the whole
+                # check-and-claim sequence, not just the file write.
+                with claim_exclusive_trial_mutex(job_root_from_global_log(global_log_file)):
+                    wait_for_dispatch_admission(logger = self.logger, floor_mb = _admission_floor_mb(),
+                                                require_pool_genuinely_empty = True)
+                    acquire_exclusive_trial(sample.sample_id, lock_path)
 
         super().__init__(tool_name = tool_name, working_dir = working_dir, logger = logger, metrics_dir = metrics_dir,
                          dispatch_admission_wait = _dispatch_admission_wait,

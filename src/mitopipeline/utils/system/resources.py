@@ -19,13 +19,15 @@ divided fairly across the jobs currently allowed to run.
 
 # Imports
 from __future__ import annotations
+import contextlib
+import fcntl
 import json
 import os
 import re
 import time
 from logging import Logger
 from pathlib import Path
-from typing import Callable
+from typing import Callable, Iterator
 
 
 # GetOrganelle's own documented calibration anchor (--help output,
@@ -458,6 +460,48 @@ def wait_for_dispatch_admission(logger: Logger, floor_mb: int = GETORGANELLE_ADM
             logger.info(f"Dispatch admission: waiting for {reason}.")
             logged_wait = True
         sleep_fn(poll_seconds)
+
+@contextlib.contextmanager
+def claim_exclusive_trial_mutex(job_root: Path) -> Iterator[None]:
+    """
+    A real OS-level mutex (fcntl flock, blocking) serializing the
+    "wait until the pool is genuinely empty, then claim the exclusive
+    trial" sequence across every sample attempting it -- held only for
+    that brief check-and-claim moment, never for the actual multi-hour
+    GetOrganelle run that follows.
+
+    Real gap found live, 2026-11-16: wait_for_dispatch_admission's own
+    require_pool_genuinely_empty check and acquire_exclusive_trial()
+    were two separate calls with a real gap between them -- two samples
+    that BOTH already carried ran_alone=True from before a restart (the
+    shared-sample_id escalation record is never reset on its own) could
+    both see a genuinely empty pool in the same poll window, since
+    nothing had started yet, and both proceed to build their own real
+    command and launch -- confirmed live: `hypentelium_nigricans` and
+    `ammocrypta_clara` both launched within the same second of a fresh
+    restart, both already fully escalated, one nominally "holding" the
+    lock file while both ran concurrently regardless. A lock file alone
+    can't close this -- the race is in the WINDOW between checking and
+    writing it, not in the file's own content. Wrapping that whole
+    sequence in a real process-level mutex means only one candidate at
+    a time ever gets past the "is it empty" check before actually
+    claiming -- every other candidate blocks here, genuinely waiting
+    its turn, instead of racing.
+
+    Args:
+        job_root (Path): This job's own output root (see job_root_from_global_log).
+
+    Returns:
+        Iterator[None]: A context manager; the real flock is held for its duration, released (even on an exception) the instant the block exits.
+    """
+    lock_path = job_root / f"mrl_{job_root.name}" / "oom_exclusive_trial_claim.lock"
+    lock_path.parent.mkdir(parents = True, exist_ok = True)
+    with lock_path.open("w", encoding = "utf-8") as handle:
+        fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+        try:
+            yield
+        finally:
+            fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
 
 def exclusive_trial_lock_path(job_root: Path) -> Path:
     """
