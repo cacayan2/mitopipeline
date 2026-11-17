@@ -98,7 +98,7 @@ def _resolve_reseed(sample_id: str, scientific_name: str | None, database_dir: P
         scientific_name (str | None): The sample's scientific name. None skips reseeding entirely (logged, not an error).
         database_dir (Path | None): The local MitoFish reference database directory. None skips reseeding entirely.
         exclude_gene (str | None): The locus the primary attempt's seed already used, if known. None tries the full chain from the top.
-        output_dir (Path): This attempt's own output directory, to write the provenance record under.
+        output_dir (Path): Where to write the seed FASTA and provenance record -- the caller passes this attempt's own directory (never GetOrganelle's "-o" target itself, which real --overwrite handling can rmtree out from under a seed file written just before dispatch).
         logger (Logger): The logger to use.
         seed_mode (str): The seed mode for this reseed (models.SEED_MODES). "default" yields no FASTA on purpose.
 
@@ -160,8 +160,7 @@ def main() -> int:
     context = f"{{{args.sample_id}}}"
 
     # Must run before ANYTHING else in this invocation writes into
-    # output_dir (e.g. _resolve_reseed's own rescue_seed_selection.json,
-    # just below) -- a stale directory here only ever means a PRIOR,
+    # output_dir -- a stale directory here only ever means a PRIOR,
     # now-dead invocation's leftovers; this invocation's own real work
     # hasn't started yet, so there's nothing of this attempt's own to
     # lose by quarantining first.
@@ -170,19 +169,27 @@ def main() -> int:
     sample = Sample(sample_id = args.sample_id, r1 = args.r1, r2 = args.r2)
     tool_options = {}
     if args.reseed:
+        # Writes the real seed FASTA and its own provenance record
+        # under output_dir.parent (this attempt's own directory), never
+        # under output_dir itself -- output_dir IS GetOrganelle's own
+        # "-o" target, and real GetOrganelle's --overwrite handling
+        # (confirmed directly in its source, get_organelle_from_reads.py:
+        # `if options.script_overwrite: shutil.rmtree(options.output_base)`)
+        # deletes that ENTIRE directory, unconditionally, the instant it
+        # sees "-o" already exists -- before it ever reads the "-s" seed
+        # file this script just told it to use. Confirmed live,
+        # 2026-11-17: every single sample whose rescue chain reached
+        # this profile (34 of 34 on the real production run) crashed
+        # with an identical FileNotFoundError on its own freshly-written
+        # seed.fasta, because it had been written into output_dir just
+        # moments before GetOrganelle wiped it out from under itself.
+        # output_dir.parent (this attempt's own directory, holding the
+        # mapping-step's own real outputs) is never GetOrganelle's "-o"
+        # target and is never touched by this rmtree.
         reseeded_fasta = _resolve_reseed(args.sample_id, args.scientific_name, args.database_dir,
-                                         args.exclude_gene, args.output_dir, logger, seed_mode = args.seed_mode)
+                                         args.exclude_gene, args.output_dir.parent, logger, seed_mode = args.seed_mode)
         if reseeded_fasta is not None:
             tool_options["seed_file"] = str(reseeded_fasta)
-        # _resolve_reseed always writes its own real provenance record
-        # (rescue_seed_selection.json) under output_dir -- the same
-        # directory GetOrganelleRunner is about to pass as "-o" -- so by
-        # this point output_dir unavoidably already exists. This used to
-        # make every reseed-based attempt fail outright (real
-        # GetOrganelle refuses an existing "-o"); now covered by
-        # GetOrganelleRunner's own universal overwrite default (see its
-        # __init__), which exists for exactly this and the equivalent
-        # in-place-retry case, so nothing extra is needed here.
     elif args.seed_file is not None:
         tool_options["seed_file"] = str(args.seed_file)
     if args.kmer is not None:

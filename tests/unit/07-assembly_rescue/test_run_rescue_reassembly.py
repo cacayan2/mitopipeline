@@ -300,9 +300,76 @@ def test_reseed_derives_a_different_locus_and_uses_it(tmp_path: Path, monkeypatc
     assert seen.get("seed_file") == str(reseeded_fasta)
     assert seen.get("overwrite") is True
     assert "--overwrite" in built_command
-    record = json.loads((output_dir / f"{sample_id}.rescue_seed_selection.json").read_text())
+    # Written under output_dir.parent (this attempt's own directory),
+    # never under output_dir itself -- real GetOrganelle's --overwrite
+    # handling rmtrees its own "-o" target (output_dir) outright, which
+    # would otherwise delete this record (and the seed FASTA GetOrganelle
+    # was told to read) the instant it started. Confirmed live, 2026-11-17.
+    record = json.loads((output_dir.parent / f"{sample_id}.rescue_seed_selection.json").read_text())
     assert record["excluded_gene"] == "COXI"
     assert record["gene"] != "COXI"
+
+def test_reseeded_seed_file_survives_getorganelles_real_overwrite_rmtree(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Real regression, 2026-11-17: real GetOrganelle's own --overwrite
+    handling runs `shutil.rmtree(options.output_base)` the instant it
+    sees "-o" (output_dir) already exists, before it ever reads the "-s"
+    seed file this script just told it to use. Every reseed-based
+    attempt on the real production run (34 of 34 that reached this
+    profile) crashed this exact way, because the seed FASTA had been
+    written INTO output_dir moments before GetOrganelle wiped it out
+    from under itself. The stub below reproduces that real rmtree-on-
+    overwrite behavior (previous tests all stubbed `run()` as a pure
+    no-op, which is why this never surfaced) -- the seed file must
+    still be there, and readable, when GetOrganelle "reads" it."""
+    sample_id = "SAMPLE_14"
+    output_dir = tmp_path / "rescue_attempt_2" / "reassembly"
+    reseeded_fasta_path: dict[str, Path] = {}
+
+    from mitopipeline.utils.seed.models import SeedSelectionResult
+    def _fake_select_seed(sample_id, scientific_name, database_dir, output_dir, logger, loci, **kwargs):
+        # Mirrors the real select_seed(): actually writes the FASTA to
+        # the path it returns (output_dir here is already
+        # output_dir.parent, per _resolve_reseed's own call), not just
+        # a path string -- a fake that skipped this wouldn't exercise
+        # the real failure mode at all.
+        fasta_path = output_dir / f"{sample_id}.seed.fasta"
+        output_dir.mkdir(parents = True, exist_ok = True)
+        fasta_path.write_text(">seed\nACGT\n")
+        return SeedSelectionResult(sample_id = sample_id, scientific_name = scientific_name, gene = loci[0],
+                                   accession = "FAKE123", source = "mitofish",
+                                   fasta_path = fasta_path, fallback_used = False)
+
+    def _stub_run_like_real_getorganelle_overwrite(self) -> CommandResult:
+        # The real shutil.rmtree(options.output_base) GetOrganelle itself
+        # runs when --overwrite sees an existing "-o" -- output_dir
+        # already exists at this point (this script's own quarantine
+        # step already created the attempt directory tree).
+        import shutil
+        seed_file = self.tool_options.get("seed_file")
+        reseeded_fasta_path["seed_file_at_dispatch_time"] = Path(seed_file) if seed_file else None
+        if self.output_dir.is_dir():
+            shutil.rmtree(self.output_dir)
+        self.output_dir.mkdir(parents = True)
+        (self.output_dir / "k85.complete.path_sequence.fasta").write_text(">seq\nACGT\n")
+        (self.output_dir / "k85.complete.selected_graph.gfa").write_text("H\n")
+        from mitopipeline.api.getorganelle import discover_assembly_artifacts
+        self.assembly_status = discover_assembly_artifacts(self.output_dir, self.logger)
+        return _fake_result()
+
+    monkeypatch.setattr(run_rescue_reassembly, "select_seed", _fake_select_seed)
+    monkeypatch.setattr(GetOrganelleRunner, "run", _stub_run_like_real_getorganelle_overwrite)
+    monkeypatch.setattr(sys, "argv", _argv(tmp_path, sample_id, output_dir, reseed = True,
+                                            exclude_gene = "COXI", scientific_name = "Danio rerio",
+                                            database_dir = tmp_path / "mitofish"))
+
+    assert run_rescue_reassembly.main() == 0
+    seed_file_at_dispatch_time = reseeded_fasta_path["seed_file_at_dispatch_time"]
+    assert seed_file_at_dispatch_time is not None
+    # The real failure mode: this path must still exist AFTER the
+    # rmtree the stub just simulated, exactly as real GetOrganelle
+    # would need it to when it actually opens "-s" moments later.
+    assert seed_file_at_dispatch_time.is_file()
+    assert seed_file_at_dispatch_time.parent == output_dir.parent
 
 def test_reseed_without_scientific_name_falls_back_to_unseeded(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """A misconfigured reseed profile (missing --scientific-name/
@@ -386,5 +453,5 @@ def test_reseed_passes_the_profile_seed_mode_through(tmp_path: Path, monkeypatch
 
     assert run_rescue_reassembly.main() == 0
     assert seen_modes == ["mitofish_genome"]
-    record = json.loads((output_dir / f"{sample_id}.rescue_seed_selection.json").read_text())
+    record = json.loads((output_dir.parent / f"{sample_id}.rescue_seed_selection.json").read_text())
     assert record["seed_mode"] == "mitofish_genome"

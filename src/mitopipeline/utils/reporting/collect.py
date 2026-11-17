@@ -497,7 +497,13 @@ def collect_rescue_summary(rescue_dir: str | Path | None) -> tuple[RescueAttempt
             # reseed=true (run_rescue_reassembly.py's own real provenance
             # record) -- its mere existence IS the real "was this attempt
             # reseeded" signal, not something re-derived from guesswork.
-            reseed_record = _read_json(attempt_dir / "reassembly" / f"{sample_id}.rescue_seed_selection.json")
+            # Lives directly under attempt_dir, not attempt_dir/reassembly --
+            # that nested "reassembly" leaf is GetOrganelle's own "-o"
+            # target, which real --overwrite handling rmtrees outright, so
+            # run_rescue_reassembly.py writes this one level up instead
+            # (confirmed live, 2026-11-17: every reseed-based attempt on
+            # the real production run crashed until this moved).
+            reseed_record = _read_json(attempt_dir / f"{sample_id}.rescue_seed_selection.json")
 
         attempts.append(RescueAttemptSummary(
             attempt = _attempt_number(attempt_dir.name),
