@@ -9,7 +9,7 @@ BLAST_CONFIG = config["stage_options"]["phylogeny"]["blast"]
 
 def _recruited_reads_qc_json(selection_path: Path) -> str:
     """
-    Reads a sample's own selected assembly fasta_path from its real
+    Reads a sample's own selected assembly gfa_path from its real
     contig_selection.json and returns the sibling recruited-reads QC
     record's own path -- GetOrganelleRunner always writes
     {sample}.recruited_reads_qc.json into the exact same output_dir
@@ -18,16 +18,27 @@ def _recruited_reads_qc_json(selection_path: Path) -> str:
     it this way (rather than guessing a fixed path) is correct for
     both cases. Empty string when nothing was selected, mirroring
     the project's own _selected_fasta() helpers elsewhere.
+
+    Confirmed directly, 2026-11-19, against real run output: must use
+    gfa_path, not fasta_path -- contig_selection.json's own fasta_path
+    points to contig_selection's own copy (06-contig_selection/
+    {sample}/{sample}.selected.fasta), never the real GetOrganelle
+    attempt directory; gfa_path is the one field that genuinely stays
+    inside that attempt's own output_dir for both a primary run
+    (04d-assembly/{sample}/primary/) and a rescue reassembly
+    (07-assembly_rescue/{sample}/attempt_N/reassembly/). Using
+    fasta_path here silently produced a path that never existed --
+    recruited-reads QC was missing for every sample, not a few.
     """
     import json
     try:
         selection = json.loads(Path(selection_path).read_text(encoding = "utf-8"))
     except (OSError, json.JSONDecodeError):
         return ""
-    if not selection.get("selected") or not selection.get("fasta_path"):
+    if not selection.get("selected") or not selection.get("gfa_path"):
         return ""
     sample_id = selection.get("sample_id", "")
-    return str(Path(selection["fasta_path"]).parent / f"{sample_id}.recruited_reads_qc.json")
+    return str(Path(selection["gfa_path"]).parent / f"{sample_id}.recruited_reads_qc.json")
 
 rule stats_aggregation:
     input:

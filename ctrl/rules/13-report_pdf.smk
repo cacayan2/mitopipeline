@@ -10,20 +10,30 @@ aggregating every sample.
 def _recruited_reads_fastqc_dir(selection_path: Path) -> str:
     """
     The selected attempt's own recruited-reads FastQC directory --
-    sibling of the same contig_selection.json fasta_path every other
-    rule in this file already derives its own selected-attempt path
-    from (see 12a-stats_aggregation.smk's identical real reasoning for
-    why this can't be a fixed path: the selected attempt may be the
-    primary run or any rescue reassembly).
+    sibling of the same contig_selection.json gfa_path
+    12a-stats_aggregation.smk's own _recruited_reads_qc_json() already
+    derives its path from (the selected attempt may be the primary
+    run or any rescue reassembly, so this can't be a fixed path).
+
+    Confirmed directly, 2026-11-19, against real run output: must use
+    gfa_path, not fasta_path -- contig_selection.json's own fasta_path
+    points to contig_selection's own copy (06-contig_selection/
+    {sample}/{sample}.selected.fasta), never the real GetOrganelle
+    attempt directory where recruited_reads_fastqc/ actually lives
+    (04d-assembly/{sample}/primary/ for a primary run,
+    07-assembly_rescue/{sample}/attempt_N/reassembly/ for a rescue).
+    Using fasta_path here silently produced a path that never
+    existed -- recruited-reads FastQC showed "not available" on every
+    sample's report, not a few.
     """
     import json
     try:
         selection = json.loads(Path(selection_path).read_text(encoding = "utf-8"))
     except (OSError, json.JSONDecodeError):
         return ""
-    if not selection.get("selected") or not selection.get("fasta_path"):
+    if not selection.get("selected") or not selection.get("gfa_path"):
         return ""
-    return str(Path(selection["fasta_path"]).parent / "recruited_reads_fastqc")
+    return str(Path(selection["gfa_path"]).parent / "recruited_reads_fastqc")
 
 def _sample_report_inputs(wildcards):
     inputs = {
