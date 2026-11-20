@@ -71,7 +71,19 @@ def render_typst_preamble(sample_id: str | None = None) -> str:
         "#set par(justify: true, leading: 0.6em)\n"
         "#show link: set text(fill: blue)\n"
         "#set figure.caption(separator: [. ])\n"
-        "#show figure: set block(breakable: false, above: 0.8em, below: 0.8em)\n"
+        # Pandoc wraps every Markdown table (not just images) in
+        # #figure(..., kind: table) -- confirmed directly via `pandoc
+        # --to typst` on a real table -- so a single blanket `#show
+        # figure: set block(breakable: false, ...)` also made every
+        # data table unsplittable across a page boundary, forcing an
+        # oversized table to either overflow or shove its whole
+        # heading+table unit onto the next page. Split by kind:
+        # images stay non-breakable (a genome map should never split
+        # mid-figure), tables get breakable: true, restoring Typst's
+        # normal per-row page-break with the header row (pandoc's own
+        # table.header()) repeated on each continuation page.
+        "#show figure.where(kind: image): set block(breakable: false, above: 0.8em, below: 0.8em)\n"
+        "#show figure.where(kind: table): set block(breakable: true, above: 0.8em, below: 0.8em)\n"
         "#show heading.where(level: 1): set text(size: 20pt)\n"
         "#show heading.where(level: 2): set text(size: 14pt)\n"
         "#show heading.where(level: 2): set block(above: 0.9em, below: 0.5em)\n"

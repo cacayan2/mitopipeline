@@ -82,7 +82,7 @@ def render_job_metadata_section(run_data: RunReportData) -> list[str]:
     if run_data.compute_summary:
         rows = [
             [
-                basename_code(s.stage), s.tools or "—", format_integer(s.invocation_count),
+                basename_code(s.stage), wrap_cell_text(s.tools, width = 18) if s.tools else "—", format_integer(s.invocation_count),
                 format_duration(s.total_runtime_seconds), format_duration(s.total_cpu_seconds),
                 format_memory_mb(s.peak_memory_mb),
             ]

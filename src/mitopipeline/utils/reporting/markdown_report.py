@@ -59,21 +59,25 @@ def escape_markdown_cell(value: object) -> str:
     text = escape_markdown_text(text)
     return text.replace("\\|", "|").replace("|", "\\|")
 
-def wrap_cell_text(value: object, width: int = 22, extra_separators: tuple[str, ...] = ()) -> str:
+def wrap_text_lines(text: str, width: int = 22, extra_separators: tuple[str, ...] = ()) -> str:
     """
-    Breaks a long cell value into multiple short lines so it wraps
-    inside a table column instead of overflowing into the next one --
-    Typst's own pandoc-generated tables size each column to its
-    widest unbroken line with no automatic wrapping, confirmed
-    directly (a 5-column table with "MANUAL_REVIEW_REQUIRED" cells
-    overlapped the adjacent column's text). Breaks at the nearest
-    space/comma/semicolon at or before width, joined by a real raw
-    Typst line break (`<br>` does not survive pandoc's gfm reader,
-    confirmed directly -- it is silently dropped, concatenating the
-    surrounding words with no break and no space).
+    Breaks an already-escaped/formatted string into multiple short
+    lines so it wraps inside a table column instead of overflowing
+    into the next one -- Typst's own pandoc-generated tables size
+    each column to its widest unbroken line with no automatic
+    wrapping, confirmed directly (a 5-column table with
+    "MANUAL_REVIEW_REQUIRED" cells overlapped the adjacent column's
+    text). Breaks at the nearest space/comma/semicolon at or before
+    width, joined by a real raw Typst line break (`<br>` does not
+    survive pandoc's gfm reader, confirmed directly -- it is silently
+    dropped, concatenating the surrounding words with no break and no
+    space). Takes text that's already had escape_markdown_cell (and
+    any further formatting, e.g. format_number_in_text) applied, so
+    callers that need both can order them correctly instead of
+    wrap_cell_text's own fixed escape-then-wrap order.
 
     Args:
-        value (object): The value to wrap.
+        text (str): The already-escaped/formatted text to wrap.
         width (int): The target maximum characters per line. Defaults to 22.
         extra_separators (tuple[str, ...]): Additional break points beyond
             space/comma/semicolon -- e.g. "_" for an unspaced identifier
@@ -81,9 +85,8 @@ def wrap_cell_text(value: object, width: int = 22, extra_separators: tuple[str, 
             into the next column in an already-tight multi-column table.
 
     Returns:
-        str: The value, already Markdown-escaped, with inline raw Typst line breaks inserted as needed.
+        str: The text with inline raw Typst line breaks inserted as needed.
     """
-    text = escape_markdown_cell(value)
     if len(text) <= width:
         return text
 
@@ -102,6 +105,22 @@ def wrap_cell_text(value: object, width: int = 22, extra_separators: tuple[str, 
         remaining = remaining[break_at:].lstrip()
     lines.append(remaining)
     return "`#linebreak()`{=typst}".join(lines)
+
+def wrap_cell_text(value: object, width: int = 22, extra_separators: tuple[str, ...] = ()) -> str:
+    """
+    Escapes a raw cell value for Markdown, then wraps it via
+    wrap_text_lines() -- see that function for the wrapping rationale.
+
+    Args:
+        value (object): The raw value to escape and wrap.
+        width (int): The target maximum characters per line. Defaults to 22.
+        extra_separators (tuple[str, ...]): Additional break points beyond
+            space/comma/semicolon.
+
+    Returns:
+        str: The value, already Markdown-escaped, with inline raw Typst line breaks inserted as needed.
+    """
+    return wrap_text_lines(escape_markdown_cell(value), width = width, extra_separators = extra_separators)
 
 def humanize_key(key: str) -> str:
     """Converts a snake_case field/key name into a human-readable label (e.g. "expected_assembly_status" -> "Expected assembly status")."""
@@ -487,7 +506,10 @@ def render_validation_section(report_data: SampleReportData) -> list[str]:
     lines.append(f"**Plausibility for Complete Genome:** {status_badge(report_data.overall_verdict)}")
     lines.append("")
     rows = [
-        [humanize_key(c.get("name", "")), status_badge(c.get("verdict", "")), format_number_in_text(escape_markdown_cell(c.get("reason", "")))]
+        [
+            humanize_key(c.get("name", "")), status_badge(c.get("verdict", "")),
+            wrap_text_lines(format_number_in_text(escape_markdown_cell(c.get("reason", ""))), width = 40),
+        ]
         for c in report_data.validation_checks
     ]
     if rows:
@@ -549,7 +571,7 @@ def render_compute_resources_section(report_data: SampleReportData) -> list[str]
 
     rows = [
         [
-            basename_code(s.stage), s.tools or "—", format_integer(s.invocation_count),
+            basename_code(s.stage), wrap_cell_text(s.tools, width = 18) if s.tools else "—", format_integer(s.invocation_count),
             format_duration(s.total_runtime_seconds), format_duration(s.total_cpu_seconds),
             format_memory_mb(s.peak_memory_mb),
         ]
