@@ -266,15 +266,22 @@ stage_options:
   report_export:
       pandoc:
         bin: pandoc
-        # Absolute path, not the bare "typst" on $PATH: this host's
-        # system typst is a snap package whose confined filesystem
-        # view broke after an external kernel-level cache-drop event
-        # (confirmed via dmesg, unrelated to this project) -- it can
-        # no longer find even its own input file. A real, standalone
-        # typst binary (same version, no snap confinement) is
-        # installed at this path as the real fix; point back to the
-        # bare "typst" once the system package is healthy again.
-        engine: /home/eacac/.local/bin/typst
+        # Bare command, not an absolute path: typst is already a real
+        # conda-forge dependency of this stage's own env
+        # (envs/13-reporting.yaml, wired via this rule's `conda:`
+        # directive) -- resolved on $PATH once that env is activated,
+        # the same way `bin: pandoc` just above already works. A
+        # prior fix pointed this at a specific person's
+        # ~/.local/bin/typst to route around the HOST's own separate,
+        # snap-confined system typst install -- but that's a different
+        # binary entirely from the one this conda env already
+        # provisions, and the absolute path broke outright on a fresh
+        # clone (no such user/home directory exists on a new machine).
+        # Confirmed live, 2026-11-19: the conda env's own typst
+        # (0.15.1) already exists and runs correctly once created --
+        # no snap confinement possible, since it was never the snap
+        # package to begin with.
+        engine: typst
   archival:
     bioproject:
       publication: null
