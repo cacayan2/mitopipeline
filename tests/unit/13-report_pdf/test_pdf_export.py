@@ -9,12 +9,14 @@ likely to break silently.
 """
 
 # Imports
+import shutil
+import stat
 from pathlib import Path
 import pymupdf
 import pytest
 from mitopipeline.utils.reporting.markdown_report import render_sample_report
 from mitopipeline.utils.reporting.models import SampleReportData
-from mitopipeline.utils.reporting.pdf_export import export_markdown_to_pdf
+from mitopipeline.utils.reporting.pdf_export import _resolve_executable, export_markdown_to_pdf
 from mitopipeline.utils.statistics.models import AssemblyStatistics
 
 def _extract_text(pdf_path: Path) -> str:
@@ -113,3 +115,63 @@ def test_missing_executable_raises(tmp_path: Path) -> None:
     markdown_path.write_text("# Hello\n")
     with pytest.raises(FileNotFoundError):
         export_markdown_to_pdf(markdown_path, pandoc_bin = "definitely-not-a-real-binary")
+
+def test_resolve_executable_falls_back_to_conda_prefix_when_path_lookup_fails(
+        tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Real regression, 2026-11-19: confirmed live that Snakemake's
+    own conda-env activation for a "localrule" (run_report/
+    sample_report both are) doesn't reliably propagate the activated
+    env's bin/ onto $PATH on every invocation -- two consecutive real
+    runs of the same rule, same env, one found "typst" on $PATH and
+    one didn't. $CONDA_PREFIX is the one thing conda's own activation
+    reliably sets regardless, so _resolve_executable() must find a
+    real binary there even when shutil.which() comes back empty."""
+    fake_bin_dir = tmp_path / "fake_conda_env" / "bin"
+    fake_bin_dir.mkdir(parents = True)
+    fake_executable = fake_bin_dir / "typst"
+    fake_executable.write_text("#!/bin/sh\necho fake\n")
+    fake_executable.chmod(fake_executable.stat().st_mode | stat.S_IXUSR)
+
+    monkeypatch.setattr(shutil, "which", lambda name: None)
+    monkeypatch.setenv("CONDA_PREFIX", str(tmp_path / "fake_conda_env"))
+
+    assert _resolve_executable("typst") == str(fake_executable)
+
+def test_resolve_executable_raises_when_neither_path_nor_conda_prefix_have_it(
+        monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(shutil, "which", lambda name: None)
+    monkeypatch.delenv("CONDA_PREFIX", raising = False)
+    with pytest.raises(FileNotFoundError):
+        _resolve_executable("definitely-not-a-real-binary")
+
+def test_export_passes_the_resolved_path_to_pandoc_not_the_bare_name(
+        tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Real regression, 2026-11-19: export_markdown_to_pdf used to
+    validate pdf_engine via _resolve_executable() and then discard the
+    result, handing pandoc's own --pdf-engine flag the original bare
+    name instead -- making pandoc redo its own separate (and, per the
+    above, unreliable) $PATH lookup for the exact same binary,
+    throwing away everything the resolution step just worked out."""
+    markdown_path = tmp_path / "report.md"
+    markdown_path.write_text("# Hello\n")
+
+    resolved = {"pandoc": "/resolved/bin/pandoc", "my-engine": "/resolved/bin/my-engine"}
+    monkeypatch.setattr(
+        "mitopipeline.utils.reporting.pdf_export._resolve_executable",
+        lambda name: resolved[name],
+    )
+
+    seen_command = {}
+    class _FakeResult:
+        returncode = 0
+        stderr = ""
+    def _fake_run(command, **kwargs):
+        seen_command["argv"] = command
+        Path(command[command.index("--output") + 1]).write_bytes(b"%PDF-fake")
+        return _FakeResult()
+    monkeypatch.setattr("mitopipeline.utils.reporting.pdf_export.subprocess.run", _fake_run)
+
+    export_markdown_to_pdf(markdown_path, pdf_engine = "my-engine")
+
+    assert "/resolved/bin/my-engine" in seen_command["argv"]
+    assert "my-engine" not in seen_command["argv"]

@@ -36,7 +36,20 @@ class PdfExportResult:
 
 def _resolve_executable(name: str) -> str:
     """
-    Resolves an executable name to a real path on $PATH.
+    Resolves an executable name to a real path -- $PATH first, then
+    the active conda env's own bin/ directly via $CONDA_PREFIX.
+
+    The $PATH-only lookup this used to rely on is genuinely
+    unreliable for this specific caller: confirmed live, 2026-11-19,
+    that Snakemake's own conda-env activation for a "localrule" (an
+    in-process rule, which run_report/sample_report both are) doesn't
+    consistently propagate the activated env's bin/ onto $PATH on
+    every invocation within the same scheduler session -- two
+    consecutive real runs of the same rule, same env, same machine,
+    one found "typst" and one didn't. $CONDA_PREFIX is the one thing
+    conda's own activation reliably sets regardless, so checking
+    $CONDA_PREFIX/bin/<name> directly sidesteps that race instead of
+    hoping $PATH merged correctly this time.
 
     Args:
         name (str): The executable name to resolve.
@@ -48,9 +61,16 @@ def _resolve_executable(name: str) -> str:
         FileNotFoundError: If the executable isn't found.
     """
     path = shutil.which(name)
-    if path is None:
-        raise FileNotFoundError(f"Required executable not found on PATH: {name}.")
-    return path
+    if path is not None:
+        return path
+
+    conda_prefix = os.environ.get("CONDA_PREFIX")
+    if conda_prefix:
+        candidate = Path(conda_prefix) / "bin" / name
+        if candidate.is_file() and os.access(candidate, os.X_OK):
+            return str(candidate)
+
+    raise FileNotFoundError(f"Required executable not found on PATH or in $CONDA_PREFIX/bin: {name}.")
 
 def export_markdown_to_pdf(markdown_path: str | Path, pdf_path: str | Path | None = None,
                             pandoc_bin: str = "pandoc", pdf_engine: str = "typst",
@@ -82,7 +102,14 @@ def export_markdown_to_pdf(markdown_path: str | Path, pdf_path: str | Path | Non
     pdf_path.parent.mkdir(parents = True, exist_ok = True)
 
     pandoc_path = _resolve_executable(pandoc_bin)
-    _resolve_executable(pdf_engine)
+    # The resolved path is used below, not the bare name -- passing
+    # pdf_engine itself to pandoc's own --pdf-engine flag would make
+    # pandoc re-do its own separate $PATH lookup for the same name,
+    # throwing away everything _resolve_executable() just worked out
+    # (confirmed live, 2026-11-19, as part of the same real
+    # intermittent-PATH issue fixed in _resolve_executable's own
+    # docstring above).
+    pdf_engine_path = _resolve_executable(pdf_engine)
 
     temporary_pdf_path = pdf_path.with_suffix(pdf_path.suffix + ".tmp")
     temporary_pdf_path.unlink(missing_ok = True)
@@ -99,7 +126,7 @@ def export_markdown_to_pdf(markdown_path: str | Path, pdf_path: str | Path | Non
         # dash via font kerning, but not one), even though gfm itself
         # already protects intraword underscores from being read as
         # emphasis without needing this extension.
-        "--from", "gfm+raw_attribute+smart", "--to", "pdf", "--pdf-engine", pdf_engine,
+        "--from", "gfm+raw_attribute+smart", "--to", "pdf", "--pdf-engine", pdf_engine_path,
         "--resource-path", str(markdown_path.parent),
         # Typst compiles through an intermediate file in its own temp
         # directory (pandoc's "toPdfViaTempFile"), so its default
