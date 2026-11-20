@@ -65,7 +65,13 @@ def test_run_report_merges_mixed_sample_outcomes(tmp_path: Path, monkeypatch: py
     assert run_run_report.main() == 0
     markdown_path = output_dir / "job1.run_report.md"
     text = markdown_path.read_text()
-    assert "sample_pass" in text and "sample_fail" in text
+    # The Sample column now goes through wrap_cell_text() (plain
+    # wrapped text, not basename_code()'s unescaped monospace) so a
+    # real underscore in a sample id arrives backslash-escaped in the
+    # Markdown source -- still renders as a literal underscore once
+    # pandoc compiles it, confirmed directly, so this is the correct
+    # updated expectation, not a loosened check.
+    assert "sample\\_pass" in text and "sample\\_fail" in text
     assert "Pass" in text and "Fail" in text
 
 def test_sample_with_no_results_shows_not_assessed(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

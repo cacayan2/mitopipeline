@@ -269,14 +269,34 @@ def relative_path(target_path: str | Path, report_path: str | Path) -> str:
     target_path, report_path = Path(target_path).resolve(), Path(report_path).resolve()
     return Path(os.path.relpath(target_path, start = report_path.parent)).as_posix()
 
-def file_link(label: str, target_path: str | Path | None, report_path: str | Path) -> str | None:
-    """Builds a Markdown link to target_path, or None when it doesn't exist."""
+def file_link(
+    label: str, target_path: str | Path | None, report_path: str | Path,
+    wrap_width: int | None = None, wrap_extra_separators: tuple[str, ...] = (),
+) -> str | None:
+    """
+    Builds a Markdown link to target_path, or None when it doesn't exist.
+
+    Args:
+        label (str): The link text.
+        target_path (str | Path | None): The file the link points to.
+        report_path (str | Path): Where the report itself lives, for a relative link.
+        wrap_width (int | None): When set, wraps label (escaped first) so a long,
+            space-free label (e.g. a sample id baked into a filename) breaks
+            inside the link text instead of overflowing a table cell -- only
+            needed for a link used as a table cell value, not a bullet-list
+            link (an ordinary paragraph/list already wraps on its own).
+        wrap_extra_separators (tuple[str, ...]): Extra wrap break points, passed through to wrap_text_lines.
+
+    Returns:
+        str | None: The Markdown link, or None if target_path doesn't exist.
+    """
     if target_path is None or not Path(target_path).exists():
         return None
-    return f"[{label}]({relative_path(target_path, report_path)})"
+    display_label = wrap_text_lines(escape_markdown_cell(label), width = wrap_width, extra_separators = wrap_extra_separators) if wrap_width else label
+    return f"[{display_label}]({relative_path(target_path, report_path)})"
 
 def basename_code(path: str) -> str:
-    """Renders a file path as its basename, in monospace -- never the full path, which would otherwise expose the real execution host's absolute home-directory layout."""
+    """Renders a file path as its basename, in monospace -- never the full path, which would otherwise expose the real execution host's absolute home-directory layout. Only safe for a short, bounded name (e.g. a fixed stage id): a Markdown code span cannot carry wrap_cell_text's embedded raw-Typst linebreak, so a long value here cannot be made to wrap and will overflow a table cell -- see wrap_cell_text's own docstring, confirmed directly against a real compile."""
     return f"`{os.path.basename(str(path))}`"
 
 def format_scientific_name(metadata: dict[str, str]) -> str:
@@ -298,7 +318,12 @@ def render_metadata_section(report_data: SampleReportData) -> list[str]:
     rows = []
     for key, value in report_data.metadata.items():
         if key in _PATH_METADATA_FIELDS:
-            rows.append([humanize_key(key), basename_code(value)])
+            # Plain wrapped text, not basename_code()'s monospace
+            # backticks -- a Markdown code span can't carry the
+            # embedded raw-Typst linebreak wrap_cell_text() needs,
+            # confirmed directly, and a real FASTQ basename can
+            # easily run past a table cell's width unbroken.
+            rows.append([humanize_key(key), wrap_cell_text(os.path.basename(str(value)), width = 40, extra_separators = ("_", "."))])
         else:
             rows.append([humanize_key(key), wrap_cell_text(value, width = 48)])
     return ["## Sample Metadata", "", markdown_table(["Field", "Value"], rows), ""]

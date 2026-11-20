@@ -144,9 +144,19 @@ def render_sample_status_section(run_data: RunReportData, report_path: Path) -> 
         # wrong, non-nested path and always showed "Not available"
         # even though the PDF genuinely existed).
         pdf_path = report_path.parent / sample.sample_id / f"{sample.sample_id}.report.pdf"
-        report_link = file_link(f"{sample.sample_id}.report.pdf", pdf_path, report_path)
+        # Plain wrapped text (sample id) and a wrapped link label, not
+        # basename_code()'s monospace backticks -- a Markdown code
+        # span can't carry wrap_cell_text's embedded raw-Typst
+        # linebreak, and an unwrapped link label has never had any
+        # break mechanism at all, confirmed directly: a long sample
+        # id otherwise sits on one unbroken line and overflows this
+        # 4-column table's boundary.
+        report_link = file_link(
+            f"{sample.sample_id}.report.pdf", pdf_path, report_path,
+            wrap_width = 18, wrap_extra_separators = ("_", "."),
+        )
         rows.append([
-            basename_code(sample.sample_id),
+            wrap_cell_text(sample.sample_id, width = 14, extra_separators = ("_",)),
             status_badge(sample.overall_verdict) if sample.overall_verdict else status_badge("NOT ASSESSED"),
             "Yes" if sample.rescued else "No", report_link or "Not available",
         ])
@@ -196,7 +206,12 @@ def render_archival_summary_section(run_data: RunReportData) -> list[str]:
         ["Samples ready for submission review", f"{run_data.archival_ready_count} / {len(run_data.samples)}"],
     ]
     per_sample_rows = [
-        [basename_code(s.sample_id),
+        # Plain wrapped text, not basename_code()'s monospace
+        # backticks -- see render_sample_status_section's own comment;
+        # a Markdown code span can't carry wrap_cell_text's embedded
+        # raw-Typst linebreak, so a long sample id here would overflow
+        # this 5-column table unbroken.
+        [wrap_cell_text(s.sample_id, width = 14, extra_separators = ("_",)),
          status_badge(s.archival.sra_review_status) if s.archival.sra_review_status else "Not available",
          status_badge(s.archival.biosample_review_status) if s.archival.biosample_review_status else "Not available",
          status_badge(s.archival.genbank_review_status) if s.archival.genbank_review_status else "Not available",
