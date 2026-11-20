@@ -95,7 +95,7 @@ rule sample_report:
         metrics_dir = str(JOB_DIR / "metrics"),
         log_dir = str(JOB_DIR / "logs"),
         pandoc_bin = config["stage_options"]["report_export"]["pandoc"]["bin"],
-        pdf_engine = config["stage_options"]["report_export"]["pandoc"]["engine"],
+        pdf_engine = str((PROJECT_ROOT / config["stage_options"]["report_export"]["pandoc"]["binary_path"]).resolve()),
         output_dir = str(JOB_DIR / "13-report_pdf" / "{sample}"),
         log_file = str(JOB_DIR / "logs" / "13-report_pdf" / "{sample}.log"),
         global_log_file = str(GLOBAL_LOG_FILE),
@@ -179,7 +179,7 @@ rule run_report:
         bioproject_metadata_json = (str(JOB_DIR / "15-archival_validation" / "bioproject_metadata.json")
                                     if stage_enabled("15-archival_validation") else ""),
         pandoc_bin = config["stage_options"]["report_export"]["pandoc"]["bin"],
-        pdf_engine = config["stage_options"]["report_export"]["pandoc"]["engine"],
+        pdf_engine = str((PROJECT_ROOT / config["stage_options"]["report_export"]["pandoc"]["binary_path"]).resolve()),
         output_dir = str(JOB_DIR / "13-report_pdf"),
         log_file = str(JOB_DIR / "logs" / "13-report_pdf" / "run_report.log"),
         global_log_file = str(GLOBAL_LOG_FILE),

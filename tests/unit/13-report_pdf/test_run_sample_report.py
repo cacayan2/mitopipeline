@@ -17,6 +17,26 @@ import pytest
 
 run_sample_report = importlib.import_module("mitopipeline.exec.13-report_pdf.run_sample_report")
 
+class _FakeTypstBinary:
+    """Stands in for the real TypstBinary in tests that don't care
+    about PDF export behavior itself -- never touches the network.
+    Mirrors the real class's own "not available" outcome (the
+    binary_path it's handed is a tmp_path location nothing ever
+    wrote to), so export_markdown_to_pdf's own resolution still
+    fails exactly the way it would for a genuinely-missing engine,
+    exercising the same real skip path these tests already assert on."""
+    def __init__(self, binary_path: Path, logger = None) -> None:
+        self.binary_path = binary_path
+    def prepare(self) -> Path:
+        return self.binary_path
+
+@pytest.fixture(autouse = True)
+def _stub_typst_binary(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Every test in this file goes through TypstBinary() before
+    export_markdown_to_pdf() now -- stub it everywhere so none of
+    them need a real network call just to render a Markdown report."""
+    monkeypatch.setattr(run_sample_report, "TypstBinary", _FakeTypstBinary)
+
 def _write_json(path: Path, data: dict) -> Path:
     path.parent.mkdir(parents = True, exist_ok = True)
     path.write_text(json.dumps(data))
@@ -27,6 +47,7 @@ def _argv(tmp_path: Path, sample_id: str, manifest: Path, output_dir: Path, **op
         "run_sample_report.py",
         "--sample-id", sample_id,
         "--runtime-manifest", str(manifest),
+        "--pdf-engine", str(tmp_path / "typst"),
         "--output-dir", str(output_dir),
         "--log-file", str(tmp_path / "logs" / "report.log"),
         "--global-log-file", str(tmp_path / "logs" / "global.log"),

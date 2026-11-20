@@ -360,7 +360,7 @@ def test_rerender_run_report_invokes_the_real_exec_script_with_the_right_argumen
 
     config = {
         "stage_options": {
-            "report_export": {"pandoc": {"bin": "pandoc", "engine": "/usr/local/bin/typst"}},
+            "report_export": {"pandoc": {"bin": "pandoc", "binary_path": "/usr/local/bin/typst"}},
             "phylogeny": {"iqtree": {"model": "MFP"}},
         },
     }
@@ -382,6 +382,42 @@ def test_rerender_run_report_invokes_the_real_exec_script_with_the_right_argumen
     assert command[command.index("--pdf-engine") + 1] == "/usr/local/bin/typst"
     assert command[command.index("--phylogeny-model") + 1] == "MFP"
     assert command[command.index("--output-dir") + 1] == str(report_dir)
+
+def test_rerender_run_report_resolves_a_relative_binary_path_against_cwd(
+        tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Real regression, 2026-11-19: this call sits outside the normal
+    Snakemake rule machinery (it's the launcher's own post-run
+    re-render), so it resolves --pdf-engine independently of
+    13-report_pdf.smk's own PROJECT_ROOT-anchored resolution. A plain
+    relative config value (the real default, "resources/bin/typst")
+    must resolve against the current working directory, never get
+    passed straight through -- confirmed live: passing it through
+    unresolved let a stray "typst" binary land at the repo root
+    instead of resources/bin/typst, because pandoc's own subprocess
+    CWD didn't match assumptions."""
+    job_dir = tmp_path / "job"
+    report_dir = job_dir / "13-report_pdf"
+    report_dir.mkdir(parents = True)
+    (report_dir / "run_report.done").touch()
+    monkeypatch.chdir(tmp_path)
+
+    captured: dict = {}
+    def _fake_run(command, **kwargs):
+        captured["command"] = command
+        return subprocess.CompletedProcess(args = command, returncode = 0, stdout = "", stderr = "")
+    monkeypatch.setattr(subprocess, "run", _fake_run)
+
+    config = {
+        "stage_options": {
+            "report_export": {"pandoc": {"bin": "pandoc", "binary_path": "resources/bin/typst"}},
+        },
+    }
+    job = _FakeJob(job_dir)
+
+    _rerender_run_report_with_final_status(config, job, tmp_path / "runtime_manifest.tsv", [_FakeSample("sample_a")])
+
+    command = captured["command"]
+    assert command[command.index("--pdf-engine") + 1] == str(tmp_path / "resources" / "bin" / "typst")
 
 def test_rerender_run_report_omits_phylogeny_model_when_not_configured(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,

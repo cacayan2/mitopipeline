@@ -17,6 +17,21 @@ import pytest
 
 run_run_report = importlib.import_module("mitopipeline.exec.13-report_pdf.run_run_report")
 
+class _FakeTypstBinary:
+    """Stands in for the real TypstBinary in tests that don't care
+    about PDF export behavior itself -- never touches the network."""
+    def __init__(self, binary_path: Path, logger = None) -> None:
+        self.binary_path = binary_path
+    def prepare(self) -> Path:
+        return self.binary_path
+
+@pytest.fixture(autouse = True)
+def _stub_typst_binary(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Every test in this file goes through TypstBinary() before
+    export_markdown_to_pdf() now -- stub it everywhere so none of
+    them need a real network call just to render a Markdown report."""
+    monkeypatch.setattr(run_run_report, "TypstBinary", _FakeTypstBinary)
+
 def _write_json(path: Path, data: dict) -> Path:
     path.parent.mkdir(parents = True, exist_ok = True)
     path.write_text(json.dumps(data))
@@ -41,6 +56,7 @@ def test_run_report_merges_mixed_sample_outcomes(tmp_path: Path, monkeypatch: py
         "run_run_report.py", "--job-id", "job1",
         "--sample-id", "sample_pass", "--sample-id", "sample_fail",
         "--runtime-manifest", str(manifest), "--job-dir", str(job_dir),
+        "--pdf-engine", str(tmp_path / "typst"),
         "--output-dir", str(output_dir),
         "--log-file", str(tmp_path / "logs" / "run_report.log"),
         "--global-log-file", str(tmp_path / "logs" / "global.log"),
@@ -61,6 +77,7 @@ def test_sample_with_no_results_shows_not_assessed(tmp_path: Path, monkeypatch: 
     monkeypatch.setattr(sys, "argv", [
         "run_run_report.py", "--job-id", "job1", "--sample-id", "sample_bare",
         "--runtime-manifest", str(manifest), "--job-dir", str(job_dir),
+        "--pdf-engine", str(tmp_path / "typst"),
         "--output-dir", str(output_dir),
         "--log-file", str(tmp_path / "logs" / "run_report.log"),
         "--global-log-file", str(tmp_path / "logs" / "global.log"),
@@ -85,6 +102,7 @@ def test_phylogeny_model_flag_is_accepted_and_does_not_crash(tmp_path: Path, mon
         "run_run_report.py", "--job-id", "job1", "--sample-id", "sample1",
         "--runtime-manifest", str(manifest), "--job-dir", str(job_dir),
         "--phylogeny-model", "GTR+G",
+        "--pdf-engine", str(tmp_path / "typst"),
         "--output-dir", str(output_dir),
         "--log-file", str(tmp_path / "logs" / "run_report.log"),
         "--global-log-file", str(tmp_path / "logs" / "global.log"),
@@ -107,6 +125,7 @@ def test_bioproject_metadata_flag_surfaces_in_the_run_report(tmp_path: Path, mon
         "run_run_report.py", "--job-id", "job1", "--sample-id", "sample1",
         "--runtime-manifest", str(manifest), "--job-dir", str(job_dir),
         "--bioproject-metadata-json", str(bioproject_json),
+        "--pdf-engine", str(tmp_path / "typst"),
         "--output-dir", str(output_dir),
         "--log-file", str(tmp_path / "logs" / "run_report.log"),
         "--global-log-file", str(tmp_path / "logs" / "global.log"),

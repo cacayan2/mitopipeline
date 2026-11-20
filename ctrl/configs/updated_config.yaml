@@ -267,22 +267,19 @@ stage_options:
   report_export:
       pandoc:
         bin: pandoc
-        # Bare command, not an absolute path: typst is already a real
-        # conda-forge dependency of this stage's own env
-        # (envs/13-reporting.yaml, wired via this rule's `conda:`
-        # directive) -- resolved on $PATH once that env is activated,
-        # the same way `bin: pandoc` just above already works. A
-        # prior fix pointed this at a specific person's
-        # ~/.local/bin/typst to route around the HOST's own separate,
-        # snap-confined system typst install -- but that's a different
-        # binary entirely from the one this conda env already
-        # provisions, and the absolute path broke outright on a fresh
-        # clone (no such user/home directory exists on a new machine).
-        # Confirmed live, 2026-11-19: the conda env's own typst
-        # (0.15.1) already exists and runs correctly once created --
-        # no snap confinement possible, since it was never the snap
-        # package to begin with.
-        engine: typst
+        # Resolved relative to the project root, same convention as
+        # table2asn.binary_path -- auto-installed on first use
+        # (typst_binary.py) rather than assumed pre-installed or
+        # resolved via $PATH. Two prior fixes both relied on $PATH
+        # (first a specific person's ~/.local/bin/typst, which broke
+        # outright on a fresh clone; then the conda env's own typst,
+        # which genuinely worked but intermittently -- confirmed
+        # live, 2026-11-19, that Snakemake's own conda-env activation
+        # for a "localrule" like this one doesn't reliably propagate
+        # onto $PATH on every invocation within the same scheduler
+        # session). A real, self-installed binary at a fixed path
+        # never depends on $PATH/conda activation at all.
+        binary_path: resources/bin/typst
   archival:
     bioproject:
       publication: null

@@ -16,6 +16,7 @@ from mitopipeline.logging.logger_factory import make_logger
 from mitopipeline.utils.reporting.collect import collect_sample_report_data
 from mitopipeline.utils.reporting.markdown_report import write_sample_report
 from mitopipeline.utils.reporting.pdf_export import export_markdown_to_pdf
+from mitopipeline.utils.reporting.typst_binary import TypstBinary
 
 def parse_args() -> argparse.Namespace:
     """
@@ -53,7 +54,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--metrics-dir", type = Path, default = None, help = "The job's own metrics/ directory, filtered to this sample's own real compute-metrics records.")
     parser.add_argument("--log-dir", type = Path, default = None, help = "The job's own logs/ directory, for linking to this sample's own real per-stage log files.")
     parser.add_argument("--pandoc-bin", type = str, default = "pandoc", help = "The pandoc executable name. Defaults to 'pandoc'.")
-    parser.add_argument("--pdf-engine", type = str, default = "typst", help = "The PDF engine pandoc should use. Defaults to 'typst'.")
+    parser.add_argument("--pdf-engine", type = Path, required = True, help = "Where the real, self-installed typst binary should live (resolved by the rule to an absolute, project-relative path -- never a bare command on $PATH; see TypstBinary's own docstring for why).")
     parser.add_argument("--output-dir", type = Path, required = True, help = "The directory to write this sample's report to.")
     parser.add_argument("--log-file", type = Path, required = True, help = "The path to the log file.")
     parser.add_argument("--global-log-file", type = Path, required = True, help = "The path to the global log file.")
@@ -121,11 +122,12 @@ def main() -> int:
 
     pdf_path, pdf_success, reason = None, False, "completed successfully"
     try:
-        result = export_markdown_to_pdf(markdown_path, pandoc_bin = args.pandoc_bin, pdf_engine = args.pdf_engine, logger = logger)
+        typst_path = TypstBinary(binary_path = args.pdf_engine, logger = logger).prepare()
+        result = export_markdown_to_pdf(markdown_path, pandoc_bin = args.pandoc_bin, pdf_engine = str(typst_path), logger = logger)
         pdf_path, pdf_success = result.pdf_path, result.success
         if not pdf_success:
             reason = f"pdf export failed: {result.stderr.strip()[:200]}"
-    except FileNotFoundError as e:
+    except (FileNotFoundError, OSError) as e:
         logger.warning(f"{context} PDF export skipped: {e}")
         reason = f"pdf export skipped: {e}"
 

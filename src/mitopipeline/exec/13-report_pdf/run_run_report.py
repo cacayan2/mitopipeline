@@ -15,6 +15,7 @@ from pathlib import Path
 from mitopipeline.logging.logger_factory import make_logger
 from mitopipeline.utils.reporting.collect import collect_run_report_data, collect_sample_report_data
 from mitopipeline.utils.reporting.pdf_export import export_markdown_to_pdf
+from mitopipeline.utils.reporting.typst_binary import TypstBinary
 from mitopipeline.utils.reporting.run_report import write_run_report
 
 def parse_args() -> argparse.Namespace:
@@ -33,7 +34,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--bioproject-metadata-json", type = Path, default = None, help = "The run's own real BioProject metadata JSON, written by run_archival_validation.py, or omit if the archival_validation stage didn't run.")
     parser.add_argument("--phylogeny-model", type = str, default = None, help = "The substitution model IQ-TREE was run with, if known -- the same config value applies uniformly to every sample's own tree.")
     parser.add_argument("--pandoc-bin", type = str, default = "pandoc", help = "The pandoc executable name. Defaults to 'pandoc'.")
-    parser.add_argument("--pdf-engine", type = str, default = "typst", help = "The PDF engine pandoc should use. Defaults to 'typst'.")
+    parser.add_argument("--pdf-engine", type = Path, required = True, help = "Where the real, self-installed typst binary should live (resolved by the rule to an absolute, project-relative path -- never a bare command on $PATH; see TypstBinary's own docstring for why).")
     parser.add_argument("--output-dir", type = Path, required = True, help = "The directory to write the run-level report to.")
     parser.add_argument("--log-file", type = Path, required = True, help = "The path to the log file.")
     parser.add_argument("--global-log-file", type = Path, required = True, help = "The path to the global log file.")
@@ -92,9 +93,10 @@ def main() -> int:
 
     pdf_success = False
     try:
-        result = export_markdown_to_pdf(markdown_path, pandoc_bin = args.pandoc_bin, pdf_engine = args.pdf_engine, logger = logger)
+        typst_path = TypstBinary(binary_path = args.pdf_engine, logger = logger).prepare()
+        result = export_markdown_to_pdf(markdown_path, pandoc_bin = args.pandoc_bin, pdf_engine = str(typst_path), logger = logger)
         pdf_success = result.success
-    except FileNotFoundError as e:
+    except (FileNotFoundError, OSError) as e:
         logger.warning(f"PDF export skipped: {e}")
 
     logger.info(f"Run report written to {markdown_path} (PDF: {'yes' if pdf_success else 'no'}), {len(samples)} sample(s).")

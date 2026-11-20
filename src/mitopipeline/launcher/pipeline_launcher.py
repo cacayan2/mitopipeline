@@ -611,7 +611,17 @@ def _rerender_run_report_with_final_status(config: dict, job: PipelineJob, runti
         "--runtime-manifest", str(runtime_manifest),
         "--job-dir", str(job.job_dir),
         "--pandoc-bin", str(pandoc_config.get("bin", "pandoc")),
-        "--pdf-engine", str(pandoc_config.get("engine", "typst")),
+        # Project-root-relative, same convention/key as the Snakemake
+        # rule's own resolution (13-report_pdf.smk) -- never the bare
+        # "typst" this used to fall back to. Real bug, 2026-11-19: this
+        # call sits outside the normal rule machinery entirely (it's
+        # the launcher's own post-run re-render, not something
+        # Snakemake dispatches), so renaming the config key to
+        # `binary_path` there too was easy to miss here -- confirmed
+        # live, a stray `./typst` landed at the repo root (CWD-relative)
+        # because this line kept reading the now-nonexistent `engine`
+        # key and silently fell back to the bare default instead.
+        "--pdf-engine", str((Path.cwd() / pandoc_config.get("binary_path", "resources/bin/typst")).resolve()),
         "--output-dir", str(report_dir),
         "--log-file", str(job.job_dir / "logs" / "13-report_pdf" / "run_report.log"),
         "--global-log-file", str(job.job_dir / "logs" / "00-job" / f"{job.job_id}.global.log"),
